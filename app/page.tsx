@@ -24,6 +24,9 @@ Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and
 
 const MAX_VARIANTS = 6;
 
+// ✅ threshold na rozlíšenie "chcem scrollovať" vs "chcem editovať"
+const TOUCH_INTENT_PX = 10; // 8–12px je fajn
+
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
@@ -182,6 +185,13 @@ export default function Page() {
     startScalePct: { x: number; y: number; z: number };
     handle: HandleId | null;
     modeAtDown: Mode;
+
+    // ✅ nové: rozhodovanie scroll vs edit na touch
+    pointerId: number | null;
+    isTouch: boolean;
+    intent: "undecided" | "edit" | "scroll";
+    startClient: { x: number; y: number };
+    captured: boolean;
   }>({
     active: false,
     start: { x: 0, y: 0 },
@@ -191,6 +201,12 @@ export default function Page() {
     startScalePct: { x: 100, y: 100, z: 100 },
     handle: null,
     modeAtDown: "move",
+
+    pointerId: null,
+    isTouch: false,
+    intent: "undecided",
+    startClient: { x: 0, y: 0 },
+    captured: false,
   });
 
   const selectedVariant = variants[selectedVariantIndex] || null;
@@ -696,16 +712,32 @@ export default function Page() {
     setLeadOpen(true);
   }
 
-  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+  // ✅ helper: aktivuj "edit mode" pre pointer (zachytenie + bloknutie scrollu)
+  function engageCanvasEdit(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!dragRef.current.captured) {
+      try {
+        (e.currentTarget as any).setPointerCapture(e.pointerId);
+      } catch {}
+      dragRef.current.captured = true;
+    }
+    // až keď sme sa rozhodli editovať, vtedy blokujeme natívne gestá
     e.preventDefault();
+    dragRef.current.intent = "edit";
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
+
+    const isTouch = e.pointerType === "touch";
 
     const rect = computeProjectedRect();
     if (rect) {
       const h = hitHandle(p, rect);
       if (h) {
+        // ✅ pri resize handle chceme vždy editovať (nech to nescrolluje)
         setMode("resize");
         setActiveHandle(h);
+
         dragRef.current = {
           active: true,
           start: p,
@@ -715,12 +747,20 @@ export default function Page() {
           startScalePct: scalePct,
           handle: h,
           modeAtDown: "resize",
+
+          pointerId: e.pointerId,
+          isTouch,
+          intent: "edit",
+          startClient: { x: e.clientX, y: e.clientY },
+          captured: false,
         };
-        (e.currentTarget as any).setPointerCapture(e.pointerId);
+
+        engageCanvasEdit(e);
         return;
       }
     }
 
+    // ✅ normálny drag: na touch necháme najprv šancu scrollu (intent = undecided)
     dragRef.current = {
       active: true,
       start: p,
@@ -730,13 +770,55 @@ export default function Page() {
       startScalePct: scalePct,
       handle: null,
       modeAtDown: mode,
+
+      pointerId: e.pointerId,
+      isTouch,
+      intent: isTouch ? "undecided" : "edit",
+      startClient: { x: e.clientX, y: e.clientY },
+      captured: false,
     };
-    (e.currentTarget as any).setPointerCapture(e.pointerId);
+
+    // ✅ mouse/pen: hneď editujeme a blokujeme default
+    if (!isTouch) {
+      engageCanvasEdit(e);
+    }
+    // ✅ touch: nič neblokuj na down (inak zabiješ scroll)
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
+
+    // ✅ Ak je to touch a ešte sme nerozhodli, či scroll alebo edit:
+    if (dragRef.current.isTouch && dragRef.current.intent === "undecided") {
+      const dxC = e.clientX - dragRef.current.startClient.x;
+      const dyC = e.clientY - dragRef.current.startClient.y;
+
+      const adx = Math.abs(dxC);
+      const ady = Math.abs(dyC);
+
+      // ešte málo pohybu -> necháme prehliadaču, nech rozhodne
+      if (Math.max(adx, ady) < TOUCH_INTENT_PX) {
+        return;
+      }
+
+      // ak prevláda vertikálny pohyb -> je to scroll (necháme stránku ísť)
+      if (ady > adx * 1.15) {
+        dragRef.current.intent = "scroll";
+        dragRef.current.active = false;
+        setActiveHandle(null);
+        return;
+      }
+
+      // inak -> edit
+      engageCanvasEdit(e);
+    }
+
+    // ak sme vyhodnotili scroll, nič nerob
+    if (dragRef.current.intent === "scroll") return;
+
+    // od tejto chvíle editujeme -> blokujeme natívne gestá
     e.preventDefault();
+
     const p = toCanvasXY(e);
     const dx = p.x - dragRef.current.start.x;
     const dy = p.y - dragRef.current.start.y;
@@ -786,11 +868,16 @@ export default function Page() {
 
   function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
+
+    // ak to bol scroll intent, už sme active=false nastavili v move, takže sem sa zväčša nedostane
     dragRef.current.active = false;
+    dragRef.current.intent = "undecided";
+    dragRef.current.pointerId = null;
+
     setActiveHandle(null);
 
     if (mode === "resize") setMode("move");
-    e.preventDefault();
+    // ✅ preventDefault už netreba
   }
 
   function Stepper() {
@@ -1095,6 +1182,8 @@ export default function Page() {
           border-radius: 14px;
           overflow: auto;
           padding: 10px;
+          /* ✅ pomôže iOS-u, aby scroll bol "natural" */
+          -webkit-overflow-scrolling: touch;
         }
         canvas {
           border-radius: 12px;
@@ -1489,6 +1578,7 @@ export default function Page() {
             padding: 10px 16px 90px;
             max-height: 72vh;
             overflow: auto;
+            -webkit-overflow-scrolling: touch;
           }
           .sheetGrid {
             display: grid;
@@ -1664,7 +1754,12 @@ export default function Page() {
                       ref={canvasRef}
                       width={canvasW}
                       height={canvasH}
-                      style={{ width: `${(canvasW * editorZoom) / 100}px`, height: `${(canvasH * editorZoom) / 100}px`, touchAction: "none" }}
+                      style={{
+                        width: `${(canvasW * editorZoom) / 100}px`,
+                        height: `${(canvasH * editorZoom) / 100}px`,
+                        // ✅ dôležité: povoľ scroll (pan-y). Edit zablokujeme až keď sa rozhodneme, že user editoval.
+                        touchAction: "pan-y",
+                      }}
                       onPointerDown={onPointerDown}
                       onPointerMove={onPointerMove}
                       onPointerUp={onPointerUp}
@@ -2031,7 +2126,7 @@ export default function Page() {
                   </button>
 
                   <button type="submit" className="ter-btn ter-btn--primary" disabled={leadSubmitting}>
-                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
+                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknut sťahovanie"}
                   </button>
                 </div>
 
