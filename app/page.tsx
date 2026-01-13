@@ -15,7 +15,7 @@ const SCALE_MIN = 1;
 const SCALE_MAX = 200;
 
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
-const TARGET_MODEL_MAX_DIM_AT_100 = 1.45; // ✅ menší model default (lepší mobil)
+const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
 const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
 Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
@@ -73,7 +73,7 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
-type DimTab = "none" | "x" | "y" | "z";
+type ControlKey = "zoom" | "x" | "y" | "z";
 
 export default function Page() {
   const [bgFile, setBgFile] = useState<File | null>(null);
@@ -90,7 +90,14 @@ export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasW] = useState(980);
   const [canvasH] = useState(560);
-  const [editorZoom, setEditorZoom] = useState(100);
+
+  // responsive editor scale (mobile fills width; desktop uses zoom)
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [stageW, setStageW] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+
+  const [editorZoom, setEditorZoom] = useState(92); // default trochu menšie, aby bol model celý viditeľný na mobile
+  const [activeControl, setActiveControl] = useState<ControlKey>("zoom");
 
   const [mode, setMode] = useState<Mode>("move");
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
@@ -151,27 +158,40 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  const [dimTab, setDimTab] = useState<DimTab>("none");
+  // ======= Responsive stage width + breakpoint =======
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 960px)");
+    const applyMq = () => setIsMobile(mq.matches);
+    applyMq();
+    mq.addEventListener?.("change", applyMq);
+    return () => mq.removeEventListener?.("change", applyMq);
+  }, []);
 
-  const dragRef = useRef<{
-    active: boolean;
-    start: Vec2;
-    startPos: Vec2;
-    startRot3D: { yaw: number; pitch: number };
-    startRot2D: number;
-    startScalePct: { x: number; y: number; z: number };
-    handle: HandleId | null;
-    modeAtDown: Mode;
-  }>({
-    active: false,
-    start: { x: 0, y: 0 },
-    startPos: { x: 0.5, y: 0.72 },
-    startRot3D: { yaw: 0.35, pitch: -0.12 },
-    startRot2D: 0,
-    startScalePct: { x: 100, y: 100, z: 100 },
-    handle: null,
-    modeAtDown: "move",
-  });
+  useEffect(() => {
+    if (!stageRef.current) return;
+
+    const el = stageRef.current;
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.floor(entries[0]?.contentRect?.width || 0);
+      setStageW(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const displayScale = useMemo(() => {
+    if (!stageW) return 1;
+    // mobile: vždy fit-to-width + zoom
+    if (isMobile) {
+      const fit = stageW / canvasW;
+      return fit * (editorZoom / 100);
+    }
+    // desktop: zoom priamo v px (ako predtým)
+    return editorZoom / 100;
+  }, [stageW, isMobile, editorZoom, canvasW]);
+
+  const displayW = Math.round(canvasW * displayScale);
+  const displayH = Math.round(canvasH * displayScale);
 
   const selectedVariant = variants[selectedVariantIndex] || null;
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
@@ -201,7 +221,7 @@ export default function Page() {
     return null;
   }
 
-  // ✅ funkcia ostáva, len tlačidlá sú odstránené
+  // funkciu nechávame, ale tlačidlá sme odstránili
   function snapToGround() {
     if (!groundA || !groundB || !bboxRect) return;
 
@@ -238,7 +258,6 @@ export default function Page() {
     setGroundA(null);
     setGroundB(null);
     setError("");
-    setDimTab("none");
   }
 
   // background image load
@@ -337,7 +356,7 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, groundA, groundB]);
+  }, [bgImg, canvasW, canvasH, pos, rot2D, rot3D, scalePct, groundA, groundB]);
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -358,6 +377,23 @@ export default function Page() {
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
+  function drawBackgroundCover(ctx: CanvasRenderingContext2D) {
+    if (!bgImg) return;
+
+    // ✅ COVER (vyplní celé okno bez bielych pásov), centrované
+    const rw = canvasW / bgImg.width;
+    const rh = canvasH / bgImg.height;
+    const r = Math.max(rw, rh);
+
+    const dw = bgImg.width * r;
+    const dh = bgImg.height * r;
+
+    const dx = (canvasW - dw) / 2;
+    const dy = (canvasH - dh) / 2;
+
+    ctx.drawImage(bgImg, dx, dy, dw, dh);
+  }
+
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -367,16 +403,9 @@ export default function Page() {
     ctx.clearRect(0, 0, canvasW, canvasH);
 
     if (bgImg) {
-      const rw = canvasW / bgImg.width;
-      const rh = canvasH / bgImg.height;
-      const r = Math.min(rw, rh);
-      const dw = bgImg.width * r;
-      const dh = bgImg.height * r;
-      const dx = (canvasW - dw) / 2;
-      const dy = (canvasH - dh) / 2;
-      ctx.drawImage(bgImg, dx, dy, dw, dh);
+      drawBackgroundCover(ctx);
     } else {
-      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
       ctx.fillRect(0, 0, canvasW, canvasH);
       ctx.fillStyle = "rgba(0,0,0,0.65)";
       ctx.font = "14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
@@ -494,7 +523,15 @@ export default function Page() {
       out.height = outH;
 
       const octx = out.getContext("2d")!;
-      octx.drawImage(bgImg, 0, 0, outW, outH);
+      // pre export necháme pôvodnú fotku "contain" bez cropu (bezpečnejšie pre AI)
+      const rw = outW / bgImg.width;
+      const rh = outH / bgImg.height;
+      const r = Math.min(rw, rh);
+      const dw = bgImg.width * r;
+      const dh = bgImg.height * r;
+      const dx = (outW - dw) / 2;
+      const dy = (outH - dh) / 2;
+      octx.drawImage(bgImg, dx, dy, dw, dh);
 
       if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
         throw new Error("3D renderer nie je pripravený.");
@@ -518,14 +555,14 @@ export default function Page() {
       form.append("image", blob, "collage.jpg");
       form.append("prompt", prompt);
 
-      const r = await fetch("/api/render/openai", { method: "POST", body: form });
+      const r2 = await fetch("/api/render/openai", { method: "POST", body: form });
 
-      const j = await r.json().catch(async () => {
-        const t = await r.text().catch(() => "");
-        return { error: t || `HTTP ${r.status}` };
+      const j = await r2.json().catch(async () => {
+        const t = await r2.text().catch(() => "");
+        return { error: t || `HTTP ${r2.status}` };
       });
 
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      if (!r2.ok) throw new Error(j?.error || `HTTP ${r2.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
       setVariants((prev) => {
@@ -679,7 +716,7 @@ export default function Page() {
   }
 
   // ===========================
-  // ✅ 1 PRST = VŽDY EDIT (MOBILE)
+  // ✅ 1 PRST = VŽDY EDIT (MOBILE AJ DESKTOP)
   // ===========================
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
@@ -721,7 +758,6 @@ export default function Page() {
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
-
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -775,9 +811,29 @@ export default function Page() {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     setActiveHandle(null);
-
     if (mode === "resize") setMode("move");
   }
+
+  // canvas drag ref
+  const dragRef = useRef<{
+    active: boolean;
+    start: Vec2;
+    startPos: Vec2;
+    startRot3D: { yaw: number; pitch: number };
+    startRot2D: number;
+    startScalePct: { x: number; y: number; z: number };
+    handle: HandleId | null;
+    modeAtDown: Mode;
+  }>({
+    active: false,
+    start: { x: 0, y: 0 },
+    startPos: { x: 0.5, y: 0.72 },
+    startRot3D: { yaw: 0.35, pitch: -0.12 },
+    startRot2D: 0,
+    startScalePct: { x: 100, y: 100, z: 100 },
+    handle: null,
+    modeAtDown: "move",
+  });
 
   function Stepper() {
     const hasAnyVariant = variants.length > 0;
@@ -810,43 +866,52 @@ export default function Page() {
     );
   }
 
-  function ScaleRow({ label, value, axis }: { label: string; value: number; axis: "x" | "y" | "z" }) {
+  function RangeRow({
+    label,
+    value,
+    min,
+    max,
+    step,
+    onChange,
+    suffix,
+  }: {
+    label: string;
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    onChange: (v: number) => void;
+    suffix?: string;
+  }) {
     return (
-      <div className="scaleRow">
-        <div className="scaleLbl">{label}</div>
-
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, -SCALE_STEP)} aria-label={`Zmenšiť ${label}`}>
-          −
-        </button>
-
+      <div className="rangeRow">
+        <div className="rangeLbl">{label}</div>
         <input
           className="range range--big"
           type="range"
-          min={SCALE_MIN}
-          max={SCALE_MAX}
-          step={SCALE_STEP}
+          min={min}
+          max={max}
+          step={step}
           value={value}
           disabled={loading}
-          onChange={(e) => setScaleAxis(axis, Number(e.target.value))}
-          aria-label={`Rozmer ${label}`}
+          onChange={(e) => onChange(Number(e.target.value))}
         />
-
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, SCALE_STEP)} aria-label={`Zväčšiť ${label}`}>
-          +
-        </button>
-
-        <div className="scaleVal">{value.toFixed(1)}%</div>
+        <div className="rangeVal">
+          {label === "Zoom" ? `${Math.round(value)}%` : `${value.toFixed(1)}%`}
+          {suffix || ""}
+        </div>
       </div>
     );
   }
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  const dimSlider = dimTab === "x" ? <ScaleRow label="X" axis="x" value={scalePct.x} /> : dimTab === "y" ? <ScaleRow label="Y" axis="y" value={scalePct.y} /> : dimTab === "z" ? <ScaleRow label="Z" axis="z" value={scalePct.z} /> : null;
-
-  const toggleDim = (tab: DimTab) => {
-    setDimTab((prev) => (prev === tab ? "none" : tab));
-  };
+  const controlTitle = useMemo(() => {
+    if (activeControl === "zoom") return "Zoom";
+    if (activeControl === "x") return "Šírka (X)";
+    if (activeControl === "y") return "Výška (Y)";
+    return "Hĺbka (Z)";
+  }, [activeControl]);
 
   return (
     <section className="ter-wrap">
@@ -854,25 +919,26 @@ export default function Page() {
       <style jsx global>{`
         .ter-wrap :global(input.range--big) {
           width: 100%;
-          height: 42px;
+          height: 44px;
           accent-color: #111;
+          touch-action: pan-x;
         }
         .ter-wrap :global(input.range--big::-webkit-slider-runnable-track) {
           height: 10px;
           border-radius: 999px;
         }
         .ter-wrap :global(input.range--big::-webkit-slider-thumb) {
-          width: 22px;
-          height: 22px;
-          margin-top: -6px;
+          width: 24px;
+          height: 24px;
+          margin-top: -7px;
         }
         .ter-wrap :global(input.range--big::-moz-range-track) {
           height: 10px;
           border-radius: 999px;
         }
         .ter-wrap :global(input.range--big::-moz-range-thumb) {
-          width: 22px;
-          height: 22px;
+          width: 24px;
+          height: 24px;
           border: none;
         }
       `}</style>
@@ -881,7 +947,7 @@ export default function Page() {
       <style jsx global>{`
         .ter-wrap .ter-stepper.stepperWrap {
           overflow-x: auto;
-          padding: 14px 0 6px;
+          padding: 12px 0 6px;
         }
         .ter-wrap .ter-stepper .stepperBar {
           position: relative;
@@ -950,11 +1016,12 @@ export default function Page() {
         }
       `}</style>
 
+      {/* UI styles */}
       <style jsx>{`
         .ter-wrap {
           background: #f6f6f6;
           color: #111;
-          padding: 36px 16px;
+          padding: 18px 12px 32px;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
         }
         .container {
@@ -963,19 +1030,19 @@ export default function Page() {
         }
         .hero {
           display: grid;
-          gap: 10px;
-          margin-bottom: 18px;
+          gap: 8px;
+          margin-bottom: 12px;
         }
         h2 {
           margin: 0;
-          font-size: 34px;
+          font-size: 30px;
           line-height: 1.15;
           letter-spacing: -0.02em;
         }
         .sub {
           margin: 0;
           color: rgba(0, 0, 0, 0.7);
-          font-size: 16px;
+          font-size: 14px;
           max-width: 110ch;
         }
 
@@ -986,17 +1053,17 @@ export default function Page() {
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
           overflow: hidden;
         }
+
         .cardHeader {
-          padding: 14px 16px;
+          padding: 12px 14px;
           border-bottom: 1px solid rgba(0, 0, 0, 0.06);
           display: flex;
           justify-content: space-between;
           align-items: center;
           gap: 12px;
-          flex-wrap: wrap;
         }
         .cardTitle {
-          font-size: 16px;
+          font-size: 15px;
           font-weight: 900;
           letter-spacing: -0.01em;
         }
@@ -1006,39 +1073,37 @@ export default function Page() {
           font-weight: 700;
         }
         .cardBody {
-          padding: 14px 16px 18px;
+          padding: 12px 12px 14px;
         }
 
+        /* 2 top bars */
         .topBars {
           display: grid;
           gap: 10px;
-          margin-bottom: 12px;
+          margin-bottom: 10px;
         }
-
         .bar {
           background: rgba(0, 0, 0, 0.02);
           border: 1px solid rgba(0, 0, 0, 0.08);
           border-radius: 14px;
           padding: 10px;
           display: flex;
+          gap: 10px;
           align-items: center;
           justify-content: space-between;
-          gap: 10px;
           flex-wrap: wrap;
         }
-
         .barLeft,
         .barRight {
           display: flex;
-          align-items: center;
           gap: 10px;
+          align-items: center;
           flex-wrap: wrap;
         }
 
         .fieldInline {
           display: grid;
           gap: 6px;
-          min-width: 240px;
         }
         .label {
           font-size: 11px;
@@ -1048,14 +1113,15 @@ export default function Page() {
           letter-spacing: 0.06em;
         }
         .input,
-        .select {
+        .select,
+        .textarea {
           width: 100%;
           padding: 10px 12px;
           border-radius: 12px;
           border: 1px solid rgba(0, 0, 0, 0.12);
           background: #fff;
           outline: none;
-          font-weight: 750;
+          font-weight: 700;
           color: #111;
         }
 
@@ -1083,32 +1149,33 @@ export default function Page() {
           box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
         }
 
-        .pillGroup {
+        .chips {
           display: inline-flex;
           gap: 6px;
           flex-wrap: wrap;
+          align-items: center;
         }
-        .pill {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(255, 255, 255, 0.9);
+        .chip {
+          border: 1px solid rgba(0, 0, 0, 0.14);
+          background: #fff;
+          color: #111;
+          padding: 8px 10px;
           border-radius: 999px;
-          padding: 9px 10px;
-          font-weight: 900;
-          font-size: 13px;
+          font-weight: 950;
+          font-size: 12px;
           cursor: pointer;
         }
-        .pill.active {
+        .chip.active {
           background: #111;
-          color: #fff;
           border-color: #111;
+          color: #fff;
         }
 
-        .btnRowRight {
-          display: flex;
+        .btnsRight {
+          margin-left: auto;
+          display: inline-flex;
           gap: 8px;
           align-items: center;
-          justify-content: flex-end;
-          margin-left: auto;
         }
 
         .ter-btn {
@@ -1119,6 +1186,7 @@ export default function Page() {
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
           color: #111;
+          white-space: nowrap;
         }
         .ter-btn:disabled {
           opacity: 0.55;
@@ -1127,38 +1195,53 @@ export default function Page() {
         .ter-btn--ghost {
           background: rgba(0, 0, 0, 0.03);
           border-color: rgba(0, 0, 0, 0.12);
+          color: #111;
         }
         .ter-btn--primary {
           background: #111;
           color: #fff;
           border-color: #111;
-          box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
         }
 
-        .zoomWrap {
-          display: grid;
-          gap: 6px;
-          min-width: 260px;
-        }
-        .zoomMeta {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 10px;
-          font-size: 12px;
-          font-weight: 850;
-          color: rgba(0, 0, 0, 0.7);
-          font-variant-numeric: tabular-nums;
-        }
-
-        .sliderArea {
+        /* slider area under bar 2 */
+        .controlPanel {
           margin-top: 10px;
+          background: rgba(0, 0, 0, 0.02);
           border: 1px solid rgba(0, 0, 0, 0.08);
-          background: rgba(0, 0, 0, 0.015);
           border-radius: 14px;
           padding: 10px;
         }
+        .controlTitle {
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.7);
+          margin: 0 0 8px;
+        }
+        .rangeRow {
+          display: grid;
+          grid-template-columns: 90px 1fr 84px;
+          gap: 10px;
+          align-items: center;
+        }
+        .rangeLbl {
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.75);
+          font-size: 12px;
+        }
+        .rangeVal {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.7);
+          font-size: 12px;
+        }
 
+        /* stage */
+        .stageWrap {
+          display: grid;
+          gap: 10px;
+        }
         .canvasShell {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
@@ -1166,54 +1249,33 @@ export default function Page() {
           overflow: hidden;
           padding: 10px;
         }
+        .stage {
+          width: 100%;
+          display: grid;
+          place-items: center;
+        }
         canvas {
           border-radius: 12px;
           display: block;
           background: #fff;
         }
 
-        .miniBtn {
-          width: 34px;
-          height: 34px;
-          min-width: 34px;
-          min-height: 34px;
-          border-radius: 10px;
-          border: 1px solid rgba(0, 0, 0, 0.16);
-          background: rgba(0, 0, 0, 0.03);
-          color: #111;
-          font-weight: 950;
-          font-size: 18px;
-          line-height: 1;
-          display: inline-grid;
-          place-items: center;
-          cursor: pointer;
-          user-select: none;
+        .note {
+          font-size: 13px;
+          color: rgba(0, 0, 0, 0.65);
+          font-weight: 650;
         }
-        .miniBtn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
+        .errorBox {
+          margin-top: 10px;
+          padding: 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(160, 0, 0, 0.25);
+          background: rgba(210, 0, 0, 0.06);
+          color: rgba(120, 0, 0, 0.95);
+          font-weight: 800;
         }
 
-        .scaleRow {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .scaleLbl {
-          width: 18px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.75);
-          flex: 0 0 auto;
-        }
-        .scaleVal {
-          width: 76px;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.7);
-          flex: 0 0 auto;
-        }
-
+        /* variants */
         .variantsWrap {
           display: grid;
           gap: 10px;
@@ -1236,7 +1298,7 @@ export default function Page() {
         .variantsNote {
           font-size: 12px;
           color: rgba(0, 0, 0, 0.6);
-          font-weight: 800;
+          font-weight: 700;
         }
         .variantsGrid {
           display: grid;
@@ -1315,7 +1377,7 @@ export default function Page() {
         .smallBtn {
           border-radius: 10px;
           padding: 9px 10px;
-          font-weight: 950;
+          font-weight: 900;
           cursor: pointer;
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
@@ -1332,22 +1394,7 @@ export default function Page() {
           color: #fff;
         }
 
-        .note {
-          font-size: 13px;
-          color: rgba(0, 0, 0, 0.65);
-          font-weight: 650;
-        }
-        .errorBox {
-          margin-top: 10px;
-          padding: 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(160, 0, 0, 0.25);
-          background: rgba(210, 0, 0, 0.06);
-          color: rgba(120, 0, 0, 0.95);
-          font-weight: 850;
-        }
-
-        .downloadRowBottom {
+        .bottomActions {
           display: flex;
           justify-content: flex-end;
           margin-top: 6px;
@@ -1355,27 +1402,23 @@ export default function Page() {
 
         @media (max-width: 960px) {
           h2 {
-            font-size: 28px;
+            font-size: 26px;
           }
           .variantsGrid {
             grid-template-columns: 1fr;
           }
           .variantCard img {
-            height: 170px;
+            height: 180px;
           }
-          .fieldInline {
-            min-width: 100%;
+          .rangeRow {
+            grid-template-columns: 78px 1fr 76px;
           }
-          .zoomWrap {
-            min-width: 100%;
-          }
-          .btnRowRight {
-            width: 100%;
-            justify-content: flex-end;
+          .canvasShell {
+            padding: 8px;
           }
         }
 
-        /* Modal */
+        /* modal */
         .modalOverlay {
           position: fixed;
           inset: 0;
@@ -1424,23 +1467,10 @@ export default function Page() {
         .span2 {
           grid-column: 1 / -1;
         }
-        .textarea {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 700;
-          color: #111;
-          min-height: 96px;
-          resize: vertical;
-          line-height: 1.35;
-        }
         .errText {
           color: rgba(160, 0, 0, 0.9);
           font-size: 12px;
-          font-weight: 850;
+          font-weight: 800;
         }
         .dimsGrid {
           display: grid;
@@ -1502,9 +1532,7 @@ export default function Page() {
         <div className="hero">
           <h2>Vizualizácia pergoly na vašom dome</h2>
           <p className="sub">
-            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b>.
-            <br />
-            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete (plus môžete dopísať poznámku).
+            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b>. Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie.
           </p>
           <Stepper />
         </div>
@@ -1518,13 +1546,13 @@ export default function Page() {
           </div>
 
           <div className="cardBody">
-            {/* ✅ TOP BARS */}
+            {/* ===== TOP BARS ===== */}
             <div className="topBars">
-              {/* Bar 1: Upload + typ + zoom */}
+              {/* BAR 1 */}
               <div className="bar">
                 <div className="barLeft">
-                  <div className="fieldInline">
-                    <div className="label">Fotka (podklad)</div>
+                  <div className="fieldInline" style={{ minWidth: isMobile ? 220 : 280 }}>
+                    <div className="label">Nahraj fotku (podklad)</div>
                     <input
                       className="input"
                       type="file"
@@ -1537,8 +1565,8 @@ export default function Page() {
                     />
                   </div>
 
-                  <div className="fieldInline">
-                    <div className="label">Typ pergoly</div>
+                  <div className="fieldInline" style={{ minWidth: isMobile ? 220 : 280 }}>
+                    <div className="label">Druh pergoly</div>
                     <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
                       <option value="bioklim">Bioklimatická pergola</option>
                       <option value="pevna">Pergola s pevnou strechou</option>
@@ -1546,20 +1574,9 @@ export default function Page() {
                     </select>
                   </div>
                 </div>
-
-                <div className="barRight">
-                  <div className="zoomWrap">
-                    <div className="label">Zoom</div>
-                    <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-                    <div className="zoomMeta">
-                      <span>{editorZoom}%</span>
-                      <span style={{ opacity: 0.65 }}>Tip: 100% = default</span>
-                    </div>
-                  </div>
-                </div>
               </div>
 
-              {/* Bar 2: mode + dim tabs + Reset + Generate (right aligned) */}
+              {/* BAR 2 */}
               <div className="bar">
                 <div className="barLeft">
                   <div className="tabs" role="tablist" aria-label="Režimy">
@@ -1571,57 +1588,80 @@ export default function Page() {
                     </button>
                   </div>
 
-                  <div className="pillGroup" aria-label="Rozmery">
-                    <button type="button" className={`pill ${dimTab === "x" ? "active" : ""}`} onClick={() => toggleDim("x")}>
+                  <div className="chips" aria-label="Ovládanie rozmerov">
+                    <button type="button" className={`chip ${activeControl === "x" ? "active" : ""}`} onClick={() => setActiveControl("x")}>
                       Šírka
                     </button>
-                    <button type="button" className={`pill ${dimTab === "y" ? "active" : ""}`} onClick={() => toggleDim("y")}>
+                    <button type="button" className={`chip ${activeControl === "y" ? "active" : ""}`} onClick={() => setActiveControl("y")}>
                       Výška
                     </button>
-                    <button type="button" className={`pill ${dimTab === "z" ? "active" : ""}`} onClick={() => toggleDim("z")}>
+                    <button type="button" className={`chip ${activeControl === "z" ? "active" : ""}`} onClick={() => setActiveControl("z")}>
                       Hĺbka
                     </button>
                   </div>
-                </div>
 
-                {/* ✅ Reset za Hĺbka, Generate vedľa, zarovnanie doprava */}
-                <div className="btnRowRight">
-                  <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
-                    Reset
-                  </button>
-                  <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
-                    {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
-                  </button>
+                  <div className="btnsRight">
+                    <button
+                      type="button"
+                      className="ter-btn ter-btn--ghost"
+                      onClick={() => {
+                        setActiveControl("zoom");
+                        resetAll();
+                      }}
+                      disabled={loading}
+                      title="Reset + vráti na Zoom"
+                    >
+                      Reset
+                    </button>
+
+                    <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
+                      {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Slider pod lištami */}
-              {dimSlider ? <div className="sliderArea">{dimSlider}</div> : null}
+              {/* SLIDER AREA UNDER BAR 2 (Zoom tu, a na jeho mieste aj X/Y/Z) */}
+              <div className="controlPanel">
+                <p className="controlTitle">{controlTitle}</p>
+
+                {activeControl === "zoom" ? (
+                  <RangeRow label="Zoom" value={editorZoom} min={50} max={160} step={5} onChange={(v) => setEditorZoom(v)} />
+                ) : activeControl === "x" ? (
+                  <RangeRow label="X" value={scalePct.x} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("x", v)} />
+                ) : activeControl === "y" ? (
+                  <RangeRow label="Y" value={scalePct.y} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("y", v)} />
+                ) : (
+                  <RangeRow label="Z" value={scalePct.z} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("z", v)} />
+                )}
+              </div>
+            </div>
+
+            {/* ===== STAGE (bigger mobile, centered, no white left gap) ===== */}
+            <div className="stageWrap">
+              <div className="canvasShell">
+                <div className="stage" ref={stageRef}>
+                  <canvas
+                    ref={canvasRef}
+                    width={canvasW}
+                    height={canvasH}
+                    style={{
+                      width: `${displayW}px`,
+                      height: `${displayH}px`,
+                      touchAction: "none",
+                    }}
+                    onPointerDown={onPointerDown}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                    onPointerCancel={onPointerUp}
+                  />
+                </div>
+              </div>
 
               {error ? <div className="errorBox">Chyba: {error}</div> : null}
             </div>
 
-            {/* Canvas */}
-            <div className="canvasShell">
-              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
-                <canvas
-                  ref={canvasRef}
-                  width={canvasW}
-                  height={canvasH}
-                  style={{
-                    width: `${(canvasW * editorZoom) / 100}px`,
-                    height: `${(canvasH * editorZoom) / 100}px`,
-                    touchAction: "none",
-                  }}
-                  onPointerDown={onPointerDown}
-                  onPointerMove={onPointerMove}
-                  onPointerUp={onPointerUp}
-                  onPointerCancel={onPointerUp}
-                />
-              </div>
-            </div>
-
-            {/* Variants */}
+            {/* ===== VARIANTS ===== */}
             <div className="variantsWrap">
               <div className="variantsHead">
                 <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
@@ -1683,14 +1723,14 @@ export default function Page() {
                 })}
               </div>
 
-              <div className="note">Tip: 1 prst = posun/otočenie (podľa režimu) • rohy = zmena veľkosti</div>
-
-              {/* ✅ Stiahnuť všetky iba raz – dole pod variantami */}
-              <div className="downloadRowBottom">
+              {/* ✅ len dole pod variantami */}
+              <div className="bottomActions">
                 <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
                   Stiahnuť všetky ({variants.length})
                 </button>
               </div>
+
+              <div className="note">Tip: 1 prst = posun/otoč podľa režimu • rohy = zmena veľkosti</div>
             </div>
           </div>
         </div>
@@ -1804,7 +1844,7 @@ export default function Page() {
                   />
                 </div>
 
-                <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
+                <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
                   <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm} disabled={leadSubmitting}>
                     Zrušiť
                   </button>
