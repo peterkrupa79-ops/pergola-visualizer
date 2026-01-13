@@ -15,10 +15,7 @@ const SCALE_MIN = 1;
 const SCALE_MAX = 200;
 
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
-const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
-
-// ✅ menší štart na mobile (aby bol celý viditeľný)
-const MOBILE_DEFAULT_SCALE_PCT = 78;
+const TARGET_MODEL_MAX_DIM_AT_100 = 1.45; // ✅ menší model default (lepší mobil)
 
 const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
 Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
@@ -76,7 +73,7 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
-type ControlPick = "none" | "x" | "y" | "z";
+type DimTab = "none" | "x" | "y" | "z";
 
 export default function Page() {
   const [bgFile, setBgFile] = useState<File | null>(null);
@@ -93,13 +90,9 @@ export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasW] = useState(980);
   const [canvasH] = useState(560);
-
-  // ✅ jednoduchší zoom: nech je to stabilné, default 100 (desktop), mobile sa rieši scalePct
-  const [editorZoom] = useState(100);
+  const [editorZoom, setEditorZoom] = useState(100);
 
   const [mode, setMode] = useState<Mode>("move");
-  const [activeControl, setActiveControl] = useState<ControlPick>("none");
-
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
@@ -158,27 +151,8 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // ✅ detekcia mobile + menší model na štart
-  const isMobileRef = useRef(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 960px)");
-    const apply = () => {
-      isMobileRef.current = mq.matches;
-      // keď prejdeš na mobile, daj menší štart, ale len ak je to "default" (aby sme neprepisovali user nastavenia)
-      if (mq.matches) {
-        setScalePct((s) => {
-          // ak je stále na 100/100/100, zmenšíme štart
-          const isDefault = Math.abs(s.x - 100) < 0.001 && Math.abs(s.y - 100) < 0.001 && Math.abs(s.z - 100) < 0.001;
-          return isDefault ? { x: MOBILE_DEFAULT_SCALE_PCT, y: MOBILE_DEFAULT_SCALE_PCT, z: MOBILE_DEFAULT_SCALE_PCT } : s;
-        });
-      }
-    };
-    apply();
-    mq.addEventListener?.("change", apply);
-    return () => mq.removeEventListener?.("change", apply);
-  }, []);
+  const [dimTab, setDimTab] = useState<DimTab>("none");
 
-  // canvas drag ref
   const dragRef = useRef<{
     active: boolean;
     start: Vec2;
@@ -227,7 +201,7 @@ export default function Page() {
     return null;
   }
 
-  // ✅ funkciu nechávame (len odstránené tlačidlá)
+  // ✅ funkcia ostáva, len tlačidlá sú odstránené
   function snapToGround() {
     if (!groundA || !groundB || !bboxRect) return;
 
@@ -264,6 +238,7 @@ export default function Page() {
     setGroundA(null);
     setGroundB(null);
     setError("");
+    setDimTab("none");
   }
 
   // background image load
@@ -709,7 +684,6 @@ export default function Page() {
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
-    // ✅ vždy: zablokuj scroll a chyť pointer
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -748,7 +722,6 @@ export default function Page() {
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
 
-    // ✅ počas editovania vždy blokuj default (scroll)
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -858,7 +831,7 @@ export default function Page() {
           aria-label={`Rozmer ${label}`}
         />
 
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, SCALE_STEP)} aria-label={`Zväččšiť ${label}`}>
+        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, SCALE_STEP)} aria-label={`Zväčšiť ${label}`}>
           +
         </button>
 
@@ -869,8 +842,11 @@ export default function Page() {
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  const activeSlider =
-    activeControl === "x" ? <ScaleRow label="X" axis="x" value={scalePct.x} /> : activeControl === "y" ? <ScaleRow label="Y" axis="y" value={scalePct.y} /> : activeControl === "z" ? <ScaleRow label="Z" axis="z" value={scalePct.z} /> : null;
+  const dimSlider = dimTab === "x" ? <ScaleRow label="X" axis="x" value={scalePct.x} /> : dimTab === "y" ? <ScaleRow label="Y" axis="y" value={scalePct.y} /> : dimTab === "z" ? <ScaleRow label="Z" axis="z" value={scalePct.z} /> : null;
+
+  const toggleDim = (tab: DimTab) => {
+    setDimTab((prev) => (prev === tab ? "none" : tab));
+  };
 
   return (
     <section className="ter-wrap">
@@ -974,12 +950,11 @@ export default function Page() {
         }
       `}</style>
 
-      {/* UI styles */}
       <style jsx>{`
         .ter-wrap {
           background: #f6f6f6;
           color: #111;
-          padding: 42px 16px 52px;
+          padding: 36px 16px;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
         }
         .container {
@@ -1018,6 +993,7 @@ export default function Page() {
           justify-content: space-between;
           align-items: center;
           gap: 12px;
+          flex-wrap: wrap;
         }
         .cardTitle {
           font-size: 16px;
@@ -1030,35 +1006,57 @@ export default function Page() {
           font-weight: 700;
         }
         .cardBody {
-          padding: 14px 16px 16px;
+          padding: 14px 16px 18px;
         }
 
         .topBars {
           display: grid;
           gap: 10px;
-          margin-bottom: 10px;
+          margin-bottom: 12px;
         }
+
         .bar {
+          background: rgba(0, 0, 0, 0.02);
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          border-radius: 14px;
+          padding: 10px;
           display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
-          padding: 10px 10px;
-          border-radius: 14px;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          background: rgba(0, 0, 0, 0.015);
+          gap: 10px;
+          flex-wrap: wrap;
         }
+
         .barLeft,
         .barRight {
           display: flex;
+          align-items: center;
           gap: 10px;
           flex-wrap: wrap;
-          align-items: center;
         }
-        .barRight {
-          justify-content: flex-end;
-          margin-left: auto;
+
+        .fieldInline {
+          display: grid;
+          gap: 6px;
+          min-width: 240px;
+        }
+        .label {
+          font-size: 11px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.65);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .input,
+        .select {
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          outline: none;
+          font-weight: 750;
+          color: #111;
         }
 
         .tabs {
@@ -1085,31 +1083,42 @@ export default function Page() {
           box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
         }
 
-        .miniTab {
-          border: 1px solid rgba(0, 0, 0, 0.14);
-          background: #fff;
+        .pillGroup {
+          display: inline-flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .pill {
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: rgba(255, 255, 255, 0.9);
           border-radius: 999px;
-          padding: 9px 12px;
+          padding: 9px 10px;
           font-weight: 900;
           font-size: 13px;
           cursor: pointer;
-          color: rgba(0, 0, 0, 0.78);
         }
-        .miniTab.active {
+        .pill.active {
           background: #111;
-          border-color: #111;
           color: #fff;
+          border-color: #111;
+        }
+
+        .btnRowRight {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          justify-content: flex-end;
+          margin-left: auto;
         }
 
         .ter-btn {
           border-radius: 12px;
-          padding: 11px 12px;
+          padding: 10px 12px;
           font-weight: 950;
           cursor: pointer;
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
           color: #111;
-          white-space: nowrap;
         }
         .ter-btn:disabled {
           opacity: 0.55;
@@ -1118,42 +1127,36 @@ export default function Page() {
         .ter-btn--ghost {
           background: rgba(0, 0, 0, 0.03);
           border-color: rgba(0, 0, 0, 0.12);
-          color: #111;
         }
         .ter-btn--primary {
-          background: #0b7a4b;
-          border-color: #0b7a4b;
+          background: #111;
           color: #fff;
-          box-shadow: 0 14px 28px rgba(11, 122, 75, 0.22);
+          border-color: #111;
+          box-shadow: 0 10px 26px rgba(0, 0, 0, 0.14);
         }
 
-        .field {
+        .zoomWrap {
           display: grid;
           gap: 6px;
+          min-width: 260px;
         }
-        .label {
+        .zoomMeta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
           font-size: 12px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.65);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
+          font-weight: 850;
+          color: rgba(0, 0, 0, 0.7);
+          font-variant-numeric: tabular-nums;
         }
-        .input,
-        .select,
-        .textarea {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 800;
-          color: #111;
-        }
-        .textarea {
-          min-height: 96px;
-          resize: vertical;
-          line-height: 1.35;
+
+        .sliderArea {
+          margin-top: 10px;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          background: rgba(0, 0, 0, 0.015);
+          border-radius: 14px;
+          padding: 10px;
         }
 
         .canvasShell {
@@ -1167,14 +1170,6 @@ export default function Page() {
           border-radius: 12px;
           display: block;
           background: #fff;
-        }
-
-        .sliderWrap {
-          margin-top: 10px;
-          padding: 10px;
-          border-radius: 14px;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          background: rgba(0, 0, 0, 0.015);
         }
 
         .miniBtn {
@@ -1219,21 +1214,6 @@ export default function Page() {
           flex: 0 0 auto;
         }
 
-        .note {
-          font-size: 13px;
-          color: rgba(0, 0, 0, 0.65);
-          font-weight: 650;
-        }
-        .errorBox {
-          margin-top: 10px;
-          padding: 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(160, 0, 0, 0.25);
-          background: rgba(210, 0, 0, 0.06);
-          color: rgba(120, 0, 0, 0.95);
-          font-weight: 800;
-        }
-
         .variantsWrap {
           display: grid;
           gap: 10px;
@@ -1256,7 +1236,7 @@ export default function Page() {
         .variantsNote {
           font-size: 12px;
           color: rgba(0, 0, 0, 0.6);
-          font-weight: 700;
+          font-weight: 800;
         }
         .variantsGrid {
           display: grid;
@@ -1335,7 +1315,7 @@ export default function Page() {
         .smallBtn {
           border-radius: 10px;
           padding: 9px 10px;
-          font-weight: 900;
+          font-weight: 950;
           cursor: pointer;
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
@@ -1352,6 +1332,27 @@ export default function Page() {
           color: #fff;
         }
 
+        .note {
+          font-size: 13px;
+          color: rgba(0, 0, 0, 0.65);
+          font-weight: 650;
+        }
+        .errorBox {
+          margin-top: 10px;
+          padding: 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(160, 0, 0, 0.25);
+          background: rgba(210, 0, 0, 0.06);
+          color: rgba(120, 0, 0, 0.95);
+          font-weight: 850;
+        }
+
+        .downloadRowBottom {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 6px;
+        }
+
         @media (max-width: 960px) {
           h2 {
             font-size: 28px;
@@ -1360,10 +1361,21 @@ export default function Page() {
             grid-template-columns: 1fr;
           }
           .variantCard img {
-            height: 160px;
+            height: 170px;
+          }
+          .fieldInline {
+            min-width: 100%;
+          }
+          .zoomWrap {
+            min-width: 100%;
+          }
+          .btnRowRight {
+            width: 100%;
+            justify-content: flex-end;
           }
         }
 
+        /* Modal */
         .modalOverlay {
           position: fixed;
           inset: 0;
@@ -1412,10 +1424,23 @@ export default function Page() {
         .span2 {
           grid-column: 1 / -1;
         }
+        .textarea {
+          width: 100%;
+          padding: 11px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          outline: none;
+          font-weight: 700;
+          color: #111;
+          min-height: 96px;
+          resize: vertical;
+          line-height: 1.35;
+        }
         .errText {
           color: rgba(160, 0, 0, 0.9);
           font-size: 12px;
-          font-weight: 800;
+          font-weight: 850;
         }
         .dimsGrid {
           display: grid;
@@ -1493,13 +1518,13 @@ export default function Page() {
           </div>
 
           <div className="cardBody">
-            {/* ✅ 2 horné lišty */}
+            {/* ✅ TOP BARS */}
             <div className="topBars">
-              {/* 1. lišta */}
-              <div className="bar" role="group" aria-label="Podklad a typ pergoly">
+              {/* Bar 1: Upload + typ + zoom */}
+              <div className="bar">
                 <div className="barLeft">
-                  <div className="field" style={{ minWidth: 220 }}>
-                    <div className="label">Nahraj fotku (podklad)</div>
+                  <div className="fieldInline">
+                    <div className="label">Fotka (podklad)</div>
                     <input
                       className="input"
                       type="file"
@@ -1512,8 +1537,8 @@ export default function Page() {
                     />
                   </div>
 
-                  <div className="field" style={{ minWidth: 240 }}>
-                    <div className="label">Druh pergoly</div>
+                  <div className="fieldInline">
+                    <div className="label">Typ pergoly</div>
                     <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
                       <option value="bioklim">Bioklimatická pergola</option>
                       <option value="pevna">Pergola s pevnou strechou</option>
@@ -1523,82 +1548,60 @@ export default function Page() {
                 </div>
 
                 <div className="barRight">
-                  <div className="note" style={{ fontWeight: 800 }}>
-                    {leadSubmitted ? "✅ Sťahovanie odomknuté" : "🔒 Sťahovanie po formulári"}
+                  <div className="zoomWrap">
+                    <div className="label">Zoom</div>
+                    <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
+                    <div className="zoomMeta">
+                      <span>{editorZoom}%</span>
+                      <span style={{ opacity: 0.65 }}>Tip: 100% = default</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* 2. lišta */}
-              <div className="bar" role="group" aria-label="Režimy a rozmery">
+              {/* Bar 2: mode + dim tabs + Reset + Generate (right aligned) */}
+              <div className="bar">
                 <div className="barLeft">
                   <div className="tabs" role="tablist" aria-label="Režimy">
-                    <button
-                      type="button"
-                      className={`tab ${mode === "move" ? "active" : ""}`}
-                      onClick={() => {
-                        setMode("move");
-                        setActiveControl("none");
-                      }}
-                    >
+                    <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
                       Posun
                     </button>
-                    <button
-                      type="button"
-                      className={`tab ${mode === "rotate3d" ? "active" : ""}`}
-                      onClick={() => {
-                        setMode("rotate3d");
-                        setActiveControl("none");
-                      }}
-                    >
+                    <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
                       Otoč 3D
                     </button>
                   </div>
 
-                  <button
-                    type="button"
-                    className={`miniTab ${activeControl === "x" ? "active" : ""}`}
-                    onClick={() => setActiveControl((p) => (p === "x" ? "none" : "x"))}
-                    aria-label="Šírka"
-                  >
-                    Šírka
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`miniTab ${activeControl === "y" ? "active" : ""}`}
-                    onClick={() => setActiveControl((p) => (p === "y" ? "none" : "y"))}
-                    aria-label="Výška"
-                  >
-                    Výška
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`miniTab ${activeControl === "z" ? "active" : ""}`}
-                    onClick={() => setActiveControl((p) => (p === "z" ? "none" : "z"))}
-                    aria-label="Hĺbka"
-                  >
-                    Hĺbka
-                  </button>
+                  <div className="pillGroup" aria-label="Rozmery">
+                    <button type="button" className={`pill ${dimTab === "x" ? "active" : ""}`} onClick={() => toggleDim("x")}>
+                      Šírka
+                    </button>
+                    <button type="button" className={`pill ${dimTab === "y" ? "active" : ""}`} onClick={() => toggleDim("y")}>
+                      Výška
+                    </button>
+                    <button type="button" className={`pill ${dimTab === "z" ? "active" : ""}`} onClick={() => toggleDim("z")}>
+                      Hĺbka
+                    </button>
+                  </div>
                 </div>
 
-                {/* ✅ Reset za Hĺbka, a Vygenerovať vedľa Reset, vpravo, zvýraznené */}
-                <div className="barRight">
-                  <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll} disabled={loading}>
+                {/* ✅ Reset za Hĺbka, Generate vedľa, zarovnanie doprava */}
+                <div className="btnRowRight">
+                  <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
                     Reset
                   </button>
-
                   <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
                     {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                   </button>
                 </div>
               </div>
 
-              {/* slider pod 2. lištou */}
-              {activeSlider ? <div className="sliderWrap">{activeSlider}</div> : null}
+              {/* Slider pod lištami */}
+              {dimSlider ? <div className="sliderArea">{dimSlider}</div> : null}
+
+              {error ? <div className="errorBox">Chyba: {error}</div> : null}
             </div>
 
+            {/* Canvas */}
             <div className="canvasShell">
               <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
                 <canvas
@@ -1618,8 +1621,7 @@ export default function Page() {
               </div>
             </div>
 
-            {error ? <div className="errorBox">Chyba: {error}</div> : null}
-
+            {/* Variants */}
             <div className="variantsWrap">
               <div className="variantsHead">
                 <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
@@ -1681,14 +1683,14 @@ export default function Page() {
                 })}
               </div>
 
-              {/* ✅ jediný "Stiahnuť všetky" je tu dole pod variantami */}
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <div className="note">Tip: 1 prst = posun/otočenie (podľa režimu) • rohy = zmena veľkosti</div>
+
+              {/* ✅ Stiahnuť všetky iba raz – dole pod variantami */}
+              <div className="downloadRowBottom">
                 <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
                   Stiahnuť všetky ({variants.length})
                 </button>
               </div>
-
-              <div className="note">Tip: 1 prst = posun / otoč podľa režimu • rohy = zmena veľkosti</div>
             </div>
           </div>
         </div>
@@ -1727,13 +1729,7 @@ export default function Page() {
                     {variants.map((v, i) => {
                       const sel = selectedVariantIndex === i;
                       return (
-                        <div
-                          key={v.id}
-                          className={`pickCard ${sel ? "selected" : ""}`}
-                          onClick={() => setSelectedVariantIndex(i)}
-                          role="button"
-                          tabIndex={0}
-                        >
+                        <div key={v.id} className={`pickCard ${sel ? "selected" : ""}`} onClick={() => setSelectedVariantIndex(i)} role="button" tabIndex={0}>
                           <div className="pickTop">
                             <div>
                               <b>Variant {i + 1}</b>
@@ -1749,25 +1745,25 @@ export default function Page() {
                   {leadErr.selectedVariant ? <div className="errText" style={{ marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
                 </div>
 
-                <div className="field">
+                <div className="fieldInline">
                   <div className="label">Meno *</div>
                   <input className="input" value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" />
                   {leadErr.name ? <div className="errText">{leadErr.name}</div> : null}
                 </div>
 
-                <div className="field">
+                <div className="fieldInline">
                   <div className="label">Mesto *</div>
                   <input className="input" value={lead.city} onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))} placeholder="Mesto" />
                   {leadErr.city ? <div className="errText">{leadErr.city}</div> : null}
                 </div>
 
-                <div className="field">
+                <div className="fieldInline">
                   <div className="label">Telefón *</div>
                   <input className="input" value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" />
                   {leadErr.phone ? <div className="errText">{leadErr.phone}</div> : null}
                 </div>
 
-                <div className="field">
+                <div className="fieldInline">
                   <div className="label">Emailová adresa *</div>
                   <input className="input" value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" />
                   {leadErr.email ? <div className="errText">{leadErr.email}</div> : null}
@@ -1778,19 +1774,19 @@ export default function Page() {
                     Približné rozmery pergoly *
                   </div>
                   <div className="dimsGrid">
-                    <div className="field">
+                    <div className="fieldInline">
                       <div className="label">Šírka</div>
                       <input className="input" value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" />
                       {leadErr.approxWidth ? <div className="errText">{leadErr.approxWidth}</div> : null}
                     </div>
 
-                    <div className="field">
+                    <div className="fieldInline">
                       <div className="label">Hĺbka</div>
                       <input className="input" value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" />
                       {leadErr.approxDepth ? <div className="errText">{leadErr.approxDepth}</div> : null}
                     </div>
 
-                    <div className="field">
+                    <div className="fieldInline">
                       <div className="label">Výška</div>
                       <input className="input" value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.5 m" />
                       {leadErr.approxHeight ? <div className="errText">{leadErr.approxHeight}</div> : null}
@@ -1808,7 +1804,7 @@ export default function Page() {
                   />
                 </div>
 
-                <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+                <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8, flexWrap: "wrap" }}>
                   <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm} disabled={leadSubmitting}>
                     Zrušiť
                   </button>
