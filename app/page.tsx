@@ -92,7 +92,9 @@ export default function Page() {
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
-  const [scalePct, setScalePct] = useState({ x: 88, y: 88, z: 88 }); // menšie defaulty -> na mobile viditeľnejšie
+
+  // menšie defaulty -> na mobile viditeľnejšie
+  const [scalePct, setScalePct] = useState({ x: 88, y: 88, z: 88 });
 
   const [bboxRect, setBboxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
@@ -153,7 +155,6 @@ export default function Page() {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
       isMobileRef.current = mq.matches;
-      // na mobile daj menšiu pergolu, aby bola celá viditeľná hneď
       if (mq.matches) {
         setScalePct((s) => ({ x: Math.min(s.x, 82), y: Math.min(s.y, 82), z: Math.min(s.z, 82) }));
         setEditorZoom((z) => Math.min(Math.max(z, 105), 125));
@@ -213,13 +214,6 @@ export default function Page() {
     return null;
   }
 
-  function bumpScaleAxis(axis: "x" | "y" | "z", delta: number) {
-    setScalePct((prev) => {
-      const next = { ...prev };
-      next[axis] = clampPct(prev[axis] + delta);
-      return next;
-    });
-  }
   function setScaleAxis(axis: "x" | "y" | "z", value: number) {
     setScalePct((prev) => ({ ...prev, [axis]: clampPct(value) }));
   }
@@ -320,7 +314,6 @@ export default function Page() {
     }
 
     initThree();
-
     return () => {
       cancelled = true;
     };
@@ -360,7 +353,7 @@ export default function Page() {
     ctx.clearRect(0, 0, canvasW, canvasH);
 
     if (bgImg) {
-      // ✅ COVER: vyplň celé okno (bez bielych pruhov)
+      // COVER: vyplň celé okno (bez bielych pruhov)
       const rw = canvasW / bgImg.width;
       const rh = canvasH / bgImg.height;
       const r = Math.max(rw, rh);
@@ -463,7 +456,6 @@ export default function Page() {
     setError("");
 
     try {
-      // --- EXPORT pre OpenAI: downscale + JPEG ---
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -478,7 +470,7 @@ export default function Page() {
 
       const octx = out.getContext("2d")!;
 
-      // ✅ rovnaký cover výpočet aj pri exporte
+      // rovnaký cover výpočet aj pri exporte
       const rw = outW / bgImg.width;
       const rh = outH / bgImg.height;
       const r = Math.max(rw, rh);
@@ -667,13 +659,10 @@ export default function Page() {
     setLeadOpen(true);
   }
 
-  // ===========================
-  // ✅ 1 PRST = VŽDY EDIT (CANVAS)
-  // ===========================
+  // ✅ 1 prst = vždy edit (canvas)
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
-    // ✅ blokuj scroll iba na canvase
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -712,7 +701,6 @@ export default function Page() {
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
 
-    // ✅ blokuj scroll iba na canvase
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -770,88 +758,183 @@ export default function Page() {
     if (mode === "resize") setMode("move");
   }
 
-  function ScaleRow({ label, value, axis }: { label: string; value: number; axis: "x" | "y" | "z" }) {
+  function Stepper() {
+    const hasAnyVariant = variants.length > 0;
+    const current = !bgImg ? 1 : !hasAnyVariant ? 2 : !leadSubmitted ? 4 : 5;
+
+    const steps = [
+      { n: 1, text: "Nahraj fotku" },
+      { n: 2, text: "Umiestni pergolu" },
+      { n: 3, text: "Vygeneruj vizualizácie" },
+      { n: 4, text: "Vyplň údaje + poznámku + vyber vizualizáciu" },
+      { n: 5, text: "Stiahni PNG" },
+    ];
+
     return (
-      <div className="scaleRow">
-        <div className="scaleLbl">{label}</div>
-
-        <button
-          type="button"
-          className="miniBtn"
-          disabled={loading}
-          onClick={() => bumpScaleAxis(axis, -SCALE_STEP)}
-          aria-label={`Zmenšiť ${label}`}
-        >
-          −
-        </button>
-
-        <input
-          className="range range--big"
-          type="range"
-          min={SCALE_MIN}
-          max={SCALE_MAX}
-          step={SCALE_STEP}
-          value={value}
-          disabled={loading}
-          onChange={(e) => setScaleAxis(axis, Number(e.target.value))}
-          aria-label={`Rozmer ${label}`}
-        />
-
-        <button
-          type="button"
-          className="miniBtn"
-          disabled={loading}
-          onClick={() => bumpScaleAxis(axis, SCALE_STEP)}
-          aria-label={`Zväččšiť ${label}`}
-        >
-          +
-        </button>
-
-        <div className="scaleVal">{value.toFixed(1)}%</div>
+      <div className="ter-stepper stepperWrap" aria-label="Postup">
+        <div className="stepperBar">
+          <div className="stepperTrack" aria-hidden="true" />
+          {steps.map((s) => {
+            const on = current >= s.n;
+            const active = current === s.n;
+            return (
+              <div className="stepItem" key={s.n}>
+                <div className={`stepCircle ${on ? "on" : ""} ${active ? "active" : ""}`}>{s.n}</div>
+                <div className={`stepText ${active ? "active" : ""}`}>{s.text}</div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
+  // ✅ slider render: rovnaké ako zoom (jednoduché input + hodnota)
+  function SliderBlock({
+    title,
+    valueLabel,
+    min,
+    max,
+    step,
+    value,
+    onChange,
+  }: {
+    title: string;
+    valueLabel: string;
+    min: number;
+    max: number;
+    step: number;
+    value: number;
+    onChange: (v: number) => void;
+  }) {
+    return (
+      <>
+        <div className="sliderTitle">{title}</div>
+        <div className="sliderRow">
+          <input
+            className="rangeBig"
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={(e) => onChange(Number(e.target.value))}
+          />
+          <div className="sliderVal">{valueLabel}</div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <section className="ter-wrap">
-      {/* ✅ Range styling: viditeľné + touch drag */}
+      {/* Stepper global */}
       <style jsx global>{`
-        .ter-wrap :global(input[type="range"]) {
+        .ter-wrap .ter-stepper.stepperWrap {
+          overflow-x: auto;
+          padding: 14px 0 6px;
+        }
+        .ter-wrap .ter-stepper .stepperBar {
+          position: relative;
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 18px;
+          padding: 6px 2px;
+          min-width: 980px;
+        }
+        .ter-wrap .ter-stepper .stepperTrack {
+          position: absolute;
+          left: 26px;
+          right: 26px;
+          top: 29px;
+          height: 2px;
+          background: rgba(0, 0, 0, 0.12);
+          z-index: 0;
+        }
+        .ter-wrap .ter-stepper .stepItem {
+          position: relative;
+          z-index: 1;
+          display: grid;
+          justify-items: center;
+          gap: 10px;
+          flex: 1 1 0;
+          min-width: 170px;
+        }
+        .ter-wrap .ter-stepper .stepCircle {
+          width: 46px;
+          height: 46px;
+          border-radius: 999px;
+          display: grid;
+          place-items: center;
+          font-weight: 900;
+          font-size: 16px;
+          background: #e9e9e9;
+          color: rgba(0, 0, 0, 0.45);
+          border: 1px solid rgba(0, 0, 0, 0.06);
+        }
+        .ter-wrap .ter-stepper .stepCircle.on {
+          background: #111;
+          color: #fff;
+          border-color: #111;
+        }
+        .ter-wrap .ter-stepper .stepCircle.active {
+          box-shadow: 0 12px 26px rgba(0, 0, 0, 0.18);
+        }
+        .ter-wrap .ter-stepper .stepText {
+          font-size: 14px;
+          color: rgba(0, 0, 0, 0.55);
+          font-weight: 650;
+          text-align: center;
+          line-height: 1.2;
+          max-width: 260px;
+          margin: 0;
+        }
+        .ter-wrap .ter-stepper .stepText.active {
+          color: rgba(0, 0, 0, 0.9);
+          font-weight: 800;
+        }
+        @media (max-width: 960px) {
+          .ter-wrap .ter-stepper .stepperBar {
+            min-width: 920px;
+          }
+        }
+      `}</style>
+
+      {/* ✅ Range styling: musí podporovať drag (mobile) + viditeľné (desktop) */}
+      <style jsx global>{`
+        .ter-wrap :global(input.rangeBig) {
           width: 100%;
           height: 42px;
           -webkit-appearance: none;
           appearance: none;
           background: transparent;
-          touch-action: pan-x; /* ✅ kľúč pre mobilný drag */
+          touch-action: pan-x;
         }
-
-        /* WebKit track */
-        .ter-wrap :global(input[type="range"]::-webkit-slider-runnable-track) {
+        .ter-wrap :global(input.rangeBig::-webkit-slider-runnable-track) {
           height: 12px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18); /* ✅ viditeľný track */
+          background: rgba(0, 0, 0, 0.18);
         }
-        .ter-wrap :global(input[type="range"]::-webkit-slider-thumb) {
+        .ter-wrap :global(input.rangeBig::-webkit-slider-thumb) {
           -webkit-appearance: none;
           appearance: none;
           width: 26px;
           height: 26px;
           margin-top: -7px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.95); /* ✅ viditeľný thumb */
+          background: rgba(0, 0, 0, 0.95);
           border: 2px solid rgba(255, 255, 255, 0.95);
           box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
         }
-
-        /* Firefox */
-        .ter-wrap :global(input[type="range"]::-moz-range-track) {
+        .ter-wrap :global(input.rangeBig::-moz-range-track) {
           height: 12px;
           border-radius: 999px;
           background: rgba(0, 0, 0, 0.18);
         }
-        .ter-wrap :global(input[type="range"]::-moz-range-thumb) {
+        .ter-wrap :global(input.rangeBig::-moz-range-thumb) {
           width: 26px;
           height: 26px;
           border-radius: 999px;
@@ -865,12 +948,30 @@ export default function Page() {
         .ter-wrap {
           background: #f6f6f6;
           color: #111;
-          padding: 22px 12px 40px;
+          padding: 28px 12px 40px;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
         }
         .container {
           max-width: 1100px;
           margin: 0 auto;
+        }
+
+        .hero {
+          display: grid;
+          gap: 10px;
+          margin-bottom: 10px;
+        }
+        h2 {
+          margin: 0;
+          font-size: 32px;
+          line-height: 1.15;
+          letter-spacing: -0.02em;
+        }
+        .sub {
+          margin: 0;
+          color: rgba(0, 0, 0, 0.7);
+          font-size: 16px;
+          max-width: 110ch;
         }
 
         .topBars {
@@ -994,11 +1095,12 @@ export default function Page() {
           align-items: center;
         }
         .sliderVal {
-          width: 70px;
+          width: 84px;
           text-align: right;
           font-variant-numeric: tabular-nums;
           font-weight: 950;
           color: rgba(0, 0, 0, 0.7);
+          flex: 0 0 auto;
         }
 
         .canvasCard {
@@ -1023,24 +1125,6 @@ export default function Page() {
           border-radius: 12px;
           display: block;
           background: #fff;
-        }
-
-        .miniBtn {
-          width: 34px;
-          height: 34px;
-          min-width: 34px;
-          min-height: 34px;
-          border-radius: 10px;
-          border: 1px solid rgba(0, 0, 0, 0.16);
-          background: rgba(0, 0, 0, 0.03);
-          color: #111;
-          font-weight: 950;
-          font-size: 18px;
-          line-height: 1;
-          display: inline-grid;
-          place-items: center;
-          cursor: pointer;
-          user-select: none;
         }
 
         .variantsWrap {
@@ -1166,6 +1250,9 @@ export default function Page() {
         }
 
         @media (max-width: 960px) {
+          h2 {
+            font-size: 26px;
+          }
           .variantsGrid {
             grid-template-columns: 1fr;
           }
@@ -1176,6 +1263,17 @@ export default function Page() {
       `}</style>
 
       <div className="container">
+        {/* HERO + STEPPER (vrátené) */}
+        <div className="hero">
+          <h2>Vizualizácia pergoly na vašom dome</h2>
+          <p className="sub">
+            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b>.
+            <br />
+            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete.
+          </p>
+          <Stepper />
+        </div>
+
         {/* TOP BARS */}
         <div className="topBars">
           {/* BAR 1: upload + type */}
@@ -1210,27 +1308,15 @@ export default function Page() {
           <div className="bar">
             <div className="barRow">
               <div className="tabs" role="tablist" aria-label="Režimy a ovládanie">
-                <button
-                  type="button"
-                  className={`tab ${mode === "move" ? "active" : ""}`}
-                  onClick={() => {
-                    setMode("move");
-                  }}
-                >
+                <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
                   Posun
                 </button>
 
-                <button
-                  type="button"
-                  className={`tab ${mode === "rotate3d" ? "active" : ""}`}
-                  onClick={() => {
-                    setMode("rotate3d");
-                  }}
-                >
+                <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
                   Otoč 3D
                 </button>
 
-                {/* ✅ TLAČIDLO ZOOM (chýbalo) */}
+                {/* zoom musí byť vždy dostupný */}
                 <button type="button" className={`tab ${panel === "zoom" ? "active" : ""}`} onClick={() => setPanel("zoom")}>
                   Zoom
                 </button>
@@ -1257,39 +1343,40 @@ export default function Page() {
               </div>
             </div>
 
-            {/* SLIDER PANEL */}
+            {/* SLIDER PANEL — X/Y/Z rovnako ako ZOOM */}
             <div className="sliderPanel">
               {panel === "zoom" ? (
-                <>
-                  <div className="sliderTitle">Zoom</div>
-                  <div className="sliderRow">
-                    <input
-                      type="range"
-                      min={50}
-                      max={160}
-                      step={5}
-                      value={editorZoom}
-                      onChange={(e) => setEditorZoom(Number(e.target.value))}
-                      aria-label="Zoom"
-                    />
-                    <div className="sliderVal">{editorZoom}%</div>
-                  </div>
-                </>
+                <SliderBlock title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
               ) : panel === "x" ? (
-                <>
-                  <div className="sliderTitle">Šírka (X)</div>
-                  <ScaleRow label="X" axis="x" value={scalePct.x} />
-                </>
+                <SliderBlock
+                  title="Šírka (X)"
+                  value={scalePct.x}
+                  valueLabel={`${scalePct.x.toFixed(1)}%`}
+                  min={SCALE_MIN}
+                  max={SCALE_MAX}
+                  step={SCALE_STEP}
+                  onChange={(v) => setScaleAxis("x", v)}
+                />
               ) : panel === "y" ? (
-                <>
-                  <div className="sliderTitle">Výška (Y)</div>
-                  <ScaleRow label="Y" axis="y" value={scalePct.y} />
-                </>
+                <SliderBlock
+                  title="Výška (Y)"
+                  value={scalePct.y}
+                  valueLabel={`${scalePct.y.toFixed(1)}%`}
+                  min={SCALE_MIN}
+                  max={SCALE_MAX}
+                  step={SCALE_STEP}
+                  onChange={(v) => setScaleAxis("y", v)}
+                />
               ) : (
-                <>
-                  <div className="sliderTitle">Hĺbka (Z)</div>
-                  <ScaleRow label="Z" axis="z" value={scalePct.z} />
-                </>
+                <SliderBlock
+                  title="Hĺbka (Z)"
+                  value={scalePct.z}
+                  valueLabel={`${scalePct.z.toFixed(1)}%`}
+                  min={SCALE_MIN}
+                  max={SCALE_MAX}
+                  step={SCALE_STEP}
+                  onChange={(v) => setScaleAxis("z", v)}
+                />
               )}
             </div>
 
@@ -1301,12 +1388,7 @@ export default function Page() {
         <div className="canvasCard">
           <div className="canvasBody">
             <div className="canvasShell">
-              <div
-                style={{
-                  width: Math.round((canvasW * editorZoom) / 100),
-                  height: Math.round((canvasH * editorZoom) / 100),
-                }}
-              >
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
                 <canvas
                   ref={canvasRef}
                   width={canvasW}
@@ -1314,7 +1396,7 @@ export default function Page() {
                   style={{
                     width: `${(canvasW * editorZoom) / 100}px`,
                     height: `${(canvasH * editorZoom) / 100}px`,
-                    touchAction: "none", // ✅ len canvas blokuje scroll
+                    touchAction: "none",
                   }}
                   onPointerDown={onPointerDown}
                   onPointerMove={onPointerMove}
@@ -1386,7 +1468,7 @@ export default function Page() {
                 })}
               </div>
 
-              {/* ✅ Stiahnuť všetky iba dole pod variantami */}
+              {/* Stiahnuť všetky iba dole */}
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" className="btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
                   Stiahnuť všetky ({variants.length})
@@ -1446,14 +1528,7 @@ export default function Page() {
               </div>
 
               <div style={{ padding: "14px 16px 16px" }}>
-                <form
-                  onSubmit={submitLead}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 12,
-                  }}
-                >
+                <form onSubmit={submitLead} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <div style={{ fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)", margin: "2px 0 10px" }}>
                       Vyber vizualizáciu, ktorú odošleš *
