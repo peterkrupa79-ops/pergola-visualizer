@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mode = "move" | "rotate3d" | "size" | "setGround" | "resize"; // ✅ size = mobilný režim pre slidre
+type Mode = "move" | "rotate3d" | "size" | "setGround" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -16,6 +16,9 @@ const SCALE_MAX = 200;
 
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
+
+// ✅ aby bol model na mobile menší a celý viditeľný hneď
+const MOBILE_BASE_SCALE_FACTOR = 0.78;
 
 const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
 Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
@@ -86,11 +89,15 @@ export default function Page() {
   }, [pergolaType]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [canvasW] = useState(980);
   const [canvasH] = useState(560);
   const [editorZoom, setEditorZoom] = useState(100);
 
   const [mode, setMode] = useState<Mode>("move");
+  const [sizeAxis, setSizeAxis] = useState<"x" | "y" | "z">("x");
+
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
@@ -149,19 +156,11 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // ✅ Mobile UX
   const isMobileRef = useRef(false);
-  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
-  const [floatOpen, setFloatOpen] = useState(true);
-  const [sizeAxis, setSizeAxis] = useState<"x" | "y" | "z">("x");
-
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
       isMobileRef.current = mq.matches;
-      // na mobile nech je ovládanie viditeľné
-      if (mq.matches) setFloatOpen(true);
-      setMobileSettingsOpen(false);
     };
     apply();
     mq.addEventListener?.("change", apply);
@@ -217,6 +216,7 @@ export default function Page() {
     return null;
   }
 
+  // ✅ funkcia zostáva (len odstraňujeme tlačidlá z UI)
   function snapToGround() {
     if (!groundA || !groundB || !bboxRect) return;
 
@@ -253,11 +253,6 @@ export default function Page() {
     setGroundA(null);
     setGroundB(null);
     setError("");
-  }
-
-  function resetRotation() {
-    setRot3D({ yaw: 0.35, pitch: -0.12 });
-    setRot2D(0);
   }
 
   // background image load
@@ -367,7 +362,8 @@ export default function Page() {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
 
-    const base = baseScaleRef.current;
+    const base = baseScaleRef.current * (isMobileRef.current ? MOBILE_BASE_SCALE_FACTOR : 1);
+
     root.scale.set(base * (scalePct.x / 100), base * (scalePct.y / 100), base * (scalePct.z / 100));
 
     const worldX = (pos.x - 0.5) * 1.8;
@@ -499,7 +495,6 @@ export default function Page() {
     setError("");
 
     try {
-      // --- EXPORT pre OpenAI: downscale + JPEG ---
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -639,10 +634,7 @@ export default function Page() {
       fd.append("source", "teranea-editor");
       fd.append("image", pngBlob, `vizualizacia_variant_${selectedVariantIndex + 1}.png`);
 
-      const r = await fetch("/api/lead/submit", {
-        method: "POST",
-        body: fd,
-      });
+      const r = await fetch("/api/lead/submit", { method: "POST", body: fd });
 
       if (!r.ok) {
         const t = await r.text().catch(() => "");
@@ -749,7 +741,6 @@ export default function Page() {
     const currentMode = dragRef.current.modeAtDown;
 
     if (currentMode === "move" || currentMode === "size") {
-      // ✅ v size režime nechávame drag stále ako MOVE (komfort)
       const nx = dragRef.current.startPos.x + dx / canvasW;
       const ny = dragRef.current.startPos.y + dy / canvasH;
       setPos({ x: clamp(nx, 0, 1), y: clamp(ny, 0, 1) });
@@ -794,7 +785,6 @@ export default function Page() {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     setActiveHandle(null);
-
     if (mode === "resize") setMode("move");
   }
 
@@ -861,8 +851,13 @@ export default function Page() {
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  // ✅ Floating panel helpers
-  const mobileScaleVal = scalePct[sizeAxis];
+  const sliderAxisLabel = mode === "size" ? (sizeAxis === "x" ? "Šírka (X)" : sizeAxis === "y" ? "Výška (Y)" : "Hĺbka (Z)") : "";
+  const sliderValue = mode === "size" ? scalePct[sizeAxis] : 0;
+
+  const setModeSize = (axis: "x" | "y" | "z") => {
+    setMode("size");
+    setSizeAxis(axis);
+  };
 
   return (
     <section className="ter-wrap">
@@ -1036,7 +1031,6 @@ export default function Page() {
           display: grid;
           gap: 10px;
         }
-
         .canvasShell {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
@@ -1044,27 +1038,37 @@ export default function Page() {
           overflow: hidden;
           padding: 10px;
         }
-
-        .canvasStage {
-          position: relative;
-          width: 100%;
-          display: grid;
-          place-items: start;
-        }
-
         canvas {
           border-radius: 12px;
           display: block;
           background: #fff;
         }
 
-        .toolbar {
+        /* ✅ 2 horné lišty */
+        .topBars {
+          display: grid;
+          gap: 8px;
+        }
+        .barRow {
           display: flex;
-          gap: 10px;
           flex-wrap: wrap;
+          gap: 10px;
           align-items: center;
           justify-content: space-between;
         }
+        .barLeft {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: center;
+        }
+        .barRight {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: center;
+        }
+
         .tabs {
           display: inline-flex;
           border: 1px solid rgba(0, 0, 0, 0.1);
@@ -1072,13 +1076,14 @@ export default function Page() {
           border-radius: 999px;
           padding: 4px;
           gap: 4px;
+          flex-wrap: wrap;
         }
         .tab {
           border: none;
           background: transparent;
           border-radius: 999px;
           padding: 9px 12px;
-          font-weight: 800;
+          font-weight: 900;
           font-size: 13px;
           cursor: pointer;
           color: rgba(0, 0, 0, 0.7);
@@ -1088,13 +1093,6 @@ export default function Page() {
           background: #fff;
           color: #111;
           box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
-        }
-
-        .row {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          flex-wrap: wrap;
         }
 
         .ter-btn {
@@ -1121,6 +1119,28 @@ export default function Page() {
           color: #111;
         }
 
+        .field {
+          display: grid;
+          gap: 6px;
+        }
+        .label {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.65);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .select,
+        .input {
+          padding: 11px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          outline: none;
+          font-weight: 800;
+          color: #111;
+        }
+
         .miniBtn {
           width: 34px;
           height: 34px;
@@ -1143,58 +1163,28 @@ export default function Page() {
           cursor: not-allowed;
         }
 
-        .field {
+        .sliderRow {
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          background: rgba(0, 0, 0, 0.015);
+          border-radius: 14px;
+          padding: 10px 12px;
           display: grid;
-          gap: 6px;
+          gap: 8px;
         }
-        .label {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.65);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-        .input,
-        .select,
-        .textarea {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 700;
-          color: #111;
-        }
-        .textarea {
-          min-height: 96px;
-          resize: vertical;
-          line-height: 1.35;
-        }
-
-        .scaleBlock {
-          display: grid;
-          gap: 12px;
-          margin-top: 6px;
-        }
-        .scaleRow {
+        .sliderTop {
           display: flex;
-          align-items: center;
+          align-items: baseline;
+          justify-content: space-between;
           gap: 10px;
         }
-        .scaleLbl {
-          width: 18px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.75);
-          flex: 0 0 auto;
+        .sliderTop b {
+          font-size: 13px;
         }
-        .scaleVal {
-          width: 76px;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
+        .sliderTop span {
+          font-size: 12px;
           font-weight: 900;
           color: rgba(0, 0, 0, 0.7);
-          flex: 0 0 auto;
+          font-variant-numeric: tabular-nums;
         }
 
         .sticky {
@@ -1214,7 +1204,6 @@ export default function Page() {
           background: rgba(0, 0, 0, 0.08);
           margin: 14px 0;
         }
-
         .note {
           font-size: 13px;
           color: rgba(0, 0, 0, 0.65);
@@ -1348,6 +1337,9 @@ export default function Page() {
           color: #fff;
         }
 
+        .desktopOnly {
+          display: block;
+        }
         .mobileBar {
           display: none;
         }
@@ -1387,153 +1379,6 @@ export default function Page() {
           .mobileSpacer {
             height: 86px;
           }
-        }
-
-        /* ✅ Mobile inline control bar nad canvasom */
-        .mobileInlineBar {
-          display: none;
-        }
-        @media (max-width: 960px) {
-          .mobileInlineBar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            flex-wrap: wrap;
-            padding: 10px 0 2px;
-          }
-          .iconBtn {
-            border-radius: 12px;
-            padding: 9px 10px;
-            font-weight: 950;
-            border: 1px solid rgba(0, 0, 0, 0.12);
-            background: rgba(0, 0, 0, 0.03);
-            cursor: pointer;
-            user-select: none;
-          }
-        }
-
-        /* ✅ Floating controls priamo na canvase */
-        .floatWrap {
-          position: absolute;
-          right: 10px;
-          bottom: 10px;
-          z-index: 20;
-          pointer-events: none; /* dôležité: mimo panelu neblokuj edit */
-        }
-        .floatCard {
-          pointer-events: auto;
-          width: min(320px, calc(100vw - 48px));
-          border-radius: 16px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(255, 255, 255, 0.92);
-          backdrop-filter: blur(10px);
-          box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
-          overflow: hidden;
-        }
-        .floatHead {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          padding: 10px 12px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-        }
-        .floatTitle {
-          font-weight: 950;
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.72);
-          letter-spacing: -0.01em;
-        }
-        .floatToggle {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(0, 0, 0, 0.03);
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-weight: 950;
-          cursor: pointer;
-          user-select: none;
-        }
-        .floatBody {
-          padding: 10px 12px 12px;
-          display: grid;
-          gap: 10px;
-        }
-        .pillRow {
-          display: flex;
-          gap: 6px;
-          flex-wrap: wrap;
-        }
-        .pill {
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-weight: 950;
-          font-size: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(0, 0, 0, 0.03);
-          cursor: pointer;
-          user-select: none;
-        }
-        .pill.on {
-          background: #111;
-          border-color: #111;
-          color: #fff;
-        }
-
-        .miniRow {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-        }
-        .miniLabel {
-          font-size: 12px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.68);
-        }
-        .miniVal {
-          font-size: 12px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.85);
-          font-variant-numeric: tabular-nums;
-        }
-
-        /* Modal (mobil settings) */
-        .miniModalOverlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.55);
-          display: grid;
-          place-items: center;
-          padding: 16px;
-          z-index: 9998;
-        }
-        .miniModalCard {
-          width: min(520px, 100%);
-          border-radius: 18px;
-          background: #fff;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
-          overflow: hidden;
-        }
-        .miniModalHead {
-          padding: 14px 16px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-        }
-        .miniModalTitle {
-          font-weight: 1000;
-          letter-spacing: -0.01em;
-          margin: 0;
-          font-size: 16px;
-        }
-        .miniModalBody {
-          padding: 14px 16px 16px;
-          display: grid;
-          gap: 12px;
         }
 
         .modalOverlay {
@@ -1664,167 +1509,166 @@ export default function Page() {
               <div className="hint">
                 Režim:{" "}
                 <b>
-                  {mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode === "size" ? "VEĽKOSŤ" : mode.toUpperCase()}
+                  {mode === "move"
+                    ? "POSUN"
+                    : mode === "rotate3d"
+                    ? "OTOČ 3D"
+                    : mode === "size"
+                    ? (sizeAxis === "x" ? "ŠÍRKA" : sizeAxis === "y" ? "VÝŠKA" : "HĹBKA")
+                    : mode.toUpperCase()}
                 </b>
               </div>
             </div>
 
             <div className="cardBody">
               <div className="canvasWrap">
-                {/* ✅ Desktop toolbar (ponechané) */}
-                <div className="toolbar desktopOnly">
-                  <div className="tabs" role="tablist" aria-label="Režimy">
-                    <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
-                      Posun
-                    </button>
-                    <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
-                      Otoč 3D
-                    </button>
-                  </div>
-
-                  <div className="row">
-                    <div className="field" style={{ minWidth: 260 }}>
-                      <div className="label">Zoom</div>
-                      <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-                    </div>
-                    <div className="note" style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {editorZoom}%
-                    </div>
-                    <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
-                      Reset
-                    </button>
-                  </div>
-                </div>
-
-                {/* ✅ Mobile inline bar (priamo pri canvase) */}
-                <div className="mobileInlineBar">
-                  <div className="tabs" role="tablist" aria-label="Režimy (mobil)">
-                    <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
-                      Posun
-                    </button>
-                    <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
-                      Otoč 3D
-                    </button>
-                    <button type="button" className={`tab ${mode === "size" ? "active" : ""}`} onClick={() => setMode("size")}>
-                      Veľkosť
-                    </button>
-                  </div>
-
-                  <div className="row" style={{ gap: 8 }}>
-                    <button type="button" className="iconBtn" onClick={() => setMobileSettingsOpen(true)}>
-                      Nastavenia
-                    </button>
-                    <button type="button" className="iconBtn" onClick={snapToGround}>
-                      Zem
-                    </button>
-                    <button type="button" className="iconBtn" onClick={resetAll}>
-                      Reset
-                    </button>
-                  </div>
-                </div>
-
-                <div className="canvasShell">
-                  <div className="canvasStage">
-                    <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
-                      <canvas
-                        ref={canvasRef}
-                        width={canvasW}
-                        height={canvasH}
-                        style={{
-                          width: `${(canvasW * editorZoom) / 100}px`,
-                          height: `${(canvasH * editorZoom) / 100}px`,
-                          touchAction: "none",
+                {/* ✅ DVE HORNÉ LIŠTY */}
+                <div className="topBars">
+                  {/* 1. lišta: upload + typ */}
+                  <div className="barRow">
+                    <div className="barLeft">
+                      <input
+                        ref={fileInputRef}
+                        className="input"
+                        type="file"
+                        accept="image/*"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          setBgFile(f);
+                          setError("");
                         }}
-                        onPointerDown={onPointerDown}
-                        onPointerMove={onPointerMove}
-                        onPointerUp={onPointerUp}
-                        onPointerCancel={onPointerUp}
                       />
+                      <button
+                        type="button"
+                        className="ter-btn"
+                        onClick={() => {
+                          fileInputRef.current?.click();
+                        }}
+                      >
+                        Nahraj fotku (podklad)
+                      </button>
+
+                      <select
+                        className="select"
+                        value={pergolaType}
+                        onChange={(e) => setPergolaType(e.target.value as PergolaType)}
+                        aria-label="Typ pergoly"
+                      >
+                        <option value="bioklim">Bioklimatická pergola</option>
+                        <option value="pevna">Pergola s pevnou strechou</option>
+                        <option value="zimna">Zimná záhrada</option>
+                      </select>
                     </div>
 
-                    {/* ✅ Floating panel priamo na canvase (mobil) */}
-                    <div className="floatWrap">
-                      <div className="floatCard">
-                        <div className="floatHead">
-                          <div className="floatTitle">Ovládanie</div>
-                          <button type="button" className="floatToggle" onClick={() => setFloatOpen((v) => !v)}>
-                            {floatOpen ? "Skryť" : "Zobraziť"}
-                          </button>
+                    <div className="barRight">
+                      <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. lišta: posun/otoč/šírka/výška/hĺbka */}
+                  <div className="barRow">
+                    <div className="tabs" role="tablist" aria-label="Režimy">
+                      <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
+                        Posun
+                      </button>
+                      <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
+                        Otoč 3D
+                      </button>
+                      <button type="button" className={`tab ${mode === "size" && sizeAxis === "x" ? "active" : ""}`} onClick={() => setModeSize("x")}>
+                        Šírka
+                      </button>
+                      <button type="button" className={`tab ${mode === "size" && sizeAxis === "y" ? "active" : ""}`} onClick={() => setModeSize("y")}>
+                        Výška
+                      </button>
+                      <button type="button" className={`tab ${mode === "size" && sizeAxis === "z" ? "active" : ""}`} onClick={() => setModeSize("z")}>
+                        Hĺbka
+                      </button>
+                    </div>
+
+                    <div className="barRight">
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div className="label" style={{ margin: 0 }}>
+                          Zoom
                         </div>
-
-                        {floatOpen ? (
-                          <div className="floatBody">
-                            {/* Zoom (vždy dostupný) */}
-                            <div className="miniRow">
-                              <div className="miniLabel">Zoom</div>
-                              <div className="miniVal">{editorZoom}%</div>
-                            </div>
-                            <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-
-                            {/* Režim SIZE: os + slider */}
-                            {mode === "size" ? (
-                              <>
-                                <div className="miniRow" style={{ marginTop: 2 }}>
-                                  <div className="miniLabel">Rozmer</div>
-                                  <div className="miniVal">
-                                    {sizeAxis.toUpperCase()}: {mobileScaleVal.toFixed(1)}%
-                                  </div>
-                                </div>
-
-                                <div className="pillRow" aria-label="Os rozmeru">
-                                  <button type="button" className={`pill ${sizeAxis === "x" ? "on" : ""}`} onClick={() => setSizeAxis("x")}>
-                                    X
-                                  </button>
-                                  <button type="button" className={`pill ${sizeAxis === "y" ? "on" : ""}`} onClick={() => setSizeAxis("y")}>
-                                    Y
-                                  </button>
-                                  <button type="button" className={`pill ${sizeAxis === "z" ? "on" : ""}`} onClick={() => setSizeAxis("z")}>
-                                    Z
-                                  </button>
-                                </div>
-
-                                <div className="miniRow" style={{ gap: 8 }}>
-                                  <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, -SCALE_STEP)} aria-label="Zmenšiť">
-                                    −
-                                  </button>
-                                  <input
-                                    className="range range--big"
-                                    type="range"
-                                    min={SCALE_MIN}
-                                    max={SCALE_MAX}
-                                    step={SCALE_STEP}
-                                    value={mobileScaleVal}
-                                    disabled={loading}
-                                    onChange={(e) => setScaleAxis(sizeAxis, Number(e.target.value))}
-                                    aria-label="Rozmer"
-                                  />
-                                  <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, SCALE_STEP)} aria-label="Zväčšiť">
-                                    +
-                                  </button>
-                                </div>
-
-                                <div className="note" style={{ marginTop: 4 }}>
-                                  Tip: v režime <b>Veľkosť</b> stále môžeš pergolu prstom posúvať.
-                                </div>
-                              </>
-                            ) : null}
-
-                            {/* Režim ROTATE: rýchle reset */}
-                            {mode === "rotate3d" ? (
-                              <div className="row" style={{ justifyContent: "space-between", marginTop: 2 }}>
-                                <div className="note">Tip: ťah prstom = otočenie</div>
-                                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetRotation}>
-                                  Reset rotácie
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
+                        <input
+                          className="range range--big"
+                          type="range"
+                          min={50}
+                          max={160}
+                          step={5}
+                          value={editorZoom}
+                          onChange={(e) => setEditorZoom(Number(e.target.value))}
+                          aria-label="Zoom editora"
+                          style={{ width: 200 }}
+                        />
+                        <div style={{ fontWeight: 950, fontSize: 12, color: "rgba(0,0,0,0.7)", fontVariantNumeric: "tabular-nums" }}>
+                          {editorZoom}%
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  {/* Slider pod lištou len keď je vybratá os */}
+                  {mode === "size" ? (
+                    <div className="sliderRow" aria-label="Slider rozmeru">
+                      <div className="sliderTop">
+                        <b>{sliderAxisLabel}</b>
+                        <span>{sliderValue.toFixed(1)}%</span>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, -SCALE_STEP)} aria-label="Zmenšiť">
+                          −
+                        </button>
+
+                        <input
+                          className="range range--big"
+                          type="range"
+                          min={SCALE_MIN}
+                          max={SCALE_MAX}
+                          step={SCALE_STEP}
+                          value={sliderValue}
+                          disabled={loading}
+                          onChange={(e) => setScaleAxis(sizeAxis, Number(e.target.value))}
+                          aria-label={`Slider ${sliderAxisLabel}`}
+                        />
+
+                        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, SCALE_STEP)} aria-label="Zväčšiť">
+                          +
+                        </button>
+                      </div>
+
+                      <div className="note">Tip: v režime rozmeru stále môžeš pergolu prstom posúvať.</div>
+                    </div>
+                  ) : null}
+
+                  {error ? <div className="errorBox">Chyba: {error}</div> : null}
                 </div>
 
+                {/* Canvas */}
+                <div className="canvasShell">
+                  <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+                    <canvas
+                      ref={canvasRef}
+                      width={canvasW}
+                      height={canvasH}
+                      style={{
+                        width: `${(canvasW * editorZoom) / 100}px`,
+                        height: `${(canvasH * editorZoom) / 100}px`,
+                        touchAction: "none",
+                      }}
+                      onPointerDown={onPointerDown}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                      onPointerCancel={onPointerUp}
+                    />
+                  </div>
+                </div>
+
+                {/* Varianty */}
                 <div className="variantsWrap">
                   <div className="variantsHead">
                     <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
@@ -1886,14 +1730,10 @@ export default function Page() {
                     })}
                   </div>
 
-                  <div className="row" style={{ justifyContent: "space-between" }}>
-                    <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
-                    <button type="button" className="ter-btn ter-btn--ghost" onClick={snapToGround}>
-                      Zarovnať na zem
-                    </button>
-                  </div>
+                  {/* ✅ odstránené tlačidlo "Zarovnať na zem" (funkcia ostala) */}
+                  <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
 
-                  <div className="row" style={{ justifyContent: "flex-end" }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                     <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
                       Stiahnuť všetky ({variants.length})
                     </button>
@@ -1913,51 +1753,9 @@ export default function Page() {
             </div>
 
             <div className="cardBody">
-              <div className="sectionTitle">Krok 1</div>
-
-              <div className="field">
-                <div className="label">Fotka (podklad)</div>
-                <input
-                  className="input"
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setBgFile(f);
-                    setError("");
-                  }}
-                />
-              </div>
-
-              <div style={{ height: 10 }} />
-
-              <div className="field">
-                <div className="label">Typ (pre ďalšiu generáciu)</div>
-                <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                  <option value="bioklim">Bioklimatická pergola</option>
-                  <option value="pevna">Pergola s pevnou strechou</option>
-                  <option value="zimna">Zimná záhrada</option>
-                </select>
-              </div>
-
-              <div className="divider" />
-
-              <div className="sectionTitle">Rozmery (1% – 200%)</div>
-              <div className="scaleBlock">
-                <ScaleRow label="X" axis="x" value={scalePct.x} />
-                <ScaleRow label="Y" axis="y" value={scalePct.y} />
-                <ScaleRow label="Z" axis="z" value={scalePct.z} />
-              </div>
-
-              <div className="divider" />
-
-              {error ? <div className="errorBox">Chyba: {error}</div> : null}
-
-              <div className="divider" />
-
               <div className="sectionTitle">Krok 3</div>
 
-              <div className="row" style={{ justifyContent: "space-between" }}>
+              <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
                 <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
                   {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS} variantov` : `Vygenerovať variant (${variants.length + 1}/${MAX_VARIANTS})`}
                 </button>
@@ -1967,21 +1765,30 @@ export default function Page() {
                 </button>
               </div>
 
+              <div className="divider" />
+
               {selectedVariant ? (
-                <div style={{ marginTop: 10 }} className="note">
+                <div className="note">
                   Vybrané do formulára: <b>Variant {selectedVariantIndex + 1}</b> • {typeLabel(selectedVariant.type)}
                 </div>
               ) : (
-                <div style={{ marginTop: 10 }} className="note">
-                  Najprv vygeneruj aspoň 1 variantu.
-                </div>
+                <div className="note">Najprv vygeneruj aspoň 1 variantu.</div>
               )}
+
+              <div className="divider" />
+
+              <div className="sectionTitle">Poznámka</div>
+              <div className="note">
+                Na desktope aj mobile sú teraz ovládacie prvky priamo nad editorom (bez sheetu).
+              </div>
+
+              {/* ✅ odstránené tlačidlo "Zem/Zarovnať na zem" aj z desktopu */}
             </div>
           </div>
         </div>
       </div>
 
-      {/* ✅ Mobile action bar (dole) */}
+      {/* Mobile action bar */}
       <div className="mobileBar">
         <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
           {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
@@ -1991,67 +1798,6 @@ export default function Page() {
           Stiahnuť všetky
         </button>
       </div>
-
-      {/* ✅ Mobile settings modal (upload + typ) */}
-      {mobileSettingsOpen ? (
-        <div
-          className="miniModalOverlay"
-          role="dialog"
-          aria-modal="true"
-          onMouseDown={(ev) => {
-            if (ev.target === ev.currentTarget) setMobileSettingsOpen(false);
-          }}
-        >
-          <div className="miniModalCard">
-            <div className="miniModalHead">
-              <p className="miniModalTitle">Nastavenia</p>
-              <button type="button" className="ter-btn ter-btn--ghost" onClick={() => setMobileSettingsOpen(false)}>
-                ✕
-              </button>
-            </div>
-
-            <div className="miniModalBody">
-              {error ? <div className="errorBox">Chyba: {error}</div> : null}
-
-              <div className="field">
-                <div className="label">Fotka (podklad)</div>
-                <input
-                  className="input"
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setBgFile(f);
-                    setError("");
-                  }}
-                />
-              </div>
-
-              <div className="field">
-                <div className="label">Typ (pre ďalšiu generáciu)</div>
-                <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                  <option value="bioklim">Bioklimatická pergola</option>
-                  <option value="pevna">Pergola s pevnou strechou</option>
-                  <option value="zimna">Zimná záhrada</option>
-                </select>
-              </div>
-
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
-                  Reset
-                </button>
-                <button type="button" className="ter-btn" onClick={() => setMobileSettingsOpen(false)}>
-                  Hotovo
-                </button>
-              </div>
-
-              <div className="note">
-                Tip: režim <b>Veľkosť</b> otvorí slidre priamo na obrázku (floating panel).
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {/* Lead modal */}
       {leadOpen ? (
@@ -2150,7 +1896,8 @@ export default function Page() {
                 <div className="span2">
                   <div className="sectionTitle">Poznámka zákazníka (voliteľné)</div>
                   <textarea
-                    className="textarea"
+                    className="input"
+                    style={{ minHeight: 96, resize: "vertical", lineHeight: 1.35, fontWeight: 700 }}
                     value={lead.customerNote}
                     onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
                     placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
