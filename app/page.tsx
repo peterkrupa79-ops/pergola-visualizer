@@ -60,7 +60,7 @@ function typeLabel(t: PergolaType) {
 type VariantItem = {
   id: string;
   type: PergolaType;
-  b64: string; // PNG from OpenAI render API
+  b64: string; // PNG
   createdAt: number;
 };
 
@@ -135,6 +135,7 @@ export default function Page() {
     approxWidth: "",
     approxDepth: "",
     approxHeight: "",
+    customerNote: "", // ✅ NOVÉ: poznámka zákazníka
   });
 
   const [leadErr, setLeadErr] = useState<{
@@ -497,8 +498,8 @@ export default function Page() {
     setError("");
 
     try {
-      // --- EXPORT pre OpenAI: downscale + JPEG (aby sme nepadali na HTTP 413) ---
-      const MAX_DIM = 2048; // bezpečné pre Vercel request limity
+      // --- EXPORT pre OpenAI: downscale + JPEG ---
+      const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
 
@@ -527,7 +528,6 @@ export default function Page() {
       const glTemp = renderer.domElement;
       octx.drawImage(glTemp, 0, 0);
 
-      // export ako JPEG (PNG býva obrovské a spôsobí 413)
       const blob: Blob = await new Promise((res, rej) =>
         out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
@@ -552,7 +552,6 @@ export default function Page() {
         return next;
       });
 
-      // auto-select newest slot (bez bugov so stale state)
       setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (e: any) {
       console.error(e);
@@ -572,10 +571,8 @@ export default function Page() {
   }
 
   async function downloadAllPNGs() {
-    // postupne spustí sťahovanie všetkých (prehliadač môže mať limit)
     for (let i = 0; i < variants.length; i++) {
       downloadVariantPNG(i);
-      // malá pauza, aby to prehliadač stíhal
       await new Promise((r) => setTimeout(r, 250));
     }
   }
@@ -601,7 +598,6 @@ export default function Page() {
     if (!lead.approxDepth.trim()) e.approxDepth = "Zadaj hĺbku.";
     if (!lead.approxHeight.trim()) e.approxHeight = "Zadaj výšku.";
 
-    // musí byť vybraná vizualizácia, ktorú pošleme do emailu
     if (!variants[selectedVariantIndex]?.b64) e.selectedVariant = "Vyber jednu vizualizáciu, ktorú nám pošleš.";
 
     setLeadErr(e);
@@ -619,33 +615,16 @@ export default function Page() {
     setLeadSubmitting(true);
 
     try {
-      // Zostavíme "note" tak, aby obchod mal všetko pokope
       const note = [
         `Vybraná vizualizácia: Variant ${selectedVariantIndex + 1} – ${typeLabel(picked.type)}`,
         `Rozmery (približne):`,
         `- šírka: ${lead.approxWidth}`,
         `- hĺbka: ${lead.approxDepth}`,
         `- výška: ${lead.approxHeight}`,
+        ``,
+        `Poznámka zákazníka:`,
+        (lead.customerNote || "").trim() ? lead.customerNote.trim() : "-",
       ].join("\n");
-
-      const configJson = JSON.stringify(
-        {
-          selectedVariantIndex: selectedVariantIndex + 1,
-          selectedPergolaType: picked.type,
-          editor: {
-            pos,
-            rot2D,
-            rot3D,
-            scalePct,
-            canvasW,
-            canvasH,
-            editorZoom,
-          },
-          totalGenerated: variants.length,
-        },
-        null,
-        2
-      );
 
       const pngBlob = await b64PngToBlob(picked.b64);
 
@@ -657,7 +636,6 @@ export default function Page() {
       fd.append("note", note);
       fd.append("consent", "yes");
       fd.append("source", "teranea-editor");
-      fd.append("configJson", configJson);
       fd.append("image", pngBlob, `vizualizacia_variant_${selectedVariantIndex + 1}.png`);
 
       const r = await fetch("/api/lead/submit", {
@@ -674,7 +652,6 @@ export default function Page() {
       setLeadOpen(false);
       setLeadSubmitting(false);
 
-      // po odomknutí vykonaj pôvodnú akciu
       if (pendingAction?.kind === "single") {
         downloadVariantPNG(pendingAction.index);
       } else if (pendingAction?.kind === "all") {
@@ -694,7 +671,6 @@ export default function Page() {
   function onDownloadOne(idx: number) {
     if (!variants[idx]?.b64) return;
 
-    // vždy vyberieme ten variant, ktorý chce user stiahnuť
     setSelectedVariantIndex(idx);
 
     if (leadSubmitted) {
@@ -825,7 +801,7 @@ export default function Page() {
       { n: 1, text: "Nahraj fotku" },
       { n: 2, text: "Umiestni pergolu" },
       { n: 3, text: "Vygeneruj vizualizácie" },
-      { n: 4, text: "Vyplň kontaktné údaje a vyber vizualizáciu" },
+      { n: 4, text: "Vyplň údaje + poznámku + vyber vizualizáciu" },
       { n: 5, text: "Stiahni PNG" },
     ];
 
@@ -943,7 +919,7 @@ export default function Page() {
 
   return (
     <section className="ter-wrap">
-      {/* range global styling (väčší track + thumb) */}
+      {/* range global styling */}
       <style jsx global>{`
         .ter-wrap :global(input.range--big) {
           width: 100%;
@@ -983,7 +959,7 @@ export default function Page() {
           justify-content: space-between;
           gap: 18px;
           padding: 6px 2px;
-          min-width: 900px;
+          min-width: 980px;
         }
         .ter-wrap .ter-stepper .stepperTrack {
           position: absolute;
@@ -1001,7 +977,7 @@ export default function Page() {
           justify-items: center;
           gap: 10px;
           flex: 1 1 0;
-          min-width: 160px;
+          min-width: 170px;
         }
         .ter-wrap .ter-stepper .stepCircle {
           width: 46px;
@@ -1029,7 +1005,7 @@ export default function Page() {
           font-weight: 650;
           text-align: center;
           line-height: 1.2;
-          max-width: 240px;
+          max-width: 260px;
           margin: 0;
         }
         .ter-wrap .ter-stepper .stepText.active {
@@ -1038,11 +1014,12 @@ export default function Page() {
         }
         @media (max-width: 960px) {
           .ter-wrap .ter-stepper .stepperBar {
-            min-width: 860px;
+            min-width: 920px;
           }
         }
       `}</style>
 
+      {/* UI styles */}
       <style jsx>{`
         .ter-wrap {
           background: #f6f6f6;
@@ -1069,7 +1046,7 @@ export default function Page() {
           margin: 0;
           color: rgba(0, 0, 0, 0.7);
           font-size: 16px;
-          max-width: 100ch;
+          max-width: 110ch;
         }
 
         .grid {
@@ -1221,7 +1198,8 @@ export default function Page() {
           letter-spacing: 0.06em;
         }
         .input,
-        .select {
+        .select,
+        .textarea {
           width: 100%;
           padding: 11px 12px;
           border-radius: 12px;
@@ -1230,6 +1208,11 @@ export default function Page() {
           outline: none;
           font-weight: 700;
           color: #111;
+        }
+        .textarea {
+          min-height: 96px;
+          resize: vertical;
+          line-height: 1.35;
         }
 
         .scaleBlock {
@@ -1290,7 +1273,6 @@ export default function Page() {
           font-weight: 800;
         }
 
-        /* Variants thumbnails under photo */
         .variantsWrap {
           display: grid;
           gap: 10px;
@@ -1633,9 +1615,9 @@ export default function Page() {
         <div className="hero">
           <h2>Vizualizácia pergoly na vašom dome</h2>
           <p className="sub">
-            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b> (môžu byť aj z rôznych fotiek a rôznych typov).
+            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b>.
             <br />
-            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete.
+            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete (plus môžete dopísať poznámku).
           </p>
           <Stepper />
         </div>
@@ -1691,7 +1673,6 @@ export default function Page() {
                   </div>
                 </div>
 
-                {/* ✅ 6 náhľadov variantov */}
                 <div className="variantsWrap">
                   <div className="variantsHead">
                     <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
@@ -1738,7 +1719,6 @@ export default function Page() {
                                 className={`smallBtn ${selected ? "primary" : ""}`}
                                 onClick={() => {
                                   setSelectedVariantIndex(i);
-                                  // ak nie je odomknuté, otvoríme formulár a vyžiadame výber (už bude vybraný)
                                   if (!leadSubmitted) {
                                     setPendingAction({ kind: "single", index: i });
                                     setLeadOpen(true);
@@ -1793,7 +1773,6 @@ export default function Page() {
                     const f = e.target.files?.[0] || null;
                     setBgFile(f);
                     setError("");
-                    // POZOR: už nemažeme varianty – umožňujeme generovať aj z rôznych podkladových fotiek
                   }}
                 />
               </div>
@@ -1811,7 +1790,6 @@ export default function Page() {
 
               <div className="divider" />
 
-              {/* ✅ Slidre */}
               <div className="sectionTitle">Rozmery (1% – 200%)</div>
               <div className="scaleBlock">
                 <ScaleRow label="X" axis="x" value={scalePct.x} />
@@ -1955,7 +1933,7 @@ export default function Page() {
           <div className="modalCard">
             <div className="modalHead">
               <div>
-                <p className="modalTitle">Vyplň kontaktné údaje a vyber vizualizáciu</p>
+                <p className="modalTitle">Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</p>
                 <p className="modalSub">
                   Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
                 </p>
@@ -1973,13 +1951,7 @@ export default function Page() {
                     {variants.map((v, i) => {
                       const sel = selectedVariantIndex === i;
                       return (
-                        <div
-                          key={v.id}
-                          className={`pickCard ${sel ? "selected" : ""}`}
-                          onClick={() => setSelectedVariantIndex(i)}
-                          role="button"
-                          tabIndex={0}
-                        >
+                        <div key={v.id} className={`pickCard ${sel ? "selected" : ""}`} onClick={() => setSelectedVariantIndex(i)} role="button" tabIndex={0}>
                           <div className="pickTop">
                             <div>
                               <b>Variant {i + 1}</b>
@@ -2040,6 +2012,17 @@ export default function Page() {
                       {leadErr.approxHeight ? <div className="errText">{leadErr.approxHeight}</div> : null}
                     </div>
                   </div>
+                </div>
+
+                {/* ✅ NOVÉ: poznámka zákazníka */}
+                <div className="span2">
+                  <div className="sectionTitle">Poznámka zákazníka (voliteľné)</div>
+                  <textarea
+                    className="textarea"
+                    value={lead.customerNote}
+                    onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
+                    placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
+                  />
                 </div>
 
                 <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
