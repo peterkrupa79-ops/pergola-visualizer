@@ -22,6 +22,8 @@ Do NOT change the pergola shape, size, thickness, leg width, proportions, spacin
 Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
 Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
 
+const MAX_VARIANTS = 6;
+
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
@@ -55,15 +57,21 @@ function typeLabel(t: PergolaType) {
   return "Zimná záhrada";
 }
 
-// ✅ NOVÉ: premena Base64 (bez prefixu) na PNG Blob, aby sme ho vedeli poslať ako "file"
-function b64ToPngBlob(b64: string): Blob {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: "image/png" });
+type VariantItem = {
+  id: string;
+  type: PergolaType;
+  b64: string; // PNG from OpenAI render API
+  createdAt: number;
+};
+
+function makeId() {
+  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
 }
 
-type VariantItem = { type: PergolaType; b64: string };
+async function b64PngToBlob(b64: string): Promise<Blob> {
+  const r = await fetch(`data:image/png;base64,${b64}`);
+  return await r.blob();
+}
 
 export default function Page() {
   const [bgFile, setBgFile] = useState<File | null>(null);
@@ -104,7 +112,7 @@ export default function Page() {
 
   const [prompt] = useState(FINAL_PROMPT_DEFAULT);
 
-  // variants (max 3)
+  // variants (max 6)
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
 
@@ -114,8 +122,10 @@ export default function Page() {
   // lead gating
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
-  const [pendingDownload, setPendingDownload] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
+
+  // čo chce user spraviť po odomknutí
+  const [pendingAction, setPendingAction] = useState<{ kind: "single"; index: number } | { kind: "all" } | null>(null);
 
   const [lead, setLead] = useState({
     name: "",
@@ -135,6 +145,7 @@ export default function Page() {
     approxWidth?: string;
     approxDepth?: string;
     approxHeight?: string;
+    selectedVariant?: string;
   }>({});
 
   // mobile sheet
@@ -152,13 +163,8 @@ export default function Page() {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
       isMobileRef.current = mq.matches;
-      if (!mq.matches) {
-        setSheetOpen(false);
-        setSheetY(0);
-      } else {
-        setSheetOpen(false);
-        setSheetY(0);
-      }
+      setSheetOpen(false);
+      setSheetY(0);
     };
     apply();
     mq.addEventListener?.("change", apply);
@@ -186,9 +192,8 @@ export default function Page() {
     modeAtDown: "move",
   });
 
-  const currentVariant = variants[selectedVariantIndex] || null;
-  const currentB64 = currentVariant?.b64 || "";
-  const remaining = Math.max(0, 3 - variants.length);
+  const selectedVariant = variants[selectedVariantIndex] || null;
+  const remaining = Math.max(0, MAX_VARIANTS - variants.length);
 
   function toCanvasXY(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current!;
@@ -486,8 +491,7 @@ export default function Page() {
 
   async function generate() {
     if (!bgImg) return;
-    if (leadSubmitted) return;
-    if (variants.length >= 3) return;
+    if (variants.length >= MAX_VARIANTS) return;
 
     setLoading(true);
     setError("");
@@ -543,13 +547,13 @@ export default function Page() {
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
       setVariants((prev) => {
-        if (prev.length >= 3) return prev;
-        return [...prev, { type: pergolaType, b64: j.b64 }];
+        if (prev.length >= MAX_VARIANTS) return prev;
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        return next;
       });
 
-      setSelectedVariantIndex((prev) => clamp(prev, 0, 2));
-      // auto-select newest slot
-      setSelectedVariantIndex(() => clamp(variants.length, 0, 2));
+      // auto-select newest slot (bez bugov so stale state)
+      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (e: any) {
       console.error(e);
       setError(String(e?.message || e));
@@ -558,18 +562,28 @@ export default function Page() {
     }
   }
 
-  function downloadPNG() {
-    if (!currentB64) return;
+  function downloadVariantPNG(idx: number) {
+    const v = variants[idx];
+    if (!v?.b64) return;
     const a = document.createElement("a");
-    a.href = `data:image/png;base64,${currentB64}`;
-    a.download = "vizualizacia.png";
+    a.href = `data:image/png;base64,${v.b64}`;
+    a.download = `vizualizacia_${idx + 1}.png`;
     a.click();
+  }
+
+  async function downloadAllPNGs() {
+    // postupne spustí sťahovanie všetkých (prehliadač môže mať limit)
+    for (let i = 0; i < variants.length; i++) {
+      downloadVariantPNG(i);
+      // malá pauza, aby to prehliadač stíhal
+      await new Promise((r) => setTimeout(r, 250));
+    }
   }
 
   function closeLeadForm() {
     setLeadOpen(false);
     setLeadSubmitting(false);
-    setPendingDownload(false);
+    setPendingAction(null);
     setLeadErr({});
   }
 
@@ -587,6 +601,9 @@ export default function Page() {
     if (!lead.approxDepth.trim()) e.approxDepth = "Zadaj hĺbku.";
     if (!lead.approxHeight.trim()) e.approxHeight = "Zadaj výšku.";
 
+    // musí byť vybraná vizualizácia, ktorú pošleme do emailu
+    if (!variants[selectedVariantIndex]?.b64) e.selectedVariant = "Vyber jednu vizualizáciu, ktorú nám pošleš.";
+
     setLeadErr(e);
     return Object.keys(e).length === 0;
   }
@@ -596,75 +613,74 @@ export default function Page() {
     if (leadSubmitting) return;
     if (!validateLead()) return;
 
-    if (!currentVariant) {
-      setLeadErr((prev) => ({
-        ...prev,
-        email: prev.email || "Najprv vyber vygenerovanú variantu, potom odošli formulár.",
-      }));
-      return;
-    }
+    const picked = variants[selectedVariantIndex];
+    if (!picked) return;
 
     setLeadSubmitting(true);
 
     try {
-      // ✅ urobíme PNG súbor z base64 varianty
-      const pngBlob = b64ToPngBlob(currentVariant.b64);
-
-      // ✅ FormData (presne to backend očakáva)
-      const fd = new FormData();
-      fd.append("name", lead.name);
-      fd.append("email", lead.email);
-      fd.append("phone", lead.phone);
-      fd.append("city", lead.city);
-
-      // Poznámka – dáme tam rozmery + info o variante, aby to obchod mal v emaili
+      // Zostavíme "note" tak, aby obchod mal všetko pokope
       const note = [
-        `Typ: ${typeLabel(currentVariant.type)} (${currentVariant.type})`,
-        `Variant: ${selectedVariantIndex + 1}/3`,
-        `Približné rozmery: šírka ${lead.approxWidth}, hĺbka ${lead.approxDepth}, výška ${lead.approxHeight}`,
+        `Vybraná vizualizácia: Variant ${selectedVariantIndex + 1} – ${typeLabel(picked.type)}`,
+        `Rozmery (približne):`,
+        `- šírka: ${lead.approxWidth}`,
+        `- hĺbka: ${lead.approxDepth}`,
+        `- výška: ${lead.approxHeight}`,
       ].join("\n");
-      fd.append("note", note);
 
-      // súhlas – zatiaľ automaticky "true" (máš text o súhlase vo formulári)
-      fd.append("consent", "true");
-      fd.append("source", "pergola-editor");
-
-      // configJson pre interné účely
-      fd.append(
-        "configJson",
-        JSON.stringify({
-          lead,
-          pergolaType: currentVariant.type,
-          variantIndex: selectedVariantIndex + 1,
-        })
+      const configJson = JSON.stringify(
+        {
+          selectedVariantIndex: selectedVariantIndex + 1,
+          selectedPergolaType: picked.type,
+          editor: {
+            pos,
+            rot2D,
+            rot3D,
+            scalePct,
+            canvasW,
+            canvasH,
+            editorZoom,
+          },
+          totalGenerated: variants.length,
+        },
+        null,
+        2
       );
 
-      // ✅ dôležité: názov poľa MUSÍ byť "image"
-      fd.append("image", pngBlob, "vizualizacia.png");
+      const pngBlob = await b64PngToBlob(picked.b64);
 
-      // ✅ NENASTAVUJEME Content-Type – prehliadač nastaví multipart boundary sám
+      const fd = new FormData();
+      fd.append("name", lead.name);
+      fd.append("city", lead.city);
+      fd.append("phone", lead.phone);
+      fd.append("email", lead.email);
+      fd.append("note", note);
+      fd.append("consent", "yes");
+      fd.append("source", "teranea-editor");
+      fd.append("configJson", configJson);
+      fd.append("image", pngBlob, `vizualizacia_variant_${selectedVariantIndex + 1}.png`);
+
       const r = await fetch("/api/lead/submit", {
         method: "POST",
         body: fd,
       });
 
-      let j: any = null;
-      try {
-        j = await r.json();
-      } catch {}
-
       if (!r.ok) {
-        throw new Error(j?.error || j?.detail || `HTTP ${r.status}`);
+        const t = await r.text().catch(() => "");
+        throw new Error(t || `HTTP ${r.status}`);
       }
 
       setLeadSubmitted(true);
       setLeadOpen(false);
       setLeadSubmitting(false);
 
-      if (pendingDownload) {
-        setTimeout(() => downloadPNG(), 50);
-        setPendingDownload(false);
+      // po odomknutí vykonaj pôvodnú akciu
+      if (pendingAction?.kind === "single") {
+        downloadVariantPNG(pendingAction.index);
+      } else if (pendingAction?.kind === "all") {
+        await downloadAllPNGs();
       }
+      setPendingAction(null);
     } catch (err: any) {
       console.error(err);
       setLeadSubmitting(false);
@@ -675,14 +691,32 @@ export default function Page() {
     }
   }
 
-  function onDownloadClick() {
-    if (!currentB64) return;
+  function onDownloadOne(idx: number) {
+    if (!variants[idx]?.b64) return;
+
+    // vždy vyberieme ten variant, ktorý chce user stiahnuť
+    setSelectedVariantIndex(idx);
+
     if (leadSubmitted) {
-      downloadPNG();
+      downloadVariantPNG(idx);
       return;
     }
-    setPendingDownload(true);
+
     setLeadErr({});
+    setPendingAction({ kind: "single", index: idx });
+    setLeadOpen(true);
+  }
+
+  function onDownloadAllClick() {
+    if (variants.length === 0) return;
+
+    if (leadSubmitted) {
+      downloadAllPNGs();
+      return;
+    }
+
+    setLeadErr({});
+    setPendingAction({ kind: "all" });
     setLeadOpen(true);
   }
 
@@ -790,9 +824,9 @@ export default function Page() {
     const steps = [
       { n: 1, text: "Nahraj fotku" },
       { n: 2, text: "Umiestni pergolu" },
-      { n: 3, text: "Vygeneruj vizualizáciu" },
-      { n: 4, text: "Vyplň kontaktné údaje a približné rozmery" },
-      { n: 5, text: "Získaj vizualizáciu" },
+      { n: 3, text: "Vygeneruj vizualizácie" },
+      { n: 4, text: "Vyplň kontaktné údaje a vyber vizualizáciu" },
+      { n: 5, text: "Stiahni PNG" },
     ];
 
     return (
@@ -819,13 +853,7 @@ export default function Page() {
       <div className="scaleRow">
         <div className="scaleLbl">{label}</div>
 
-        <button
-          type="button"
-          className="miniBtn"
-          disabled={loading}
-          onClick={() => bumpScaleAxis(axis, -SCALE_STEP)}
-          aria-label={`Zmenšiť ${label}`}
-        >
+        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, -SCALE_STEP)} aria-label={`Zmenšiť ${label}`}>
           −
         </button>
 
@@ -841,13 +869,7 @@ export default function Page() {
           aria-label={`Rozmer ${label}`}
         />
 
-        <button
-          type="button"
-          className="miniBtn"
-          disabled={loading}
-          onClick={() => bumpScaleAxis(axis, SCALE_STEP)}
-          aria-label={`Zväčšiť ${label}`}
-        >
+        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, SCALE_STEP)} aria-label={`Zväčšiť ${label}`}>
           +
         </button>
 
@@ -856,7 +878,7 @@ export default function Page() {
     );
   }
 
-  const canGenerate = !!bgImg && !loading && !leadSubmitted && variants.length < 3;
+  const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
   const getSheetMaxDown = () => {
     const vh = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -961,7 +983,7 @@ export default function Page() {
           justify-content: space-between;
           gap: 18px;
           padding: 6px 2px;
-          min-width: 860px;
+          min-width: 900px;
         }
         .ter-wrap .ter-stepper .stepperTrack {
           position: absolute;
@@ -979,7 +1001,7 @@ export default function Page() {
           justify-items: center;
           gap: 10px;
           flex: 1 1 0;
-          min-width: 150px;
+          min-width: 160px;
         }
         .ter-wrap .ter-stepper .stepCircle {
           width: 46px;
@@ -1007,7 +1029,7 @@ export default function Page() {
           font-weight: 650;
           text-align: center;
           line-height: 1.2;
-          max-width: 220px;
+          max-width: 240px;
           margin: 0;
         }
         .ter-wrap .ter-stepper .stepText.active {
@@ -1016,7 +1038,7 @@ export default function Page() {
         }
         @media (max-width: 960px) {
           .ter-wrap .ter-stepper .stepperBar {
-            min-width: 740px;
+            min-width: 860px;
           }
         }
       `}</style>
@@ -1047,7 +1069,7 @@ export default function Page() {
           margin: 0;
           color: rgba(0, 0, 0, 0.7);
           font-size: 16px;
-          max-width: 95ch;
+          max-width: 100ch;
         }
 
         .grid {
@@ -1267,17 +1289,6 @@ export default function Page() {
           color: rgba(120, 0, 0, 0.95);
           font-weight: 800;
         }
-        .outputPreview {
-          border-radius: 14px;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          overflow: hidden;
-          background: #fff;
-        }
-        .outputPreview img {
-          display: block;
-          width: 100%;
-          height: auto;
-        }
 
         /* Variants thumbnails under photo */
         .variantsWrap {
@@ -1369,6 +1380,33 @@ export default function Page() {
           font-size: 12px;
           font-weight: 800;
           color: rgba(0, 0, 0, 0.45);
+        }
+
+        .variantActions {
+          display: flex;
+          gap: 8px;
+          padding: 10px;
+          border-top: 1px solid rgba(0, 0, 0, 0.06);
+          background: rgba(0, 0, 0, 0.015);
+        }
+        .smallBtn {
+          border-radius: 10px;
+          padding: 9px 10px;
+          font-weight: 900;
+          cursor: pointer;
+          border: 1px solid rgba(0, 0, 0, 0.14);
+          background: #fff;
+          color: #111;
+          font-size: 12px;
+        }
+        .smallBtn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+        .smallBtn.primary {
+          background: #111;
+          border-color: #111;
+          color: #fff;
         }
 
         .mobileBar {
@@ -1492,7 +1530,7 @@ export default function Page() {
           z-index: 9999;
         }
         .modalCard {
-          width: min(820px, 100%);
+          width: min(900px, 100%);
           border-radius: 18px;
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.12);
@@ -1548,13 +1586,56 @@ export default function Page() {
             grid-template-columns: 1fr;
           }
         }
+
+        .pickGrid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+        }
+        @media (max-width: 720px) {
+          .pickGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+        .pickCard {
+          border: 1px solid rgba(0, 0, 0, 0.1);
+          border-radius: 14px;
+          overflow: hidden;
+          cursor: pointer;
+          background: rgba(0, 0, 0, 0.01);
+        }
+        .pickCard.selected {
+          outline: 3px solid rgba(0, 0, 0, 0.85);
+          outline-offset: 0;
+          border-color: rgba(0, 0, 0, 0.85);
+          background: #fff;
+        }
+        .pickTop {
+          padding: 10px 10px 8px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+          background: rgba(0, 0, 0, 0.02);
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .pickTop b {
+          font-size: 12px;
+        }
+        .pickCard img {
+          width: 100%;
+          height: 130px;
+          object-fit: cover;
+          display: block;
+        }
       `}</style>
 
       <div className="container">
         <div className="hero">
           <h2>Vizualizácia pergoly na vašom dome</h2>
           <p className="sub">
-            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>3 varianty</b>. Nakoniec vyberte jednu, vyplňte formulár a stiahnite PNG.
+            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b> (môžu byť aj z rôznych fotiek a rôznych typov).
+            <br />
+            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete.
           </p>
           <Stepper />
         </div>
@@ -1584,15 +1665,7 @@ export default function Page() {
                   <div className="row desktopOnly">
                     <div className="field" style={{ minWidth: 260 }}>
                       <div className="label">Zoom</div>
-                      <input
-                        className="range range--big"
-                        type="range"
-                        min={50}
-                        max={160}
-                        step={5}
-                        value={editorZoom}
-                        onChange={(e) => setEditorZoom(Number(e.target.value))}
-                      />
+                      <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
                     </div>
                     <div className="note" style={{ fontVariantNumeric: "tabular-nums" }}>
                       {editorZoom}%
@@ -1618,59 +1691,84 @@ export default function Page() {
                   </div>
                 </div>
 
-                {/* ✅ 3 náhľady variantov */}
+                {/* ✅ 6 náhľadov variantov */}
                 <div className="variantsWrap">
                   <div className="variantsHead">
-                    <div className="variantsTitle">Varianty (max 3)</div>
+                    <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
                     <div className="variantsNote">
-                      Zostáva: <b>{remaining}</b>/3 • typ sa môže meniť, existujúce varianty ostanú
+                      Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
                     </div>
                   </div>
 
                   <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
-                    {[0, 1, 2].map((i) => {
+                    {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
                       const v = variants[i] || null;
                       const selected = selectedVariantIndex === i;
 
                       return (
-                        <button
-                          key={i}
-                          type="button"
-                          className={`variantCard ${selected ? "selected" : ""} ${v ? "has" : ""}`}
-                          onClick={() => {
-                            if (!v) return;
-                            setSelectedVariantIndex(i);
-                          }}
-                          disabled={!v}
-                          aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
-                        >
-                          <div className="variantTop">
-                            <div>
-                              <div className="variantBadge">Variant {i + 1}</div>
-                              {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+                        <div key={i} style={{ display: "grid", gap: 0 }}>
+                          <button
+                            type="button"
+                            className={`variantCard ${selected ? "selected" : ""} ${v ? "has" : ""}`}
+                            onClick={() => {
+                              if (!v) return;
+                              setSelectedVariantIndex(i);
+                            }}
+                            disabled={!v}
+                            aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
+                          >
+                            <div className="variantTop">
+                              <div>
+                                <div className="variantBadge">Variant {i + 1}</div>
+                                {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+                              </div>
+                              {selected ? <div className="variantSelected">Vybrané</div> : null}
                             </div>
-                            {selected ? <div className="variantSelected">Vybrané</div> : null}
-                          </div>
+
+                            {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
+                          </button>
 
                           {v ? (
-                            <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} />
-                          ) : (
-                            <div className="variantEmpty">Zatiaľ nevygenerované</div>
-                          )}
-                        </button>
+                            <div className="variantActions">
+                              <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
+                                Stiahnuť
+                              </button>
+                              <button
+                                type="button"
+                                className={`smallBtn ${selected ? "primary" : ""}`}
+                                onClick={() => {
+                                  setSelectedVariantIndex(i);
+                                  // ak nie je odomknuté, otvoríme formulár a vyžiadame výber (už bude vybraný)
+                                  if (!leadSubmitted) {
+                                    setPendingAction({ kind: "single", index: i });
+                                    setLeadOpen(true);
+                                  }
+                                }}
+                              >
+                                Vybrať do formulára
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
-                </div>
 
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
-                  <button type="button" className="ter-btn ter-btn--ghost" onClick={snapToGround}>
-                    Zarovnať na zem
-                  </button>
-                </div>
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
+                    <button type="button" className="ter-btn ter-btn--ghost" onClick={snapToGround}>
+                      Zarovnať na zem
+                    </button>
+                  </div>
 
-                <div className="mobileSpacer" />
+                  <div className="row" style={{ justifyContent: "flex-end" }}>
+                    <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                      Stiahnuť všetky ({variants.length})
+                    </button>
+                  </div>
+
+                  <div className="mobileSpacer" />
+                </div>
               </div>
             </div>
           </div>
@@ -1679,14 +1777,14 @@ export default function Page() {
           <div className="card sticky desktopOnly">
             <div className="cardHeader">
               <div className="cardTitle">Ovládanie</div>
-              <div className="hint">{leadSubmitted ? "✅ Stiahnutie odomknuté" : "Stiahnutie po vyplnení"}</div>
+              <div className="hint">{leadSubmitted ? "✅ Sťahovanie odomknuté" : "🔒 Sťahovanie po formulári"}</div>
             </div>
 
             <div className="cardBody">
               <div className="sectionTitle">Krok 1</div>
 
               <div className="field">
-                <div className="label">Fotka</div>
+                <div className="label">Fotka (podklad)</div>
                 <input
                   className="input"
                   type="file"
@@ -1694,13 +1792,8 @@ export default function Page() {
                   onChange={(e) => {
                     const f = e.target.files?.[0] || null;
                     setBgFile(f);
-
-                    // nový obrázok = nové varianty
-                    setVariants([]);
-                    setSelectedVariantIndex(0);
-
                     setError("");
-                    setLeadSubmitted(false);
+                    // POZOR: už nemažeme varianty – umožňujeme generovať aj z rôznych podkladových fotiek
                   }}
                 />
               </div>
@@ -1718,7 +1811,7 @@ export default function Page() {
 
               <div className="divider" />
 
-              {/* ✅ Slidre presunuté do sticky */}
+              {/* ✅ Slidre */}
               <div className="sectionTitle">Rozmery (1% – 200%)</div>
               <div className="scaleBlock">
                 <ScaleRow label="X" axis="x" value={scalePct.x} />
@@ -1736,29 +1829,23 @@ export default function Page() {
 
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
-                  {loading ? "Generujem..." : variants.length >= 3 ? "Limit 3 varianty" : `Vygenerovať variant (${variants.length + 1}/3)`}
+                  {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS} variantov` : `Vygenerovať variant (${variants.length + 1}/${MAX_VARIANTS})`}
                 </button>
 
-                <button type="button" className="ter-btn" onClick={onDownloadClick} disabled={!currentB64}>
-                  Stiahnuť PNG
+                <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                  Stiahnuť všetky
                 </button>
               </div>
 
-              {currentVariant ? (
+              {selectedVariant ? (
                 <div style={{ marginTop: 10 }} className="note">
-                  Vybrané: <b>Variant {selectedVariantIndex + 1}</b> • {typeLabel(currentVariant.type)}
+                  Vybrané do formulára: <b>Variant {selectedVariantIndex + 1}</b> • {typeLabel(selectedVariant.type)}
                 </div>
               ) : (
                 <div style={{ marginTop: 10 }} className="note">
                   Najprv vygeneruj aspoň 1 variantu.
                 </div>
               )}
-
-              {currentB64 ? (
-                <div style={{ marginTop: 14 }} className="outputPreview">
-                  <img src={`data:image/png;base64,${currentB64}`} alt="Vybraná vizualizácia" />
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
@@ -1767,30 +1854,18 @@ export default function Page() {
       {/* Mobile action bar */}
       <div className="mobileBar">
         <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
-          {loading ? "Generujem..." : variants.length >= 3 ? "Limit 3 varianty" : `Vygenerovať (${variants.length + 1}/3)`}
+          {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
         </button>
 
-        <button type="button" className="ter-btn" onClick={onDownloadClick} disabled={!currentB64}>
-          Stiahnuť PNG
+        <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+          Stiahnuť všetky
         </button>
       </div>
 
       {/* Mobile bottom-sheet */}
       <div className="sheet" aria-hidden={!isMobileRef.current}>
-        <div
-          className="sheetCard"
-          style={{
-            transform: `translateY(${sheetY}px)`,
-            transition: sheetDragRef.current.dragging ? "none" : "transform 220ms ease",
-          }}
-        >
-          <div
-            className="sheetHandleRow"
-            onPointerDown={onHandlePointerDown}
-            onPointerMove={onHandlePointerMove}
-            onPointerUp={onHandlePointerUp}
-            onPointerCancel={onHandlePointerUp}
-          >
+        <div className="sheetCard" style={{ transform: `translateY(${sheetY}px)`, transition: sheetDragRef.current.dragging ? "none" : "transform 220ms ease" }}>
+          <div className="sheetHandleRow" onPointerDown={onHandlePointerDown} onPointerMove={onHandlePointerMove} onPointerUp={onHandlePointerUp} onPointerCancel={onHandlePointerUp}>
             <div className="handle" />
             <div className="sheetTopLine">
               <div className="sheetTitle">Nastavenia (typ / zoom / rozmery)</div>
@@ -1815,12 +1890,7 @@ export default function Page() {
                     onChange={(e) => {
                       const f = e.target.files?.[0] || null;
                       setBgFile(f);
-
-                      setVariants([]);
-                      setSelectedVariantIndex(0);
-
                       setError("");
-                      setLeadSubmitted(false);
                     }}
                   />
                 </div>
@@ -1840,15 +1910,7 @@ export default function Page() {
 
               <div className="sheetBlock">
                 <div className="sectionTitle">Zoom</div>
-                <input
-                  className="range range--big"
-                  type="range"
-                  min={50}
-                  max={160}
-                  step={5}
-                  value={editorZoom}
-                  onChange={(e) => setEditorZoom(Number(e.target.value))}
-                />
+                <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
               </div>
 
               <div className="sheetBlock">
@@ -1869,6 +1931,12 @@ export default function Page() {
               <div className="sheetBlock">
                 <div className="note">Pozn.: Hold/drag na slidere sú vypnuté. Použi klasický slider a kliky na +/−.</div>
               </div>
+
+              <div className="sheetBlock">
+                <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                  Stiahnuť všetky ({variants.length})
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1887,8 +1955,10 @@ export default function Page() {
           <div className="modalCard">
             <div className="modalHead">
               <div>
-                <p className="modalTitle">Vyplň kontaktné údaje a približné rozmery</p>
-                <p className="modalSub">Po odoslaní formulára sa vizualizácia sprístupní na stiahnutie.</p>
+                <p className="modalTitle">Vyplň kontaktné údaje a vyber vizualizáciu</p>
+                <p className="modalSub">
+                  Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
+                </p>
               </div>
               <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm}>
                 ✕
@@ -1897,6 +1967,34 @@ export default function Page() {
 
             <div className="modalBody">
               <form onSubmit={submitLead} className="formGrid">
+                <div className="span2">
+                  <div className="sectionTitle">Vyber vizualizáciu, ktorú odošleš *</div>
+                  <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
+                    {variants.map((v, i) => {
+                      const sel = selectedVariantIndex === i;
+                      return (
+                        <div
+                          key={v.id}
+                          className={`pickCard ${sel ? "selected" : ""}`}
+                          onClick={() => setSelectedVariantIndex(i)}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <div className="pickTop">
+                            <div>
+                              <b>Variant {i + 1}</b>
+                              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)", marginTop: 2 }}>{typeLabel(v.type)}</div>
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
+                          </div>
+                          <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {leadErr.selectedVariant ? <div className="errText" style={{ marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
+                </div>
+
                 <div className="field">
                   <div className="label">Meno *</div>
                   <input className="input" value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" />
@@ -1950,7 +2048,7 @@ export default function Page() {
                   </button>
 
                   <button type="submit" className="ter-btn ter-btn--primary" disabled={leadSubmitting}>
-                    {leadSubmitting ? "Odosielam..." : "Odoslať a stiahnuť"}
+                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
                   </button>
                 </div>
 
