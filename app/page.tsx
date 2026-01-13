@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mode = "move" | "rotate3d" | "setGround" | "resize";
+type Mode = "move" | "rotate3d" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -73,9 +73,45 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
-type SliderPanel = "zoom" | "x" | "y" | "z";
-
 export default function Page() {
+  // ======================
+  // RESPONSIVE CANVAS SIZE
+  // ======================
+  const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 980, h: 560 });
+  const canvasW = canvasSize.w;
+  const canvasH = canvasSize.h;
+
+  const isMobileRef = useRef(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 960px)");
+
+    const compute = () => {
+      isMobileRef.current = mq.matches;
+
+      // dostupná šírka (padding 16px na každej strane)
+      const availW = Math.max(320, Math.floor(window.innerWidth - 32));
+      const maxW = Math.min(980, availW);
+
+      // zachovaj pomer 980x560
+      const h = Math.max(240, Math.round((maxW * 560) / 980));
+
+      setCanvasSize({ w: maxW, h });
+    };
+
+    compute();
+    window.addEventListener("resize", compute);
+    mq.addEventListener?.("change", compute);
+
+    return () => {
+      window.removeEventListener("resize", compute);
+      mq.removeEventListener?.("change", compute);
+    };
+  }, []);
+
+  // ======================
+  // BACKGROUND + SETTINGS
+  // ======================
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
   const [bgImg, setBgImg] = useState<HTMLImageElement | null>(null);
@@ -88,20 +124,16 @@ export default function Page() {
   }, [pergolaType]);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [canvasW] = useState(980);
-  const [canvasH] = useState(560);
 
-  // ✅ default menší, mobile si nastaví vlastné (len raz)
   const [editorZoom, setEditorZoom] = useState(100);
 
   const [mode, setMode] = useState<Mode>("move");
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
+  const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
-  // ✅ menšie default (mobile upraví na 75% len raz)
-  const [scalePct, setScalePct] = useState({ x: 80, y: 80, z: 80 });
-
+  // optional (funkcia ostáva, UI tlačidlá sme odstránili)
   const [groundA, setGroundA] = useState<Vec2 | null>(null);
   const [groundB, setGroundB] = useState<Vec2 | null>(null);
 
@@ -130,7 +162,6 @@ export default function Page() {
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
 
-  // čo chce user spraviť po odomknutí
   const [pendingAction, setPendingAction] = useState<{ kind: "single"; index: number } | { kind: "all" } | null>(null);
 
   const [lead, setLead] = useState({
@@ -155,52 +186,33 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // UI selection for bottom slider panel
-  const [panel, setPanel] = useState<SliderPanel>("zoom");
+  // ======================
+  // SLIDER PANEL SELECTION
+  // ======================
+  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
 
-  // mobile
-  const isMobileRef = useRef(false);
-  const didInitMobileDefaultsRef = useRef(false);
-
+  // ======================
+  // MOBILE: start smaller pergola
+  // ======================
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 960px)");
-    const apply = () => {
-      const isMobile = mq.matches;
-      isMobileRef.current = isMobile;
+    if (!isMobileRef.current) return;
 
-      // ✅ Mobile defaults (len raz): menší model aj zoom, aby bol celý viditeľný hneď po štarte.
-      if (isMobile && !didInitMobileDefaultsRef.current) {
-        didInitMobileDefaultsRef.current = true;
-        setEditorZoom(90);
-        setScalePct({ x: 75, y: 75, z: 75 });
-      }
-    };
-
-    apply();
-    mq.addEventListener?.("change", apply);
-    return () => mq.removeEventListener?.("change", apply);
+    // menšia na mobile, aby bola celá viditeľná hneď
+    setScalePct({ x: 75, y: 75, z: 75 });
+    setPos({ x: 0.5, y: 0.78 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // canvas drag ref
-  const dragRef = useRef<{
-    active: boolean;
-    start: Vec2;
-    startPos: Vec2;
-    startRot3D: { yaw: number; pitch: number };
-    startRot2D: number;
-    startScalePct: { x: number; y: number; z: number };
-    handle: HandleId | null;
-    modeAtDown: Mode;
-  }>({
-    active: false,
-    start: { x: 0, y: 0 },
-    startPos: { x: 0.5, y: 0.72 },
-    startRot3D: { yaw: 0.35, pitch: -0.12 },
-    startRot2D: 0,
-    startScalePct: { x: 80, y: 80, z: 80 },
-    handle: null,
-    modeAtDown: "move",
-  });
+  // background image load
+  useEffect(() => {
+    if (!bgUrl) {
+      setBgImg(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setBgImg(img);
+    img.src = bgUrl;
+  }, [bgUrl]);
 
   const selectedVariant = variants[selectedVariantIndex] || null;
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
@@ -230,39 +242,42 @@ export default function Page() {
     return null;
   }
 
-  function bumpScaleAxis(axis: "x" | "y" | "z", delta: number) {
-    setScalePct((prev) => {
-      const next = { ...prev };
-      next[axis] = clampPct(prev[axis] + delta);
-      return next;
-    });
+  function snapToGround() {
+    // funkcia zostáva, ale tlačidlá sme odstránili
+    if (!groundA || !groundB || !bboxRect) return;
+
+    const leftX = bboxRect.x;
+    const rightX = bboxRect.x + bboxRect.w;
+
+    const yL = lineYAtX(groundA, groundB, leftX);
+    const yR = lineYAtX(groundA, groundB, rightX);
+    const yMid = (yL + yR) / 2;
+
+    const bottom = bboxRect.y + bboxRect.h;
+    const dyPx = yMid - bottom;
+    const dyNorm = dyPx / canvasH;
+
+    setPos((p) => ({ ...p, y: p.y + dyNorm }));
   }
+
   function setScaleAxis(axis: "x" | "y" | "z", value: number) {
     setScalePct((prev) => ({ ...prev, [axis]: clampPct(value) }));
   }
 
   function resetAll() {
-    setScalePct({ x: 100, y: 100, z: 100 });
+    setScalePct(isMobileRef.current ? { x: 75, y: 75, z: 75 } : { x: 100, y: 100, z: 100 });
     setRot3D({ yaw: 0.35, pitch: -0.12 });
     setRot2D(0);
-    setPos({ x: 0.5, y: 0.72 });
+    setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
     setGroundA(null);
     setGroundB(null);
     setError("");
+    setPanel("zoom");
   }
 
-  // background image load
-  useEffect(() => {
-    if (!bgUrl) {
-      setBgImg(null);
-      return;
-    }
-    const img = new Image();
-    img.onload = () => setBgImg(img);
-    img.src = bgUrl;
-  }, [bgUrl]);
-
-  // init / reload three when model changes
+  // ======================
+  // THREE INIT / RELOAD
+  // ======================
   useEffect(() => {
     let cancelled = false;
 
@@ -337,7 +352,6 @@ export default function Page() {
     }
 
     initThree();
-
     return () => {
       cancelled = true;
     };
@@ -376,18 +390,22 @@ export default function Page() {
 
     ctx.clearRect(0, 0, canvasW, canvasH);
 
+    // ✅ Fotka vždy vyplní celé okno (cover), aby nebol biely pás
     if (bgImg) {
-      // ✅ COVER (vyplní celé okno) – odstráni biely pás na mobile
-      const rw = canvasW / bgImg.width;
-      const rh = canvasH / bgImg.height;
-      const r = Math.max(rw, rh);
-      const dw = bgImg.width * r;
-      const dh = bgImg.height * r;
-      const dx = (canvasW - dw) / 2;
-      const dy = (canvasH - dh) / 2;
+      const cw = canvasW;
+      const ch = canvasH;
+      const iw = bgImg.width;
+      const ih = bgImg.height;
+
+      const r = Math.max(cw / iw, ch / ih); // cover
+      const dw = iw * r;
+      const dh = ih * r;
+      const dx = (cw - dw) / 2;
+      const dy = (ch - dh) / 2;
+
       ctx.drawImage(bgImg, dx, dy, dw, dh);
     } else {
-      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
       ctx.fillRect(0, 0, canvasW, canvasH);
       ctx.fillStyle = "rgba(0,0,0,0.65)";
       ctx.font = "14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
@@ -483,6 +501,9 @@ export default function Page() {
     }
   }
 
+  // ======================
+  // GENERATE
+  // ======================
   async function generate() {
     if (!bgImg) return;
     if (variants.length >= MAX_VARIANTS) return;
@@ -491,7 +512,6 @@ export default function Page() {
     setError("");
 
     try {
-      // --- EXPORT pre OpenAI: downscale + JPEG ---
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -690,11 +710,32 @@ export default function Page() {
   }
 
   // ===========================
-  // ✅ 1 PRST = VŽDY EDIT (CANVAS)
+  // ✅ 1 PRST = VŽDY EDIT CANVAS
   // ===========================
+  const dragRef = useRef<{
+    active: boolean;
+    start: Vec2;
+    startPos: Vec2;
+    startRot3D: { yaw: number; pitch: number };
+    startRot2D: number;
+    startScalePct: { x: number; y: number; z: number };
+    handle: HandleId | null;
+    modeAtDown: Mode;
+  }>({
+    active: false,
+    start: { x: 0, y: 0 },
+    startPos: { x: 0.5, y: 0.72 },
+    startRot3D: { yaw: 0.35, pitch: -0.12 },
+    startRot2D: 0,
+    startScalePct: { x: 100, y: 100, z: 100 },
+    handle: null,
+    modeAtDown: "move",
+  });
+
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
+    // zablokuj scroll len pri canvas-e
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -790,6 +831,9 @@ export default function Page() {
     if (mode === "resize") setMode("move");
   }
 
+  // ======================
+  // UI COMPONENTS
+  // ======================
   function Stepper() {
     const hasAnyVariant = variants.length > 0;
     const current = !bgImg ? 1 : !hasAnyVariant ? 2 : !leadSubmitted ? 4 : 5;
@@ -823,33 +867,30 @@ export default function Page() {
 
   function SliderBlock(props: {
     title: string;
-    value: number;
     valueLabel: string;
     min: number;
     max: number;
     step: number;
+    value: number;
     onChange: (v: number) => void;
   }) {
-    const { title, value, valueLabel, min, max, step, onChange } = props;
+    const { title, valueLabel, min, max, step, value, onChange } = props;
 
     return (
-      <div className="sliderBlock">
-        <div className="sliderTop">
-          <div className="sliderTitle">{title}</div>
-          <div className="sliderValue">{valueLabel}</div>
+      <div className="sliderPanel">
+        <div className="sliderTitle">{title}</div>
+        <div className="sliderRow">
+          <input
+            className="rangeBig"
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={(e) => onChange(Number(e.target.value))}
+          />
+          <div className="sliderVal">{valueLabel}</div>
         </div>
-
-        {/* ✅ Native range (ako predtým) – funguje drag prstom aj kurzorom */}
-        <input
-          className="range range--big"
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          disabled={loading}
-          onChange={(e) => onChange(Number(e.target.value))}
-        />
       </div>
     );
   }
@@ -858,7 +899,31 @@ export default function Page() {
 
   return (
     <section className="ter-wrap">
-      {/* Stepper global + ✅ range--big (native) */}
+      {/* ✅ Range styling: drag musí fungovať na mobile + viditeľnosť na desktope */}
+      <style jsx global>{`
+        .ter-wrap :global(input.rangeBig) {
+          width: 100%;
+          height: 42px;
+          accent-color: #111; /* najspoľahlivejšie pre drag (Safari/Chrome) */
+          touch-action: pan-x; /* umožní ťahanie prstom */
+        }
+        /* zlepšenie viditeľnosti aj keď accent-color nestačí */
+        .ter-wrap :global(input.rangeBig::-webkit-slider-runnable-track) {
+          height: 12px;
+          border-radius: 999px;
+          background: rgba(0, 0, 0, 0.22);
+        }
+        .ter-wrap :global(input.rangeBig::-webkit-slider-thumb) {
+          appearance: auto;
+        }
+        .ter-wrap :global(input.rangeBig::-moz-range-track) {
+          height: 12px;
+          border-radius: 999px;
+          background: rgba(0, 0, 0, 0.22);
+        }
+      `}</style>
+
+      {/* Stepper global */}
       <style jsx global>{`
         .ter-wrap .ter-stepper.stepperWrap {
           overflow-x: auto;
@@ -924,32 +989,6 @@ export default function Page() {
           color: rgba(0, 0, 0, 0.9);
           font-weight: 800;
         }
-
-        .ter-wrap :global(input.range--big) {
-          width: 100%;
-          height: 42px;
-          accent-color: #111;
-          touch-action: pan-x;
-        }
-        .ter-wrap :global(input.range--big::-webkit-slider-runnable-track) {
-          height: 10px;
-          border-radius: 999px;
-        }
-        .ter-wrap :global(input.range--big::-webkit-slider-thumb) {
-          width: 22px;
-          height: 22px;
-          margin-top: -6px;
-        }
-        .ter-wrap :global(input.range--big::-moz-range-track) {
-          height: 10px;
-          border-radius: 999px;
-        }
-        .ter-wrap :global(input.range--big::-moz-range-thumb) {
-          width: 22px;
-          height: 22px;
-          border: none;
-        }
-
         @media (max-width: 960px) {
           .ter-wrap .ter-stepper .stepperBar {
             min-width: 920px;
@@ -957,12 +996,11 @@ export default function Page() {
         }
       `}</style>
 
-      {/* UI styles */}
       <style jsx>{`
         .ter-wrap {
           background: #f6f6f6;
           color: #111;
-          padding: 28px 16px;
+          padding: 40px 16px;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
         }
         .container {
@@ -990,9 +1028,8 @@ export default function Page() {
         .topBars {
           display: grid;
           gap: 10px;
-          margin-bottom: 12px;
+          margin: 12px 0 12px;
         }
-
         .bar {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
@@ -1000,148 +1037,145 @@ export default function Page() {
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
           padding: 10px;
         }
-
         .barRow {
           display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .barLeft {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .barRight {
+          display: flex;
           gap: 10px;
           align-items: center;
-          flex-wrap: wrap;
-        }
-
-        .fieldInline {
-          display: flex;
-          gap: 8px;
-          align-items: center;
-          flex: 1 1 auto;
-          min-width: 260px;
-        }
-
-        .label {
-          font-size: 11px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.65);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          white-space: nowrap;
-        }
-
-        .input,
-        .select {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 700;
-          color: #111;
-        }
-
-        .tabs {
-          display: inline-flex;
-          border: 1px solid rgba(0, 0, 0, 0.1);
-          background: rgba(0, 0, 0, 0.03);
-          border-radius: 999px;
-          padding: 4px;
-          gap: 4px;
-          flex-wrap: wrap;
-        }
-        .tab {
-          border: none;
-          background: transparent;
-          border-radius: 999px;
-          padding: 9px 12px;
-          font-weight: 800;
-          font-size: 13px;
-          cursor: pointer;
-          color: rgba(0, 0, 0, 0.7);
-          user-select: none;
-        }
-        .tab.active {
-          background: #fff;
-          color: #111;
-          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
-        }
-
-        .actionsRight {
           margin-left: auto;
-          display: flex;
-          gap: 10px;
-          align-items: center;
         }
 
         .btn {
           border-radius: 12px;
-          padding: 11px 12px;
-          font-weight: 900;
+          padding: 10px 12px;
+          font-weight: 950;
           cursor: pointer;
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
           color: #111;
+          white-space: nowrap;
         }
         .btn:disabled {
           opacity: 0.55;
           cursor: not-allowed;
+        }
+        .btnActive {
+          background: rgba(0, 0, 0, 0.06);
+          border-color: rgba(0, 0, 0, 0.18);
         }
         .btnPrimary {
           background: #111;
           color: #fff;
           border-color: #111;
         }
-
-        .sliderPanel {
-          margin-top: 10px;
-          padding-top: 10px;
-          border-top: 1px solid rgba(0, 0, 0, 0.06);
+        .btnPrimary:disabled {
+          opacity: 0.55;
         }
 
-        .sliderBlock {
-          display: grid;
-          gap: 8px;
+        .fileBtn {
+          position: relative;
+          overflow: hidden;
         }
-        .sliderTop {
+        .fileBtn input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          cursor: pointer;
+        }
+
+        .select {
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          font-weight: 800;
+        }
+
+        .card {
+          background: #fff;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          border-radius: 18px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+          overflow: hidden;
+        }
+
+        .cardHeader {
+          padding: 14px 16px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
           display: flex;
           justify-content: space-between;
-          align-items: baseline;
-          gap: 10px;
-        }
-        .sliderTitle {
-          font-weight: 950;
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.7);
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-        }
-        .sliderValue {
-          font-weight: 950;
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.8);
-          font-variant-numeric: tabular-nums;
-        }
-
-        .canvasBody {
-          display: grid;
+          align-items: center;
           gap: 12px;
+        }
+        .cardTitle {
+          font-size: 16px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+        }
+        .hint {
+          font-size: 12px;
+          color: rgba(0, 0, 0, 0.55);
+          font-weight: 700;
+        }
+        .cardBody {
+          padding: 14px 16px;
         }
 
         .canvasShell {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
-          border-radius: 16px;
-          padding: 10px;
+          border-radius: 14px;
           overflow: hidden;
+          padding: 10px;
         }
-
         canvas {
           border-radius: 12px;
           display: block;
           background: #fff;
         }
 
+        .sliderPanel {
+          margin-top: 10px;
+          display: grid;
+          gap: 6px;
+        }
+        .sliderTitle {
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: rgba(0, 0, 0, 0.6);
+        }
+        .sliderRow {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+        }
+        .sliderVal {
+          width: 84px;
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.7);
+          flex: 0 0 auto;
+        }
+
         .variantsWrap {
           display: grid;
           gap: 10px;
-          margin-top: 10px;
+          margin-top: 12px;
         }
         .variantsHead {
           display: flex;
@@ -1167,6 +1201,12 @@ export default function Page() {
           grid-template-columns: repeat(3, 1fr);
           gap: 10px;
         }
+        @media (max-width: 960px) {
+          .variantsGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+
         .variantCard {
           border: 1px solid rgba(0, 0, 0, 0.1);
           background: rgba(0, 0, 0, 0.015);
@@ -1185,7 +1225,6 @@ export default function Page() {
         }
         .variantCard.selected {
           outline: 3px solid rgba(0, 0, 0, 0.85);
-          outline-offset: 0;
           border-color: rgba(0, 0, 0, 0.85);
           background: #fff;
         }
@@ -1215,7 +1254,7 @@ export default function Page() {
         }
         .variantCard img {
           width: 100%;
-          height: 120px;
+          height: 140px;
           object-fit: cover;
           display: block;
         }
@@ -1248,10 +1287,6 @@ export default function Page() {
           border-color: #111;
           color: #fff;
         }
-        .smallBtn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-        }
 
         .errorBox {
           margin-top: 10px;
@@ -1263,25 +1298,7 @@ export default function Page() {
           font-weight: 800;
         }
 
-        @media (max-width: 960px) {
-          h2 {
-            font-size: 28px;
-          }
-          .variantsGrid {
-            grid-template-columns: 1fr;
-          }
-          .variantCard img {
-            height: 160px;
-          }
-          .fieldInline {
-            min-width: 100%;
-          }
-          .actionsRight {
-            width: 100%;
-            justify-content: flex-end;
-          }
-        }
-
+        /* modal (ponechané) */
         .modalOverlay {
           position: fixed;
           inset: 0;
@@ -1330,6 +1347,18 @@ export default function Page() {
         .span2 {
           grid-column: 1 / -1;
         }
+        .field {
+          display: grid;
+          gap: 6px;
+        }
+        .label {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.65);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .input,
         .textarea {
           width: 100%;
           padding: 11px 12px;
@@ -1339,17 +1368,11 @@ export default function Page() {
           outline: none;
           font-weight: 700;
           color: #111;
+        }
+        .textarea {
           min-height: 96px;
           resize: vertical;
           line-height: 1.35;
-        }
-        .sectionTitle {
-          font-size: 12px;
-          font-weight: 950;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: rgba(0, 0, 0, 0.55);
-          margin: 2px 0 10px;
         }
         .errText {
           color: rgba(160, 0, 0, 0.9);
@@ -1369,7 +1392,6 @@ export default function Page() {
             grid-template-columns: 1fr;
           }
         }
-
         .pickGrid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -1389,7 +1411,6 @@ export default function Page() {
         }
         .pickCard.selected {
           outline: 3px solid rgba(0, 0, 0, 0.85);
-          outline-offset: 0;
           border-color: rgba(0, 0, 0, 0.85);
           background: #fff;
         }
@@ -1400,9 +1421,6 @@ export default function Page() {
           display: flex;
           justify-content: space-between;
           gap: 10px;
-        }
-        .pickTop b {
-          font-size: 12px;
         }
         .pickCard img {
           width: 100%;
@@ -1423,203 +1441,182 @@ export default function Page() {
           <Stepper />
         </div>
 
+        {/* BAR 1: upload + typ */}
         <div className="topBars">
-          {/* BAR 1: upload + type */}
           <div className="bar">
             <div className="barRow">
-              <div className="fieldInline" style={{ minWidth: 260 }}>
-                <div className="label">Nahraj fotku</div>
-                <input
-                  className="input"
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setBgFile(f);
-                    setError("");
-                  }}
-                />
-              </div>
+              <div className="barLeft">
+                <div className="btn fileBtn">
+                  Nahraj fotku (podklad)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] || null;
+                      setBgFile(f);
+                      setError("");
+                    }}
+                  />
+                </div>
 
-              <div className="fieldInline">
-                <div className="label">Typ pergoly</div>
                 <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                  <option value="bioklim">Bioklimatická</option>
-                  <option value="pevna">Pevná strecha</option>
+                  <option value="bioklim">Bioklimatická pergola</option>
+                  <option value="pevna">Pergola s pevnou strechou</option>
                   <option value="zimna">Zimná záhrada</option>
                 </select>
+              </div>
+
+              <div className="hint">
+                Režim: <b>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode.toUpperCase()}</b>
               </div>
             </div>
           </div>
 
-          {/* BAR 2: mode + panels + actions */}
+          {/* BAR 2: mode + sliders + reset + generate */}
           <div className="bar">
             <div className="barRow">
-              <div className="tabs" role="tablist" aria-label="Režimy a ovládanie">
-                <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
+              <div className="barLeft">
+                <button type="button" className={`btn ${mode === "move" ? "btnActive" : ""}`} onClick={() => setMode("move")}>
                   Posun
                 </button>
-
-                <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
+                <button type="button" className={`btn ${mode === "rotate3d" ? "btnActive" : ""}`} onClick={() => setMode("rotate3d")}>
                   Otoč 3D
                 </button>
 
-                {/* zoom musí byť vždy dostupný */}
-                <button type="button" className={`tab ${panel === "zoom" ? "active" : ""}`} onClick={() => setPanel("zoom")}>
+                <button type="button" className={`btn ${panel === "zoom" ? "btnActive" : ""}`} onClick={() => setPanel("zoom")}>
                   Zoom
                 </button>
-
-                <button type="button" className={`tab ${panel === "x" ? "active" : ""}`} onClick={() => setPanel("x")}>
+                <button type="button" className={`btn ${panel === "x" ? "btnActive" : ""}`} onClick={() => setPanel("x")}>
                   Šírka
                 </button>
-
-                <button type="button" className={`tab ${panel === "y" ? "active" : ""}`} onClick={() => setPanel("y")}>
+                <button type="button" className={`btn ${panel === "y" ? "btnActive" : ""}`} onClick={() => setPanel("y")}>
                   Výška
                 </button>
-
-                <button type="button" className={`tab ${panel === "z" ? "active" : ""}`} onClick={() => setPanel("z")}>
+                <button type="button" className={`btn ${panel === "z" ? "btnActive" : ""}`} onClick={() => setPanel("z")}>
                   Hĺbka
                 </button>
               </div>
 
-              <div className="actionsRight">
+              <div className="barRight">
                 <button type="button" className="btn" onClick={resetAll} disabled={loading}>
                   Reset
                 </button>
-
-                <button type="button" className={`btn btnPrimary`} onClick={generate} disabled={!canGenerate}>
+                <button type="button" className="btn btnPrimary" onClick={generate} disabled={!canGenerate}>
                   {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                 </button>
               </div>
             </div>
 
-            {/* SLIDER PANEL — X/Y/Z rovnako ako ZOOM */}
-            <div className="sliderPanel">
-              {panel === "zoom" ? (
-                <SliderBlock title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
-              ) : panel === "x" ? (
-                <SliderBlock
-                  title="Šírka (X)"
-                  value={scalePct.x}
-                  valueLabel={`${scalePct.x.toFixed(1)}%`}
-                  min={SCALE_MIN}
-                  max={SCALE_MAX}
-                  step={SCALE_STEP}
-                  onChange={(v) => setScaleAxis("x", v)}
-                />
-              ) : panel === "y" ? (
-                <SliderBlock
-                  title="Výška (Y)"
-                  value={scalePct.y}
-                  valueLabel={`${scalePct.y.toFixed(1)}%`}
-                  min={SCALE_MIN}
-                  max={SCALE_MAX}
-                  step={SCALE_STEP}
-                  onChange={(v) => setScaleAxis("y", v)}
-                />
-              ) : (
-                <SliderBlock
-                  title="Hĺbka (Z)"
-                  value={scalePct.z}
-                  valueLabel={`${scalePct.z.toFixed(1)}%`}
-                  min={SCALE_MIN}
-                  max={SCALE_MAX}
-                  step={SCALE_STEP}
-                  onChange={(v) => setScaleAxis("z", v)}
-                />
-              )}
-            </div>
+            {/* Slider panel pod lištou (rovnaký mechanizmus pre zoom aj X/Y/Z) */}
+            {panel === "zoom" ? (
+              <SliderBlock title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
+            ) : panel === "x" ? (
+              <SliderBlock title="Šírka (X)" value={scalePct.x} valueLabel={`${scalePct.x.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("x", v)} />
+            ) : panel === "y" ? (
+              <SliderBlock title="Výška (Y)" value={scalePct.y} valueLabel={`${scalePct.y.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("y", v)} />
+            ) : (
+              <SliderBlock title="Hĺbka (Z)" value={scalePct.z} valueLabel={`${scalePct.z.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("z", v)} />
+            )}
 
             {error ? <div className="errorBox">Chyba: {error}</div> : null}
           </div>
         </div>
 
-        <div className="canvasBody">
-          <div className="canvasShell">
-            <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
-              <canvas
-                ref={canvasRef}
-                width={canvasW}
-                height={canvasH}
-                style={{
-                  width: `${(canvasW * editorZoom) / 100}px`,
-                  height: `${(canvasH * editorZoom) / 100}px`,
-                  touchAction: "none",
-                }}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-              />
-            </div>
+        {/* EDITOR CARD */}
+        <div className="card">
+          <div className="cardHeader">
+            <div className="cardTitle">Editor</div>
+            <div className="hint">Tip: 1 prst = edit • rohy = zmena veľkosti</div>
           </div>
 
-          <div className="variantsWrap">
-            <div className="variantsHead">
-              <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
-              <div className="variantsNote">
-                Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
+          <div className="cardBody">
+            <div className="canvasShell">
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+                <canvas
+                  ref={canvasRef}
+                  width={canvasW}
+                  height={canvasH}
+                  style={{
+                    width: `${(canvasW * editorZoom) / 100}px`,
+                    height: `${(canvasH * editorZoom) / 100}px`,
+                    touchAction: "none",
+                  }}
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
+                  onPointerCancel={onPointerUp}
+                />
               </div>
             </div>
 
-            <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
-              {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
-                const v = variants[i] || null;
-                const selected = selectedVariantIndex === i;
+            {/* VARIANTS */}
+            <div className="variantsWrap">
+              <div className="variantsHead">
+                <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
+                <div className="variantsNote">
+                  Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
+                </div>
+              </div>
 
-                return (
-                  <div key={i} style={{ display: "grid", gap: 0 }}>
-                    <button
-                      type="button"
-                      className={`variantCard ${selected ? "selected" : ""} ${v ? "has" : ""}`}
-                      onClick={() => {
-                        if (!v) return;
-                        setSelectedVariantIndex(i);
-                      }}
-                      disabled={!v}
-                      aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
-                    >
-                      <div className="variantTop">
-                        <div>
-                          <div className="variantBadge">Variant {i + 1}</div>
-                          {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+              <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
+                {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
+                  const v = variants[i] || null;
+                  const selected = selectedVariantIndex === i;
+
+                  return (
+                    <div key={i} style={{ display: "grid", gap: 0 }}>
+                      <button
+                        type="button"
+                        className={`variantCard ${selected ? "selected" : ""}`}
+                        onClick={() => {
+                          if (!v) return;
+                          setSelectedVariantIndex(i);
+                        }}
+                        disabled={!v}
+                        aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
+                      >
+                        <div className="variantTop">
+                          <div>
+                            <div className="variantBadge">Variant {i + 1}</div>
+                            {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+                          </div>
+                          {selected ? <div className="variantSelected">Vybrané</div> : null}
                         </div>
-                        {selected ? <div className="variantSelected">Vybrané</div> : null}
-                      </div>
 
-                      {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
-                    </button>
+                        {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
+                      </button>
 
-                    {v ? (
-                      <div className="variantActions">
-                        <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
-                          Stiahnuť
-                        </button>
-                        <button
-                          type="button"
-                          className={`smallBtn ${selected ? "primary" : ""}`}
-                          onClick={() => {
-                            setSelectedVariantIndex(i);
-                            if (!leadSubmitted) {
-                              setPendingAction({ kind: "single", index: i });
-                              setLeadOpen(true);
-                            }
-                          }}
-                        >
-                          Vybrať do formulára
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
+                      {v ? (
+                        <div className="variantActions">
+                          <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
+                            Stiahnuť
+                          </button>
+                          <button
+                            type="button"
+                            className={`smallBtn ${selected ? "primary" : ""}`}
+                            onClick={() => {
+                              setSelectedVariantIndex(i);
+                              if (!leadSubmitted) {
+                                setPendingAction({ kind: "single", index: i });
+                                setLeadOpen(true);
+                              }
+                            }}
+                          >
+                            Vybrať do formulára
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
 
-            {/* ✅ Stiahnuť všetky iba dole pod variantami */}
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button type="button" className="btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                Stiahnuť všetky ({variants.length})
-              </button>
+              {/* ✅ iba dole pod variantami */}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button type="button" className="btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                  Stiahnuť všetky ({variants.length})
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1651,7 +1648,7 @@ export default function Page() {
             <div className="modalBody">
               <form onSubmit={submitLead} className="formGrid">
                 <div className="span2">
-                  <div className="sectionTitle">Vyber vizualizáciu, ktorú odošleš *</div>
+                  <div className="label">Vyber vizualizáciu *</div>
                   <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
                     {variants.map((v, i) => {
                       const sel = selectedVariantIndex === i;
@@ -1697,7 +1694,7 @@ export default function Page() {
                 </div>
 
                 <div className="span2" style={{ marginTop: 4 }}>
-                  <div className="sectionTitle">Približné rozmery pergoly *</div>
+                  <div className="label">Približné rozmery pergoly *</div>
                   <div className="dimsGrid">
                     <div className="field">
                       <div className="label">Šírka</div>
@@ -1720,7 +1717,7 @@ export default function Page() {
                 </div>
 
                 <div className="span2">
-                  <div className="sectionTitle">Poznámka zákazníka (voliteľné)</div>
+                  <div className="label">Poznámka zákazníka (voliteľné)</div>
                   <textarea
                     className="textarea"
                     value={lead.customerNote}
@@ -1739,7 +1736,7 @@ export default function Page() {
                   </button>
                 </div>
 
-                <div className="span2" style={{ fontSize: 13, color: "rgba(0,0,0,0.65)", fontWeight: 650, marginTop: 6 }}>
+                <div className="span2" style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.65)", fontWeight: 650 }}>
                   Odoslaním formulára súhlasíte so spracovaním osobných údajov.
                 </div>
               </form>
