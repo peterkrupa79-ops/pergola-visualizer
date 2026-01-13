@@ -866,34 +866,179 @@ export default function Page() {
   }
 
   function SliderBlock(props: {
-    title: string;
-    valueLabel: string;
-    min: number;
-    max: number;
-    step: number;
-    value: number;
-    onChange: (v: number) => void;
-  }) {
-    const { title, valueLabel, min, max, step, value, onChange } = props;
+  title: string;
+  valueLabel: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const { title, valueLabel, min, max, step, value, onChange } = props;
+function CustomSlider({
+  min,
+  max,
+  step,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
+  ariaLabel: string;
+}) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
 
-    return (
-      <div className="sliderPanel">
-        <div className="sliderTitle">{title}</div>
-        <div className="sliderRow">
-          <input
-            className="rangeBig"
-            type="range"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
-            onChange={(e) => onChange(Number(e.target.value))}
+  const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
+
+  const snap = (v: number) => {
+    const s = step > 0 ? step : 1;
+    const snapped = Math.round(v / s) * s;
+    // fix floating errors
+    return Number(snapped.toFixed(6));
+  };
+
+  const setFromClientX = (clientX: number) => {
+    const el = trackRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const t = clamp01((clientX - r.left) / Math.max(1, r.width));
+    const raw = min + t * (max - min);
+    const next = snap(raw);
+    onChange(Math.max(min, Math.min(max, next)));
+  };
+
+  const pct = ((value - min) / Math.max(1e-9, max - min)) * 100;
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 8,
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        touchAction: "none", // tu chceme úplnú kontrolu
+      }}
+      aria-label={ariaLabel}
+    >
+      <div
+        ref={trackRef}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          draggingRef.current = true;
+          (e.currentTarget as any).setPointerCapture(e.pointerId);
+          setFromClientX(e.clientX);
+        }}
+        onPointerMove={(e) => {
+          if (!draggingRef.current) return;
+          e.preventDefault();
+          setFromClientX(e.clientX);
+        }}
+        onPointerUp={(e) => {
+          if (!draggingRef.current) return;
+          e.preventDefault();
+          draggingRef.current = false;
+          try {
+            (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
+          } catch {}
+        }}
+        onPointerCancel={(e) => {
+          draggingRef.current = false;
+          try {
+            (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
+          } catch {}
+        }}
+        role="slider"
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          const s = step > 0 ? step : 1;
+          if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+            e.preventDefault();
+            onChange(Math.max(min, snap(value - s)));
+          }
+          if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+            e.preventDefault();
+            onChange(Math.min(max, snap(value + s)));
+          }
+          if (e.key === "Home") {
+            e.preventDefault();
+            onChange(min);
+          }
+          if (e.key === "End") {
+            e.preventDefault();
+            onChange(max);
+          }
+        }}
+        style={{
+          height: 44,
+          borderRadius: 999,
+          background: "rgba(0,0,0,0.14)",
+          position: "relative",
+          padding: "0 14px",
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        {/* filled */}
+        <div
+          style={{
+            position: "absolute",
+            left: 14,
+            right: 14,
+            height: 12,
+            borderRadius: 999,
+            background: "rgba(0,0,0,0.18)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: `${pct}%`,
+              background: "rgba(0,0,0,0.55)",
+            }}
           />
-          <div className="sliderVal">{valueLabel}</div>
         </div>
+
+        {/* thumb */}
+        <div
+          style={{
+            position: "absolute",
+            left: `calc(14px + (${pct}% * (100% - 28px) / 100))`,
+            transform: "translateX(-50%)",
+            width: 26,
+            height: 26,
+            borderRadius: 999,
+            background: "#111",
+            boxShadow: "0 10px 24px rgba(0,0,0,0.18)",
+            border: "2px solid rgba(255,255,255,0.9)",
+          }}
+        />
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+  return (
+    <div className="sliderPanel">
+      <div className="sliderTitle">{title}</div>
+      <div className="sliderRow" style={{ alignItems: "center" }}>
+        <div style={{ flex: "1 1 auto" }}>
+          <CustomSlider min={min} max={max} step={step} value={value} onChange={onChange} ariaLabel={title} />
+        </div>
+        <div className="sliderVal">{valueLabel}</div>
+      </div>
+    </div>
+  );
+}
+
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
