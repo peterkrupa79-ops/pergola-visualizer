@@ -17,9 +17,6 @@ const SCALE_MAX = 200;
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
-// ✅ menší štart modelu na mobile (aby bol celý viditeľný)
-const MOBILE_START_SCALE = { x: 78, y: 78, z: 78 };
-
 const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
 Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
 Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
@@ -37,11 +34,6 @@ function dist(a: Vec2, b: Vec2) {
 }
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
-}
-function lineYAtX(a: Vec2, b: Vec2, x: number) {
-  if (Math.abs(b.x - a.x) < 1e-6) return (a.y + b.y) / 2;
-  const t = (x - a.x) / (b.x - a.x);
-  return lerp(a.y, b.y, t);
 }
 function roundToStep(v: number, step = SCALE_STEP) {
   return Math.round(v / step) * step;
@@ -76,6 +68,8 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
+type SliderPanel = "zoom" | "x" | "y" | "z";
+
 export default function Page() {
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
@@ -92,16 +86,13 @@ export default function Page() {
   const [canvasW] = useState(980);
   const [canvasH] = useState(560);
 
-  const [editorZoom, setEditorZoom] = useState(105);
+  const [editorZoom, setEditorZoom] = useState(110);
 
   const [mode, setMode] = useState<Mode>("move");
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
-  const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
-
-  const [groundA, setGroundA] = useState<Vec2 | null>(null);
-  const [groundB, setGroundB] = useState<Vec2 | null>(null);
+  const [scalePct, setScalePct] = useState({ x: 88, y: 88, z: 88 }); // menšie defaulty -> na mobile viditeľnejšie
 
   const [bboxRect, setBboxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
@@ -116,6 +107,7 @@ export default function Page() {
 
   const [prompt] = useState(FINAL_PROMPT_DEFAULT);
 
+  // variants (max 6)
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
 
@@ -126,6 +118,8 @@ export default function Page() {
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
+
+  // čo chce user spraviť po odomknutí
   const [pendingAction, setPendingAction] = useState<{ kind: "single"; index: number } | { kind: "all" } | null>(null);
 
   const [lead, setLead] = useState({
@@ -150,22 +144,19 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
+  // UI selection for bottom slider panel
+  const [panel, setPanel] = useState<SliderPanel>("zoom");
+
+  // mobile
   const isMobileRef = useRef(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
-      const isM = mq.matches;
-      isMobileRef.current = isM;
-
-      // ✅ pri prechode na mobile zmenšíme model (aby bol celý viditeľný)
-      if (isM) {
-        setScalePct((s) => {
-          // ak je stále default 100/100/100, prepneme na menšie
-          if (Math.abs(s.x - 100) < 0.01 && Math.abs(s.y - 100) < 0.01 && Math.abs(s.z - 100) < 0.01) {
-            return { ...MOBILE_START_SCALE };
-          }
-          return s;
-        });
+      isMobileRef.current = mq.matches;
+      // na mobile daj menšiu pergolu, aby bola celá viditeľná hneď
+      if (mq.matches) {
+        setScalePct((s) => ({ x: Math.min(s.x, 82), y: Math.min(s.y, 82), z: Math.min(s.z, 82) }));
+        setEditorZoom((z) => Math.min(Math.max(z, 105), 125));
       }
     };
     apply();
@@ -173,9 +164,26 @@ export default function Page() {
     return () => mq.removeEventListener?.("change", apply);
   }, []);
 
-  // === UI: panel pod lištami (zoom alebo dim slider)
-  type ActivePanel = "zoom" | "x" | "y" | "z";
-  const [activePanel, setActivePanel] = useState<ActivePanel>("zoom");
+  // canvas drag ref
+  const dragRef = useRef<{
+    active: boolean;
+    start: Vec2;
+    startPos: Vec2;
+    startRot3D: { yaw: number; pitch: number };
+    startRot2D: number;
+    startScalePct: { x: number; y: number; z: number };
+    handle: HandleId | null;
+    modeAtDown: Mode;
+  }>({
+    active: false,
+    start: { x: 0, y: 0 },
+    startPos: { x: 0.5, y: 0.72 },
+    startRot3D: { yaw: 0.35, pitch: -0.12 },
+    startRot2D: 0,
+    startScalePct: { x: 100, y: 100, z: 100 },
+    handle: null,
+    modeAtDown: "move",
+  });
 
   const selectedVariant = variants[selectedVariantIndex] || null;
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
@@ -186,6 +194,10 @@ export default function Page() {
     const x = ((e.clientX - rect.left) * canvasW) / rect.width;
     const y = ((e.clientY - rect.top) * canvasH) / rect.height;
     return { x, y };
+  }
+
+  function computeProjectedRect() {
+    return bboxRect;
   }
 
   function hitHandle(p: Vec2, r: { x: number; y: number; w: number; h: number }) {
@@ -213,14 +225,13 @@ export default function Page() {
   }
 
   function resetAll() {
-    setScalePct({ x: 100, y: 100, z: 100 });
+    setScalePct({ x: isMobileRef.current ? 82 : 100, y: isMobileRef.current ? 82 : 100, z: isMobileRef.current ? 82 : 100 });
     setRot3D({ yaw: 0.35, pitch: -0.12 });
     setRot2D(0);
     setPos({ x: 0.5, y: 0.72 });
-    setGroundA(null);
-    setGroundB(null);
     setError("");
-    setActivePanel("zoom");
+    setPanel("zoom");
+    setMode("move");
   }
 
   // background image load
@@ -309,6 +320,7 @@ export default function Page() {
     }
 
     initThree();
+
     return () => {
       cancelled = true;
     };
@@ -318,7 +330,7 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, groundA, groundB]);
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct]);
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -348,7 +360,7 @@ export default function Page() {
     ctx.clearRect(0, 0, canvasW, canvasH);
 
     if (bgImg) {
-      // ✅ COVER (vyplní celé okno, bez bieleho pruhu naľavo/napravo)
+      // ✅ COVER: vyplň celé okno (bez bielych pruhov)
       const rw = canvasW / bgImg.width;
       const rh = canvasH / bgImg.height;
       const r = Math.max(rw, rh);
@@ -426,11 +438,11 @@ export default function Page() {
           for (const id of Object.keys(corners) as HandleId[]) {
             const c = corners[id];
             ctx.beginPath();
-            ctx.fillStyle = "rgba(255,255,255,0.9)";
+            ctx.fillStyle = "rgba(255,255,255,0.92)";
             ctx.arc(c.x, c.y, 11, 0, Math.PI * 2);
             ctx.fill();
             ctx.beginPath();
-            ctx.fillStyle = "rgba(0,0,0,0.75)";
+            ctx.fillStyle = "rgba(0,0,0,0.72)";
             ctx.arc(c.x, c.y, HANDLE_R, 0, Math.PI * 2);
             ctx.fill();
           }
@@ -451,6 +463,7 @@ export default function Page() {
     setError("");
 
     try {
+      // --- EXPORT pre OpenAI: downscale + JPEG ---
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -464,7 +477,16 @@ export default function Page() {
       out.height = outH;
 
       const octx = out.getContext("2d")!;
-      octx.drawImage(bgImg, 0, 0, outW, outH);
+
+      // ✅ rovnaký cover výpočet aj pri exporte
+      const rw = outW / bgImg.width;
+      const rh = outH / bgImg.height;
+      const r = Math.max(rw, rh);
+      const dw = bgImg.width * r;
+      const dh = bgImg.height * r;
+      const dx = (outW - dw) / 2;
+      const dy = (outH - dh) / 2;
+      octx.drawImage(bgImg, dx, dy, dw, dh);
 
       if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
         throw new Error("3D renderer nie je pripravený.");
@@ -488,14 +510,14 @@ export default function Page() {
       form.append("image", blob, "collage.jpg");
       form.append("prompt", prompt);
 
-      const r = await fetch("/api/render/openai", { method: "POST", body: form });
+      const r2 = await fetch("/api/render/openai", { method: "POST", body: form });
 
-      const j = await r.json().catch(async () => {
-        const t = await r.text().catch(() => "");
-        return { error: t || `HTTP ${r.status}` };
+      const j = await r2.json().catch(async () => {
+        const t = await r2.text().catch(() => "");
+        return { error: t || `HTTP ${r2.status}` };
       });
 
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      if (!r2.ok) throw new Error(j?.error || `HTTP ${r2.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
       setVariants((prev) => {
@@ -590,10 +612,7 @@ export default function Page() {
       fd.append("source", "teranea-editor");
       fd.append("image", pngBlob, `vizualizacia_variant_${selectedVariantIndex + 1}.png`);
 
-      const r = await fetch("/api/lead/submit", {
-        method: "POST",
-        body: fd,
-      });
+      const r = await fetch("/api/lead/submit", { method: "POST", body: fd });
 
       if (!r.ok) {
         const t = await r.text().catch(() => "");
@@ -651,35 +670,16 @@ export default function Page() {
   // ===========================
   // ✅ 1 PRST = VŽDY EDIT (CANVAS)
   // ===========================
-  const dragRef = useRef<{
-    active: boolean;
-    start: Vec2;
-    startPos: Vec2;
-    startRot3D: { yaw: number; pitch: number };
-    startRot2D: number;
-    startScalePct: { x: number; y: number; z: number };
-    handle: HandleId | null;
-    modeAtDown: Mode;
-  }>({
-    active: false,
-    start: { x: 0, y: 0 },
-    startPos: { x: 0.5, y: 0.72 },
-    startRot3D: { yaw: 0.35, pitch: -0.12 },
-    startRot2D: 0,
-    startScalePct: { x: 100, y: 100, z: 100 },
-    handle: null,
-    modeAtDown: "move",
-  });
-
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
-    // ✅ blokuj scroll IBA na canvase (slidre necháme na pokoji)
+    // ✅ blokuj scroll iba na canvase
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
-    if (bboxRect) {
-      const h = hitHandle(p, bboxRect);
+    const rect = computeProjectedRect();
+    if (rect) {
+      const h = hitHandle(p, rect);
       if (h) {
         setMode("resize");
         setActiveHandle(h);
@@ -711,6 +711,8 @@ export default function Page() {
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
+
+    // ✅ blokuj scroll iba na canvase
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -756,6 +758,7 @@ export default function Page() {
       const nextY = clampPct(dragRef.current.startScalePct.y * hRatio);
 
       setScalePct((s) => ({ ...s, x: nextX, y: nextY }));
+      return;
     }
   }
 
@@ -763,6 +766,7 @@ export default function Page() {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     setActiveHandle(null);
+
     if (mode === "resize") setMode("move");
   }
 
@@ -771,11 +775,16 @@ export default function Page() {
       <div className="scaleRow">
         <div className="scaleLbl">{label}</div>
 
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, -SCALE_STEP)} aria-label={`Zmenšiť ${label}`}>
+        <button
+          type="button"
+          className="miniBtn"
+          disabled={loading}
+          onClick={() => bumpScaleAxis(axis, -SCALE_STEP)}
+          aria-label={`Zmenšiť ${label}`}
+        >
           −
         </button>
 
-        {/* ✅ FIX: slider musí byť ťahateľný prstom — preto touch-action pan-x */}
         <input
           className="range range--big"
           type="range"
@@ -785,11 +794,16 @@ export default function Page() {
           value={value}
           disabled={loading}
           onChange={(e) => setScaleAxis(axis, Number(e.target.value))}
-          style={{ touchAction: "pan-x" }}
           aria-label={`Rozmer ${label}`}
         />
 
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, SCALE_STEP)} aria-label={`Zväčšiť ${label}`}>
+        <button
+          type="button"
+          className="miniBtn"
+          disabled={loading}
+          onClick={() => bumpScaleAxis(axis, SCALE_STEP)}
+          aria-label={`Zväččšiť ${label}`}
+        >
           +
         </button>
 
@@ -802,59 +816,48 @@ export default function Page() {
 
   return (
     <section className="ter-wrap">
-      {/* ✅ RANGE FIX (mobil drag + desktop viditeľnosť) */}
+      {/* ✅ Range styling: viditeľné + touch drag */}
       <style jsx global>{`
         .ter-wrap :global(input[type="range"]) {
-          -webkit-appearance: none;
-          appearance: none;
           width: 100%;
           height: 42px;
+          -webkit-appearance: none;
+          appearance: none;
           background: transparent;
-          cursor: pointer;
-
-          /* ✅ kľúčové pre mobil drag */
-          touch-action: pan-x !important;
-          pointer-events: auto !important;
-          user-select: none;
-          -webkit-user-select: none;
+          touch-action: pan-x; /* ✅ kľúč pre mobilný drag */
         }
 
-        /* Track */
+        /* WebKit track */
         .ter-wrap :global(input[type="range"]::-webkit-slider-runnable-track) {
           height: 12px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18);
-          border: 1px solid rgba(0, 0, 0, 0.18);
+          background: rgba(0, 0, 0, 0.18); /* ✅ viditeľný track */
         }
-        .ter-wrap :global(input[type="range"]::-moz-range-track) {
-          height: 12px;
-          border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18);
-          border: 1px solid rgba(0, 0, 0, 0.18);
-        }
-
-        /* Thumb */
         .ter-wrap :global(input[type="range"]::-webkit-slider-thumb) {
           -webkit-appearance: none;
+          appearance: none;
           width: 26px;
           height: 26px;
           margin-top: -7px;
           border-radius: 999px;
-          background: #111;
-          border: 3px solid #fff;
-          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
+          background: rgba(0, 0, 0, 0.95); /* ✅ viditeľný thumb */
+          border: 2px solid rgba(255, 255, 255, 0.95);
+          box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+        }
+
+        /* Firefox */
+        .ter-wrap :global(input[type="range"]::-moz-range-track) {
+          height: 12px;
+          border-radius: 999px;
+          background: rgba(0, 0, 0, 0.18);
         }
         .ter-wrap :global(input[type="range"]::-moz-range-thumb) {
           width: 26px;
           height: 26px;
           border-radius: 999px;
-          background: #111;
-          border: 3px solid #fff;
-          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-        }
-
-        .ter-wrap :global(input[type="range"]:focus-visible) {
-          outline: none;
+          background: rgba(0, 0, 0, 0.95);
+          border: 2px solid rgba(255, 255, 255, 0.95);
+          box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
         }
       `}</style>
 
@@ -862,11 +865,11 @@ export default function Page() {
         .ter-wrap {
           background: #f6f6f6;
           color: #111;
-          padding: 28px 12px 48px;
+          padding: 22px 12px 40px;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
         }
         .container {
-          max-width: 1220px;
+          max-width: 1100px;
           margin: 0 auto;
         }
 
@@ -880,34 +883,84 @@ export default function Page() {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
           border-radius: 16px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
-          padding: 10px 10px;
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          align-items: center;
-          justify-content: space-between;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+          padding: 10px;
         }
 
-        .leftGroup {
+        .barRow {
           display: flex;
           gap: 10px;
-          flex-wrap: wrap;
           align-items: center;
+          flex-wrap: wrap;
         }
 
-        .rightGroup {
+        .fieldInline {
           display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
+          gap: 8px;
           align-items: center;
+          flex: 1 1 auto;
+          min-width: 260px;
+        }
+
+        .label {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.65);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          white-space: nowrap;
+        }
+        .input,
+        .select {
+          width: 100%;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          outline: none;
+          font-weight: 700;
+          color: #111;
+        }
+
+        .tabs {
+          display: inline-flex;
+          border: 1px solid rgba(0, 0, 0, 0.1);
+          background: rgba(0, 0, 0, 0.03);
+          border-radius: 999px;
+          padding: 4px;
+          gap: 4px;
+          flex-wrap: wrap;
+        }
+
+        .tab {
+          border: none;
+          background: transparent;
+          border-radius: 999px;
+          padding: 9px 12px;
+          font-weight: 900;
+          font-size: 13px;
+          cursor: pointer;
+          color: rgba(0, 0, 0, 0.7);
+          white-space: nowrap;
+        }
+        .tab.active {
+          background: #fff;
+          color: #111;
+          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+        }
+
+        .actionsRight {
           margin-left: auto;
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          justify-content: flex-end;
         }
 
         .btn {
           border-radius: 12px;
-          padding: 11px 12px;
-          font-weight: 900;
+          padding: 10px 12px;
+          font-weight: 950;
           cursor: pointer;
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
@@ -917,131 +970,77 @@ export default function Page() {
           opacity: 0.55;
           cursor: not-allowed;
         }
-        .btn.primary {
+        .btnPrimary {
           background: #111;
           color: #fff;
           border-color: #111;
         }
-        .btn.ghost {
-          background: rgba(0, 0, 0, 0.03);
-          border-color: rgba(0, 0, 0, 0.14);
-        }
 
-        .seg {
-          display: inline-flex;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(0, 0, 0, 0.03);
-          border-radius: 999px;
-          padding: 4px;
-          gap: 4px;
-        }
-        .segBtn {
-          border: none;
-          background: transparent;
-          border-radius: 999px;
-          padding: 9px 12px;
-          font-weight: 900;
-          font-size: 13px;
-          cursor: pointer;
-          color: rgba(0, 0, 0, 0.7);
-        }
-        .segBtn.active {
-          background: #fff;
-          color: #111;
-          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
-        }
-
-        .field {
+        .sliderPanel {
+          margin-top: 10px;
           display: grid;
           gap: 6px;
         }
-        .label {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.65);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-        .input,
-        .select {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 700;
-          color: #111;
-        }
-
-        .panel {
-          background: #fff;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          border-radius: 16px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
-          padding: 12px;
-          margin-bottom: 12px;
-        }
-        .panelTitle {
+        .sliderTitle {
           font-size: 12px;
           font-weight: 950;
+          letter-spacing: 0.06em;
           text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: rgba(0, 0, 0, 0.55);
-          margin: 0 0 10px;
+          color: rgba(0, 0, 0, 0.6);
         }
-        .zoomRow {
+        .sliderRow {
           display: flex;
-          gap: 12px;
+          gap: 10px;
           align-items: center;
         }
-        .zoomVal {
-          width: 64px;
+        .sliderVal {
+          width: 70px;
           text-align: right;
           font-variant-numeric: tabular-nums;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.75);
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.7);
         }
 
-        .card {
+        .canvasCard {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
           border-radius: 18px;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
           overflow: hidden;
         }
-        .cardHeader {
-          padding: 12px 14px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-        }
-        .cardTitle {
-          font-size: 16px;
-          font-weight: 950;
-        }
-        .hint {
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.55);
-          font-weight: 800;
-        }
-        .cardBody {
-          padding: 12px 14px 16px;
+        .canvasBody {
+          padding: 12px;
         }
 
         .canvasShell {
-          background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
           border-radius: 14px;
           overflow: hidden;
           padding: 10px;
+          background: #fff;
         }
         canvas {
           border-radius: 12px;
           display: block;
           background: #fff;
+        }
+
+        .miniBtn {
+          width: 34px;
+          height: 34px;
+          min-width: 34px;
+          min-height: 34px;
+          border-radius: 10px;
+          border: 1px solid rgba(0, 0, 0, 0.16);
+          background: rgba(0, 0, 0, 0.03);
+          color: #111;
+          font-weight: 950;
+          font-size: 18px;
+          line-height: 1;
+          display: inline-grid;
+          place-items: center;
+          cursor: pointer;
+          user-select: none;
         }
 
         .variantsWrap {
@@ -1073,12 +1072,6 @@ export default function Page() {
           grid-template-columns: repeat(3, 1fr);
           gap: 10px;
         }
-        @media (max-width: 960px) {
-          .variantsGrid {
-            grid-template-columns: 1fr;
-          }
-        }
-
         .variantCard {
           border: 1px solid rgba(0, 0, 0, 0.1);
           background: rgba(0, 0, 0, 0.015);
@@ -1090,7 +1083,6 @@ export default function Page() {
           display: grid;
           grid-template-rows: auto 1fr;
           min-height: 120px;
-          width: 100%;
         }
         .variantCard:disabled {
           cursor: default;
@@ -1121,9 +1113,14 @@ export default function Page() {
           font-size: 12px;
           color: rgba(0, 0, 0, 0.6);
         }
+        .variantSelected {
+          font-weight: 950;
+          font-size: 12px;
+          color: rgba(0, 0, 0, 0.9);
+        }
         .variantCard img {
           width: 100%;
-          height: 150px;
+          height: 140px;
           object-fit: cover;
           display: block;
         }
@@ -1141,6 +1138,7 @@ export default function Page() {
           border-top: 1px solid rgba(0, 0, 0, 0.06);
           background: rgba(0, 0, 0, 0.015);
         }
+
         .smallBtn {
           border-radius: 10px;
           padding: 9px 10px;
@@ -1157,44 +1155,6 @@ export default function Page() {
           color: #fff;
         }
 
-        .miniBtn {
-          width: 34px;
-          height: 34px;
-          min-width: 34px;
-          min-height: 34px;
-          border-radius: 10px;
-          border: 1px solid rgba(0, 0, 0, 0.16);
-          background: rgba(0, 0, 0, 0.03);
-          color: #111;
-          font-weight: 950;
-          font-size: 18px;
-          line-height: 1;
-          display: inline-grid;
-          place-items: center;
-          cursor: pointer;
-          user-select: none;
-        }
-
-        .scaleRow {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .scaleLbl {
-          width: 18px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.75);
-          flex: 0 0 auto;
-        }
-        .scaleVal {
-          width: 76px;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.7);
-          flex: 0 0 auto;
-        }
-
         .errorBox {
           margin-top: 10px;
           padding: 12px;
@@ -1205,131 +1165,24 @@ export default function Page() {
           font-weight: 800;
         }
 
-        /* modal (ponechané) */
-        .modalOverlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.55);
-          display: grid;
-          place-items: center;
-          padding: 16px;
-          z-index: 9999;
-        }
-        .modalCard {
-          width: min(900px, 100%);
-          border-radius: 18px;
-          background: #fff;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
-          overflow: hidden;
-        }
-        .modalHead {
-          padding: 14px 16px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 12px;
-        }
-        .modalTitle {
-          font-weight: 1000;
-          margin: 0;
-          font-size: 16px;
-        }
-        .modalSub {
-          margin: 6px 0 0;
-          color: rgba(0, 0, 0, 0.65);
-          font-weight: 650;
-          font-size: 13px;
-        }
-        .modalBody {
-          padding: 14px 16px 16px;
-        }
-        .formGrid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-        }
-        .span2 {
-          grid-column: 1 / -1;
-        }
-        .textarea {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 700;
-          color: #111;
-          min-height: 96px;
-          resize: vertical;
-          line-height: 1.35;
-        }
-        .errText {
-          color: rgba(160, 0, 0, 0.9);
-          font-size: 12px;
-          font-weight: 800;
-        }
-        .dimsGrid {
-          display: grid;
-          grid-template-columns: 1fr 1fr 1fr;
-          gap: 12px;
-        }
-        @media (max-width: 720px) {
-          .formGrid {
+        @media (max-width: 960px) {
+          .variantsGrid {
             grid-template-columns: 1fr;
           }
-          .dimsGrid {
-            grid-template-columns: 1fr;
+          .variantCard img {
+            height: 180px;
           }
-        }
-        .pickGrid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-        }
-        @media (max-width: 720px) {
-          .pickGrid {
-            grid-template-columns: 1fr;
-          }
-        }
-        .pickCard {
-          border: 1px solid rgba(0, 0, 0, 0.1);
-          border-radius: 14px;
-          overflow: hidden;
-          cursor: pointer;
-          background: rgba(0, 0, 0, 0.01);
-        }
-        .pickCard.selected {
-          outline: 3px solid rgba(0, 0, 0, 0.85);
-          border-color: rgba(0, 0, 0, 0.85);
-          background: #fff;
-        }
-        .pickTop {
-          padding: 10px 10px 8px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-          background: rgba(0, 0, 0, 0.02);
-          display: flex;
-          justify-content: space-between;
-          gap: 10px;
-        }
-        .pickCard img {
-          width: 100%;
-          height: 130px;
-          object-fit: cover;
-          display: block;
         }
       `}</style>
 
       <div className="container">
         {/* TOP BARS */}
         <div className="topBars">
-          {/* Bar 1: upload + type */}
+          {/* BAR 1: upload + type */}
           <div className="bar">
-            <div className="leftGroup">
-              <div className="field" style={{ minWidth: 260 }}>
-                <div className="label">Fotka (podklad)</div>
+            <div className="barRow">
+              <div className="fieldInline" style={{ minWidth: 260 }}>
+                <div className="label">Nahraj fotku</div>
                 <input
                   className="input"
                   type="file"
@@ -1342,94 +1195,118 @@ export default function Page() {
                 />
               </div>
 
-              <div className="field" style={{ minWidth: 260 }}>
-                <div className="label">Druh pergoly</div>
+              <div className="fieldInline">
+                <div className="label">Typ pergoly</div>
                 <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                  <option value="bioklim">Bioklimatická pergola</option>
-                  <option value="pevna">Pergola s pevnou strechou</option>
+                  <option value="bioklim">Bioklimatická</option>
+                  <option value="pevna">Pevná strecha</option>
                   <option value="zimna">Zimná záhrada</option>
                 </select>
               </div>
             </div>
           </div>
 
-          {/* Bar 2: tools + reset + generate (right aligned) */}
+          {/* BAR 2: mode + panels + actions */}
           <div className="bar">
-            <div className="leftGroup">
-              <div className="seg" role="tablist" aria-label="Režimy">
-                <button type="button" className={`segBtn ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
+            <div className="barRow">
+              <div className="tabs" role="tablist" aria-label="Režimy a ovládanie">
+                <button
+                  type="button"
+                  className={`tab ${mode === "move" ? "active" : ""}`}
+                  onClick={() => {
+                    setMode("move");
+                  }}
+                >
                   Posun
                 </button>
-                <button type="button" className={`segBtn ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
+
+                <button
+                  type="button"
+                  className={`tab ${mode === "rotate3d" ? "active" : ""}`}
+                  onClick={() => {
+                    setMode("rotate3d");
+                  }}
+                >
                   Otoč 3D
                 </button>
-              </div>
 
-              <div className="seg" role="tablist" aria-label="Rozmery">
-                <button type="button" className={`segBtn ${activePanel === "x" ? "active" : ""}`} onClick={() => setActivePanel("x")}>
+                {/* ✅ TLAČIDLO ZOOM (chýbalo) */}
+                <button type="button" className={`tab ${panel === "zoom" ? "active" : ""}`} onClick={() => setPanel("zoom")}>
+                  Zoom
+                </button>
+
+                <button type="button" className={`tab ${panel === "x" ? "active" : ""}`} onClick={() => setPanel("x")}>
                   Šírka
                 </button>
-                <button type="button" className={`segBtn ${activePanel === "y" ? "active" : ""}`} onClick={() => setActivePanel("y")}>
+                <button type="button" className={`tab ${panel === "y" ? "active" : ""}`} onClick={() => setPanel("y")}>
                   Výška
                 </button>
-                <button type="button" className={`segBtn ${activePanel === "z" ? "active" : ""}`} onClick={() => setActivePanel("z")}>
+                <button type="button" className={`tab ${panel === "z" ? "active" : ""}`} onClick={() => setPanel("z")}>
                   Hĺbka
                 </button>
               </div>
+
+              <div className="actionsRight">
+                <button type="button" className="btn" onClick={resetAll} disabled={loading}>
+                  Reset
+                </button>
+
+                <button type="button" className={`btn btnPrimary`} onClick={generate} disabled={!canGenerate}>
+                  {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                </button>
+              </div>
             </div>
 
-            <div className="rightGroup">
-              <button type="button" className="btn ghost" onClick={resetAll}>
-                Reset
-              </button>
-
-              <button type="button" className="btn primary" onClick={generate} disabled={!canGenerate}>
-                {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
-              </button>
+            {/* SLIDER PANEL */}
+            <div className="sliderPanel">
+              {panel === "zoom" ? (
+                <>
+                  <div className="sliderTitle">Zoom</div>
+                  <div className="sliderRow">
+                    <input
+                      type="range"
+                      min={50}
+                      max={160}
+                      step={5}
+                      value={editorZoom}
+                      onChange={(e) => setEditorZoom(Number(e.target.value))}
+                      aria-label="Zoom"
+                    />
+                    <div className="sliderVal">{editorZoom}%</div>
+                  </div>
+                </>
+              ) : panel === "x" ? (
+                <>
+                  <div className="sliderTitle">Šírka (X)</div>
+                  <ScaleRow label="X" axis="x" value={scalePct.x} />
+                </>
+              ) : panel === "y" ? (
+                <>
+                  <div className="sliderTitle">Výška (Y)</div>
+                  <ScaleRow label="Y" axis="y" value={scalePct.y} />
+                </>
+              ) : (
+                <>
+                  <div className="sliderTitle">Hĺbka (Z)</div>
+                  <ScaleRow label="Z" axis="z" value={scalePct.z} />
+                </>
+              )}
             </div>
+
+            {error ? <div className="errorBox">Chyba: {error}</div> : null}
           </div>
         </div>
 
-        {/* PANEL: zoom alebo dim slider */}
-        <div className="panel">
-          <div className="panelTitle">{activePanel === "zoom" ? "Zoom" : activePanel === "x" ? "Šírka (X)" : activePanel === "y" ? "Výška (Y)" : "Hĺbka (Z)"}</div>
-
-          {activePanel === "zoom" ? (
-            <div className="zoomRow">
-              <input
-                type="range"
-                min={50}
-                max={160}
-                step={5}
-                value={editorZoom}
-                onChange={(e) => setEditorZoom(Number(e.target.value))}
-                style={{ touchAction: "pan-x" }}
-              />
-              <div className="zoomVal">{editorZoom}%</div>
-            </div>
-          ) : activePanel === "x" ? (
-            <ScaleRow label="X" axis="x" value={scalePct.x} />
-          ) : activePanel === "y" ? (
-            <ScaleRow label="Y" axis="y" value={scalePct.y} />
-          ) : (
-            <ScaleRow label="Z" axis="z" value={scalePct.z} />
-          )}
-
-          {error ? <div className="errorBox">Chyba: {error}</div> : null}
-        </div>
-
-        {/* EDITOR */}
-        <div className="card">
-          <div className="cardHeader">
-            <div className="cardTitle">Editor</div>
-            <div className="hint">
-              Režim: <b>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : "RESIZE"}</b>
-            </div>
-          </div>
-
-          <div className="cardBody">
+        {/* CANVAS */}
+        <div className="canvasCard">
+          <div className="canvasBody">
             <div className="canvasShell">
-              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+              <div
+                style={{
+                  width: Math.round((canvasW * editorZoom) / 100),
+                  height: Math.round((canvasH * editorZoom) / 100),
+                }}
+              >
                 <canvas
                   ref={canvasRef}
                   width={canvasW}
@@ -1437,7 +1314,7 @@ export default function Page() {
                   style={{
                     width: `${(canvasW * editorZoom) / 100}px`,
                     height: `${(canvasH * editorZoom) / 100}px`,
-                    touchAction: "none",
+                    touchAction: "none", // ✅ len canvas blokuje scroll
                   }}
                   onPointerDown={onPointerDown}
                   onPointerMove={onPointerMove}
@@ -1465,7 +1342,7 @@ export default function Page() {
                     <div key={i} style={{ display: "grid", gap: 0 }}>
                       <button
                         type="button"
-                        className={`variantCard ${selected ? "selected" : ""}`}
+                        className={`variantCard ${selected ? "selected" : ""} ${v ? "has" : ""}`}
                         onClick={() => {
                           if (!v) return;
                           setSelectedVariantIndex(i);
@@ -1478,7 +1355,7 @@ export default function Page() {
                             <div className="variantBadge">Variant {i + 1}</div>
                             {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
                           </div>
-                          {selected ? <div className="variantType" style={{ color: "rgba(0,0,0,0.9)", fontWeight: 950 }}>Vybrané</div> : null}
+                          {selected ? <div className="variantSelected">Vybrané</div> : null}
                         </div>
 
                         {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
@@ -1509,7 +1386,7 @@ export default function Page() {
                 })}
               </div>
 
-              {/* ✅ iba dole pod variantami */}
+              {/* ✅ Stiahnuť všetky iba dole pod variantami */}
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
                 <button type="button" className="btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
                   Stiahnuť všetky ({variants.length})
@@ -1518,134 +1395,197 @@ export default function Page() {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Lead modal */}
-      {leadOpen ? (
-        <div
-          className="modalOverlay"
-          role="dialog"
-          aria-modal="true"
-          onMouseDown={(ev) => {
-            if (ev.target === ev.currentTarget) closeLeadForm();
-          }}
-        >
-          <div className="modalCard">
-            <div className="modalHead">
-              <div>
-                <p className="modalTitle">Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</p>
-                <p className="modalSub">
-                  Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
-                </p>
+        {/* Lead modal */}
+        {leadOpen ? (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.55)",
+              display: "grid",
+              placeItems: "center",
+              padding: 16,
+              zIndex: 9999,
+            }}
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(ev) => {
+              if (ev.target === ev.currentTarget) closeLeadForm();
+            }}
+          >
+            <div
+              style={{
+                width: "min(900px, 100%)",
+                borderRadius: 18,
+                background: "#fff",
+                border: "1px solid rgba(0,0,0,0.12)",
+                boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  padding: "14px 16px",
+                  borderBottom: "1px solid rgba(0,0,0,0.06)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <p style={{ fontWeight: 1000, letterSpacing: "-0.01em", margin: 0, fontSize: 16 }}>Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</p>
+                  <p style={{ margin: "6px 0 0", color: "rgba(0,0,0,0.65)", fontWeight: 650, fontSize: 13 }}>
+                    Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
+                  </p>
+                </div>
+                <button type="button" className="btn" onClick={closeLeadForm}>
+                  ✕
+                </button>
               </div>
-              <button type="button" className="btn ghost" onClick={closeLeadForm}>
-                ✕
-              </button>
-            </div>
 
-            <div className="modalBody">
-              <form onSubmit={submitLead} className="formGrid">
-                <div className="span2">
-                  <div className="label" style={{ marginBottom: 8 }}>
-                    Vyber vizualizáciu *
-                  </div>
-                  <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
-                    {variants.map((v, i) => {
-                      const sel = selectedVariantIndex === i;
-                      return (
-                        <div key={v.id} className={`pickCard ${sel ? "selected" : ""}`} onClick={() => setSelectedVariantIndex(i)} role="button" tabIndex={0}>
-                          <div className="pickTop">
-                            <div>
-                              <b>Variant {i + 1}</b>
-                              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)", marginTop: 2 }}>{typeLabel(v.type)}</div>
+              <div style={{ padding: "14px 16px 16px" }}>
+                <form
+                  onSubmit={submitLead}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)", margin: "2px 0 10px" }}>
+                      Vyber vizualizáciu, ktorú odošleš *
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                      {variants.map((v, i) => {
+                        const sel = selectedVariantIndex === i;
+                        return (
+                          <div
+                            key={v.id}
+                            onClick={() => setSelectedVariantIndex(i)}
+                            role="button"
+                            tabIndex={0}
+                            style={{
+                              border: "1px solid rgba(0,0,0,0.1)",
+                              borderRadius: 14,
+                              overflow: "hidden",
+                              cursor: "pointer",
+                              background: "rgba(0,0,0,0.01)",
+                              outline: sel ? "3px solid rgba(0,0,0,0.85)" : "none",
+                            }}
+                          >
+                            <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.02)", display: "flex", justifyContent: "space-between", gap: 10 }}>
+                              <div>
+                                <b style={{ fontSize: 12 }}>Variant {i + 1}</b>
+                                <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)", marginTop: 2 }}>{typeLabel(v.type)}</div>
+                              </div>
+                              <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
                             </div>
-                            <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
+                            <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }} />
                           </div>
-                          <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} />
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {leadErr.selectedVariant ? <div className="errText" style={{ marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Meno *</div>
-                  <input className="input" value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" />
-                  {leadErr.name ? <div className="errText">{leadErr.name}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Mesto *</div>
-                  <input className="input" value={lead.city} onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))} placeholder="Mesto" />
-                  {leadErr.city ? <div className="errText">{leadErr.city}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Telefón *</div>
-                  <input className="input" value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" />
-                  {leadErr.phone ? <div className="errText">{leadErr.phone}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Emailová adresa *</div>
-                  <input className="input" value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" />
-                  {leadErr.email ? <div className="errText">{leadErr.email}</div> : null}
-                </div>
-
-                <div className="span2" style={{ marginTop: 4 }}>
-                  <div className="label" style={{ marginBottom: 8 }}>
-                    Približné rozmery pergoly *
-                  </div>
-                  <div className="dimsGrid">
-                    <div className="field">
-                      <div className="label">Šírka</div>
-                      <input className="input" value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" />
-                      {leadErr.approxWidth ? <div className="errText">{leadErr.approxWidth}</div> : null}
+                        );
+                      })}
                     </div>
 
-                    <div className="field">
-                      <div className="label">Hĺbka</div>
-                      <input className="input" value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" />
-                      {leadErr.approxDepth ? <div className="errText">{leadErr.approxDepth}</div> : null}
+                    {leadErr.selectedVariant ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800, marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div className="label">Meno *</div>
+                    <input className="input" value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" />
+                    {leadErr.name ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.name}</div> : null}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div className="label">Mesto *</div>
+                    <input className="input" value={lead.city} onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))} placeholder="Mesto" />
+                    {leadErr.city ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.city}</div> : null}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div className="label">Telefón *</div>
+                    <input className="input" value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" />
+                    {leadErr.phone ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.phone}</div> : null}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div className="label">Email *</div>
+                    <input className="input" value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" />
+                    {leadErr.email ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.email}</div> : null}
+                  </div>
+
+                  <div style={{ gridColumn: "1 / -1", marginTop: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)", margin: "2px 0 10px" }}>
+                      Približné rozmery pergoly *
                     </div>
 
-                    <div className="field">
-                      <div className="label">Výška</div>
-                      <input className="input" value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.5 m" />
-                      {leadErr.approxHeight ? <div className="errText">{leadErr.approxHeight}</div> : null}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div className="label">Šírka</div>
+                        <input className="input" value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" />
+                        {leadErr.approxWidth ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.approxWidth}</div> : null}
+                      </div>
+
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div className="label">Hĺbka</div>
+                        <input className="input" value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" />
+                        {leadErr.approxDepth ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.approxDepth}</div> : null}
+                      </div>
+
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div className="label">Výška</div>
+                        <input className="input" value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.5 m" />
+                        {leadErr.approxHeight ? <div style={{ color: "rgba(160,0,0,0.9)", fontSize: 12, fontWeight: 800 }}>{leadErr.approxHeight}</div> : null}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="span2">
-                  <div className="label">Poznámka zákazníka (voliteľné)</div>
-                  <textarea
-                    className="textarea"
-                    value={lead.customerNote}
-                    onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
-                    placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
-                  />
-                </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)", margin: "2px 0 10px" }}>
+                      Poznámka zákazníka (voliteľné)
+                    </div>
+                    <textarea
+                      value={lead.customerNote}
+                      onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
+                      placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
+                      style={{
+                        width: "100%",
+                        padding: "11px 12px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(0,0,0,0.12)",
+                        background: "#fff",
+                        outline: "none",
+                        fontWeight: 700,
+                        color: "#111",
+                        minHeight: 96,
+                        resize: "vertical",
+                        lineHeight: 1.35,
+                      }}
+                    />
+                  </div>
 
-                <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-                  <button type="button" className="btn ghost" onClick={closeLeadForm} disabled={leadSubmitting}>
-                    Zrušiť
-                  </button>
+                  <div style={{ gridColumn: "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+                    <button type="button" className="btn" onClick={closeLeadForm} disabled={leadSubmitting}>
+                      Zrušiť
+                    </button>
 
-                  <button type="submit" className="btn primary" disabled={leadSubmitting}>
-                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
-                  </button>
-                </div>
+                    <button type="submit" className="btn btnPrimary" disabled={leadSubmitting}>
+                      {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
+                    </button>
+                  </div>
 
-                <div className="span2" style={{ marginTop: 6, color: "rgba(0,0,0,0.65)", fontWeight: 650, fontSize: 13 }}>
-                  Odoslaním formulára súhlasíte so spracovaním osobných údajov.
-                </div>
-              </form>
+                  <div style={{ gridColumn: "1 / -1", color: "rgba(0,0,0,0.65)", fontWeight: 650, fontSize: 13, marginTop: 6 }}>
+                    Odoslaním formulára súhlasíte so spracovaním osobných údajov.
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </section>
   );
 }
