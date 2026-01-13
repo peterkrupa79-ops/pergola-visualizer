@@ -30,10 +30,9 @@ export async function POST(req: NextRequest) {
     const email = String(form.get("email") || "").trim();
     const phone = String(form.get("phone") || "").trim();
     const city = String(form.get("city") || "").trim();
-    const note = String(form.get("note") || "").trim();
+    const note = String(form.get("note") || "").trim(); // obsahuje aj poznámku zákazníka
     const consent = String(form.get("consent") || "").trim();
     const source = String(form.get("source") || "").trim();
-    const configJson = String(form.get("configJson") || "").trim();
 
     const imageFile = form.get("image");
 
@@ -66,13 +65,9 @@ export async function POST(req: NextRequest) {
       host: SMTP_HOST,
       port: SMTP_PORT,
       secure,
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS,
-      },
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
     });
 
-    // Overenie pripojenia (pomôže v logoch)
     await transporter.verify();
 
     const pngArrayBuf = await imageFile.arrayBuffer();
@@ -80,6 +75,7 @@ export async function POST(req: NextRequest) {
 
     const subject = `TERANEA Lead – ${name} (${city})`;
 
+    // TEXT verzia (bez configJson)
     const text = [
       `TERANEA Lead`,
       ``,
@@ -88,14 +84,11 @@ export async function POST(req: NextRequest) {
       `Telefón: ${phone}`,
       `Email: ${email}`,
       ``,
-      `Poznámka / rozmery / variant:`,
+      `Poznámka / rozmery / výber:`,
       note || "-",
       ``,
       `Súhlas: ${consent || "-"}`,
       `Zdroj: ${source || "-"}`,
-      ``,
-      `Config JSON:`,
-      configJson || "-",
     ].join("\n");
 
     const safeName = escapeHtml(name);
@@ -106,9 +99,9 @@ export async function POST(req: NextRequest) {
     const safeConsent = escapeHtml(consent || "-");
     const safeSource = escapeHtml(source || "-");
 
-    // inline obrázok cez Content-ID
     const inlineCid = "vizualizacia@teranea";
 
+    // HTML verzia (bez configJson sekcie)
     const html = `<!doctype html>
 <html>
   <head>
@@ -152,7 +145,7 @@ export async function POST(req: NextRequest) {
 
               <div style="margin-top:14px;padding:12px 14px;border-radius:14px;border:1px solid rgba(0,0,0,0.08);background:rgba(0,0,0,0.02);">
                 <div style="font-weight:900;font-size:12px;color:rgba(0,0,0,0.6);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">
-                  Poznámka / rozmery / variant
+                  Poznámka / rozmery / výber
                 </div>
                 <div style="white-space:pre-wrap;color:#111;font-weight:650;font-size:14px;line-height:1.45;">${safeNote}</div>
               </div>
@@ -181,19 +174,6 @@ export async function POST(req: NextRequest) {
               </div>
             </div>
           </div>
-
-          ${
-            configJson
-              ? `<div style="margin-top:16px;padding:12px 14px;border-radius:14px;border:1px solid rgba(0,0,0,0.08);background:rgba(0,0,0,0.015);">
-                  <div style="font-weight:900;font-size:12px;color:rgba(0,0,0,0.6);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">
-                    Technické údaje (configJson)
-                  </div>
-                  <pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.45;color:rgba(0,0,0,0.85);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${escapeHtml(
-                    configJson
-                  )}</pre>
-                </div>`
-              : ""
-          }
         </div>
 
         <div style="padding:14px 20px;border-top:1px solid rgba(0,0,0,0.06);background:#fafafa;color:rgba(0,0,0,0.55);font-size:12px;font-weight:650;">
@@ -204,18 +184,16 @@ export async function POST(req: NextRequest) {
   </body>
 </html>`;
 
-    // Kam posielame (fixne na obchod@teranea.sk)
     const to = "obchod@teranea.sk";
 
     await transporter.sendMail({
-      from: SMTP_FROM, // odporúčam mať SMTP_FROM=obchod@teranea.sk
+      from: SMTP_FROM,
       to,
       subject,
       text,
       html,
-      replyTo: email, // aby obchod vedel odpísať priamo zákazníkovi
+      replyTo: email,
       attachments: [
-        // Inline obrázok (zobrazenie v HTML)
         {
           filename: "vizualizacia.png",
           content: pngBuffer,
@@ -223,7 +201,6 @@ export async function POST(req: NextRequest) {
           cid: inlineCid,
           contentDisposition: "inline",
         },
-        // Plus rovnaký obrázok aj ako klasická príloha (pre klientov, čo inline blokujú)
         {
           filename: "vizualizacia.png",
           content: pngBuffer,
