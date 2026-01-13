@@ -55,6 +55,14 @@ function typeLabel(t: PergolaType) {
   return "Zimná záhrada";
 }
 
+// ✅ NOVÉ: premena Base64 (bez prefixu) na PNG Blob, aby sme ho vedeli poslať ako "file"
+function b64ToPngBlob(b64: string): Blob {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: "image/png" });
+}
+
 type VariantItem = { type: PergolaType; b64: string };
 
 export default function Page() {
@@ -485,49 +493,40 @@ export default function Page() {
     setError("");
 
     try {
-      
-// --- EXPORT pre OpenAI: downscale + JPEG (aby sme nepadali na HTTP 413) ---
-const MAX_DIM = 2048; // bezpečné pre Vercel request limity
-const bgW = bgImg.width;
-const bgH = bgImg.height;
+      // --- EXPORT pre OpenAI: downscale + JPEG (aby sme nepadali na HTTP 413) ---
+      const MAX_DIM = 2048; // bezpečné pre Vercel request limity
+      const bgW = bgImg.width;
+      const bgH = bgImg.height;
 
-const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
-const outW = Math.max(1, Math.round(bgW * scale));
-const outH = Math.max(1, Math.round(bgH * scale));
+      const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
+      const outW = Math.max(1, Math.round(bgW * scale));
+      const outH = Math.max(1, Math.round(bgH * scale));
 
-const out = document.createElement("canvas");
-out.width = outW;
-out.height = outH;
+      const out = document.createElement("canvas");
+      out.width = outW;
+      out.height = outH;
 
-const octx = out.getContext("2d")!;
-octx.drawImage(bgImg, 0, 0, outW, outH);
+      const octx = out.getContext("2d")!;
+      octx.drawImage(bgImg, 0, 0, outW, outH);
 
-if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
-  throw new Error("3D renderer nie je pripravený.");
-}
+      if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
+        throw new Error("3D renderer nie je pripravený.");
+      }
 
-const renderer = rendererRef.current;
-const scene = sceneRef.current;
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
 
-applyTransformsForCurrentState(outW, outH);
-renderer.setSize(outW, outH, false);
-renderer.render(scene, cameraRef.current);
+      applyTransformsForCurrentState(outW, outH);
+      renderer.setSize(outW, outH, false);
+      renderer.render(scene, cameraRef.current);
 
-const glTemp = renderer.domElement;
-octx.drawImage(glTemp, 0, 0);
+      const glTemp = renderer.domElement;
+      octx.drawImage(glTemp, 0, 0);
 
-// export ako JPEG (PNG býva obrovské a spôsobí 413)
-const blob: Blob = await new Promise((res, rej) =>
-  out.toBlob(
-    (b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
-    "image/jpeg",
-    0.9
-  )
-);
-
-// voliteľné: log veľkosti exportu
-// console.log("Export size (MB):", (blob.size / 1024 / 1024).toFixed(2));
-
+      // export ako JPEG (PNG býva obrovské a spôsobí 413)
+      const blob: Blob = await new Promise((res, rej) =>
+        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+      );
 
       const form = new FormData();
       form.append("image", blob, "collage.jpg");
@@ -606,21 +605,56 @@ const blob: Blob = await new Promise((res, rej) =>
     }
 
     setLeadSubmitting(true);
+
     try {
-      const r = await fetch("/api/lead/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // ✅ urobíme PNG súbor z base64 varianty
+      const pngBlob = b64ToPngBlob(currentVariant.b64);
+
+      // ✅ FormData (presne to backend očakáva)
+      const fd = new FormData();
+      fd.append("name", lead.name);
+      fd.append("email", lead.email);
+      fd.append("phone", lead.phone);
+      fd.append("city", lead.city);
+
+      // Poznámka – dáme tam rozmery + info o variante, aby to obchod mal v emaili
+      const note = [
+        `Typ: ${typeLabel(currentVariant.type)} (${currentVariant.type})`,
+        `Variant: ${selectedVariantIndex + 1}/3`,
+        `Približné rozmery: šírka ${lead.approxWidth}, hĺbka ${lead.approxDepth}, výška ${lead.approxHeight}`,
+      ].join("\n");
+      fd.append("note", note);
+
+      // súhlas – zatiaľ automaticky "true" (máš text o súhlase vo formulári)
+      fd.append("consent", "true");
+      fd.append("source", "pergola-editor");
+
+      // configJson pre interné účely
+      fd.append(
+        "configJson",
+        JSON.stringify({
           lead,
           pergolaType: currentVariant.type,
-          imageB64: currentVariant.b64,
           variantIndex: selectedVariantIndex + 1,
-        }),
+        })
+      );
+
+      // ✅ dôležité: názov poľa MUSÍ byť "image"
+      fd.append("image", pngBlob, "vizualizacia.png");
+
+      // ✅ NENASTAVUJEME Content-Type – prehliadač nastaví multipart boundary sám
+      const r = await fetch("/api/lead/submit", {
+        method: "POST",
+        body: fd,
       });
 
+      let j: any = null;
+      try {
+        j = await r.json();
+      } catch {}
+
       if (!r.ok) {
-        const t = await r.text();
-        throw new Error(t || `HTTP ${r.status}`);
+        throw new Error(j?.error || j?.detail || `HTTP ${r.status}`);
       }
 
       setLeadSubmitted(true);
@@ -1833,9 +1867,7 @@ const blob: Blob = await new Promise((res, rej) =>
               </div>
 
               <div className="sheetBlock">
-                <div className="note">
-                  Pozn.: Hold/drag na slidere sú vypnuté. Použi klasický slider a kliky na +/−.
-                </div>
+                <div className="note">Pozn.: Hold/drag na slidere sú vypnuté. Použi klasický slider a kliky na +/−.</div>
               </div>
             </div>
           </div>
