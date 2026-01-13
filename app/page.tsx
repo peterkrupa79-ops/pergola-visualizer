@@ -146,7 +146,7 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // UI selection for bottom slider panel
+  // UI selection for slider panel
   const [panel, setPanel] = useState<SliderPanel>("zoom");
 
   // mobile
@@ -155,9 +155,11 @@ export default function Page() {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
       isMobileRef.current = mq.matches;
+
+      // na mobile nech je model menší a celý viditeľný
       if (mq.matches) {
         setScalePct((s) => ({ x: Math.min(s.x, 82), y: Math.min(s.y, 82), z: Math.min(s.z, 82) }));
-        setEditorZoom((z) => Math.min(Math.max(z, 105), 125));
+        setEditorZoom((z) => clamp(z, 95, 125));
       }
     };
     apply();
@@ -219,7 +221,8 @@ export default function Page() {
   }
 
   function resetAll() {
-    setScalePct({ x: isMobileRef.current ? 82 : 100, y: isMobileRef.current ? 82 : 100, z: isMobileRef.current ? 82 : 100 });
+    const m = isMobileRef.current ? 82 : 100;
+    setScalePct({ x: m, y: m, z: m });
     setRot3D({ yaw: 0.35, pitch: -0.12 });
     setRot2D(0);
     setPos({ x: 0.5, y: 0.72 });
@@ -791,7 +794,7 @@ export default function Page() {
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  // ✅ slider render: rovnaké ako zoom (jednoduché input + hodnota)
+  // ✅ slider render: identické správanie pre zoom aj X/Y/Z
   function SliderBlock({
     title,
     valueLabel,
@@ -810,21 +813,13 @@ export default function Page() {
     onChange: (v: number) => void;
   }) {
     return (
-      <>
+      <div className="sliderPanel">
         <div className="sliderTitle">{title}</div>
         <div className="sliderRow">
-          <input
-            className="rangeBig"
-            type="range"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
-            onChange={(e) => onChange(Number(e.target.value))}
-          />
+          <input className="range range--big" type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
           <div className="sliderVal">{valueLabel}</div>
         </div>
-      </>
+      </div>
     );
   }
 
@@ -903,44 +898,31 @@ export default function Page() {
         }
       `}</style>
 
-      {/* ✅ Range styling: musí podporovať drag (mobile) + viditeľné (desktop) */}
+      {/* ✅ RANGE: native (drag funguje), len zväčšené a viditeľné */}
       <style jsx global>{`
-        .ter-wrap :global(input.rangeBig) {
+        .ter-wrap :global(input.range--big) {
           width: 100%;
           height: 42px;
-          -webkit-appearance: none;
-          appearance: none;
-          background: transparent;
+          accent-color: #111;
           touch-action: pan-x;
         }
-        .ter-wrap :global(input.rangeBig::-webkit-slider-runnable-track) {
-          height: 12px;
+        .ter-wrap :global(input.range--big::-webkit-slider-runnable-track) {
+          height: 10px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18);
         }
-        .ter-wrap :global(input.rangeBig::-webkit-slider-thumb) {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 26px;
-          height: 26px;
-          margin-top: -7px;
-          border-radius: 999px;
-          background: rgba(0, 0, 0, 0.95);
-          border: 2px solid rgba(255, 255, 255, 0.95);
-          box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+        .ter-wrap :global(input.range--big::-webkit-slider-thumb) {
+          width: 24px;
+          height: 24px;
+          margin-top: -6px;
         }
-        .ter-wrap :global(input.rangeBig::-moz-range-track) {
-          height: 12px;
+        .ter-wrap :global(input.range--big::-moz-range-track) {
+          height: 10px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18);
         }
-        .ter-wrap :global(input.rangeBig::-moz-range-thumb) {
-          width: 26px;
-          height: 26px;
-          border-radius: 999px;
-          background: rgba(0, 0, 0, 0.95);
-          border: 2px solid rgba(255, 255, 255, 0.95);
-          box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+        .ter-wrap :global(input.range--big::-moz-range-thumb) {
+          width: 24px;
+          height: 24px;
+          border: none;
         }
       `}</style>
 
@@ -1117,7 +1099,7 @@ export default function Page() {
         .canvasShell {
           border: 1px solid rgba(0, 0, 0, 0.08);
           border-radius: 14px;
-          overflow: hidden;
+          overflow: auto;
           padding: 10px;
           background: #fff;
         }
@@ -1259,11 +1241,17 @@ export default function Page() {
           .variantCard img {
             height: 180px;
           }
+          .canvasBody {
+            padding: 10px;
+          }
+          .canvasShell {
+            padding: 8px;
+          }
         }
       `}</style>
 
       <div className="container">
-        {/* HERO + STEPPER (vrátené) */}
+        {/* HERO + STEPPER */}
         <div className="hero">
           <h2>Vizualizácia pergoly na vašom dome</h2>
           <p className="sub">
@@ -1343,42 +1331,40 @@ export default function Page() {
               </div>
             </div>
 
-            {/* SLIDER PANEL — X/Y/Z rovnako ako ZOOM */}
-            <div className="sliderPanel">
-              {panel === "zoom" ? (
-                <SliderBlock title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
-              ) : panel === "x" ? (
-                <SliderBlock
-                  title="Šírka (X)"
-                  value={scalePct.x}
-                  valueLabel={`${scalePct.x.toFixed(1)}%`}
-                  min={SCALE_MIN}
-                  max={SCALE_MAX}
-                  step={SCALE_STEP}
-                  onChange={(v) => setScaleAxis("x", v)}
-                />
-              ) : panel === "y" ? (
-                <SliderBlock
-                  title="Výška (Y)"
-                  value={scalePct.y}
-                  valueLabel={`${scalePct.y.toFixed(1)}%`}
-                  min={SCALE_MIN}
-                  max={SCALE_MAX}
-                  step={SCALE_STEP}
-                  onChange={(v) => setScaleAxis("y", v)}
-                />
-              ) : (
-                <SliderBlock
-                  title="Hĺbka (Z)"
-                  value={scalePct.z}
-                  valueLabel={`${scalePct.z.toFixed(1)}%`}
-                  min={SCALE_MIN}
-                  max={SCALE_MAX}
-                  step={SCALE_STEP}
-                  onChange={(v) => setScaleAxis("z", v)}
-                />
-              )}
-            </div>
+            {/* SLIDER PANEL */}
+            {panel === "zoom" ? (
+              <SliderBlock title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
+            ) : panel === "x" ? (
+              <SliderBlock
+                title="Šírka (X)"
+                value={scalePct.x}
+                valueLabel={`${scalePct.x.toFixed(1)}%`}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                onChange={(v) => setScaleAxis("x", v)}
+              />
+            ) : panel === "y" ? (
+              <SliderBlock
+                title="Výška (Y)"
+                value={scalePct.y}
+                valueLabel={`${scalePct.y.toFixed(1)}%`}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                onChange={(v) => setScaleAxis("y", v)}
+              />
+            ) : (
+              <SliderBlock
+                title="Hĺbka (Z)"
+                value={scalePct.z}
+                valueLabel={`${scalePct.z.toFixed(1)}%`}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                onChange={(v) => setScaleAxis("z", v)}
+              />
+            )}
 
             {error ? <div className="errorBox">Chyba: {error}</div> : null}
           </div>
