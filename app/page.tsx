@@ -205,7 +205,7 @@ export default function Page() {
     return () => mq.removeEventListener?.("change", apply);
   }, []);
 
-  // reaguj na resize (mobil UI lišty menia innerHeight) – nech sa sheet správne zavrie a NEPREKRÝVA canvas
+  // reaguj na resize (mobil UI lišty menia innerHeight)
   useEffect(() => {
     if (!isMobileRef.current) return;
 
@@ -1896,69 +1896,67 @@ export default function Page() {
             </div>
           </div>
 
-          {/* ✅ KRITICKÉ: keď je sheet zatvorený, NERENDERUJ body – inak prekrýva editor a berie dotyky */}
-          {sheetOpen ? (
-            <div className="sheetBody">
-              {error ? <div className="errorBox">Chyba: {error}</div> : null}
+          {/* ✅ FIX SLIDROV: body je vždy renderované, sheet sa skrýva iba translateY */}
+          <div className="sheetBody">
+            {error ? <div className="errorBox">Chyba: {error}</div> : null}
 
-              <div className="sheetGrid">
-                <div className="sheetBlock">
-                  <div className="sectionTitle">Fotka</div>
-                  <div className="field">
-                    <div className="label">Nahraj</div>
-                    <input
-                      className="input"
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0] || null;
-                        setBgFile(f);
-                        setError("");
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="sheetBlock">
-                  <div className="sectionTitle">Typ (pre ďalšiu generáciu)</div>
-                  <div className="field">
-                    <div className="label">Vyber</div>
-                    <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                      <option value="bioklim">Bioklimatická pergola</option>
-                      <option value="pevna">Pergola s pevnou strechou</option>
-                      <option value="zimna">Zimná záhrada</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="sheetBlock">
-                  <div className="sectionTitle">Zoom</div>
-                  <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-                </div>
-
-                <div className="sheetBlock">
-                  <div className="sectionTitle">Rozmery (1% – 200%)</div>
-                  <div className="scaleBlock">
-                    <ScaleRow label="X" axis="x" value={scalePct.x} />
-                    <ScaleRow label="Y" axis="y" value={scalePct.y} />
-                    <ScaleRow label="Z" axis="z" value={scalePct.z} />
-                  </div>
-                </div>
-
-                <div className="sheetBlock">
-                  <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
-                    Reset
-                  </button>
-                </div>
-
-                <div className="sheetBlock">
-                  <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                    Stiahnuť všetky ({variants.length})
-                  </button>
+            <div className="sheetGrid">
+              <div className="sheetBlock">
+                <div className="sectionTitle">Fotka</div>
+                <div className="field">
+                  <div className="label">Nahraj</div>
+                  <input
+                    className="input"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] || null;
+                      setBgFile(f);
+                      setError("");
+                    }}
+                  />
                 </div>
               </div>
+
+              <div className="sheetBlock">
+                <div className="sectionTitle">Typ (pre ďalšiu generáciu)</div>
+                <div className="field">
+                  <div className="label">Vyber</div>
+                  <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
+                    <option value="bioklim">Bioklimatická pergola</option>
+                    <option value="pevna">Pergola s pevnou strechou</option>
+                    <option value="zimna">Zimná záhrada</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="sheetBlock">
+                <div className="sectionTitle">Zoom</div>
+                <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
+              </div>
+
+              <div className="sheetBlock">
+                <div className="sectionTitle">Rozmery (1% – 200%)</div>
+                <div className="scaleBlock">
+                  <ScaleRow label="X" axis="x" value={scalePct.x} />
+                  <ScaleRow label="Y" axis="y" value={scalePct.y} />
+                  <ScaleRow label="Z" axis="z" value={scalePct.z} />
+                </div>
+              </div>
+
+              <div className="sheetBlock">
+                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
+                  Reset
+                </button>
+              </div>
+
+              <div className="sheetBlock">
+                <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                  Stiahnuť všetky ({variants.length})
+                </button>
+              </div>
             </div>
-          ) : null}
+          </div>
         </div>
       </div>
 
