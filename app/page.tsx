@@ -485,30 +485,52 @@ export default function Page() {
     setError("");
 
     try {
-      const out = document.createElement("canvas");
-      out.width = bgImg.width;
-      out.height = bgImg.height;
-      const octx = out.getContext("2d")!;
-      octx.drawImage(bgImg, 0, 0, out.width, out.height);
+      
+// --- EXPORT pre OpenAI: downscale + JPEG (aby sme nepadali na HTTP 413) ---
+const MAX_DIM = 2048; // bezpečné pre Vercel request limity
+const bgW = bgImg.width;
+const bgH = bgImg.height;
 
-      if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
-        throw new Error("3D renderer nie je pripravený.");
-      }
+const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
+const outW = Math.max(1, Math.round(bgW * scale));
+const outH = Math.max(1, Math.round(bgH * scale));
 
-      const renderer = rendererRef.current;
-      const scene = sceneRef.current;
+const out = document.createElement("canvas");
+out.width = outW;
+out.height = outH;
 
-      applyTransformsForCurrentState(out.width, out.height);
-      renderer.setSize(out.width, out.height, false);
-      renderer.render(scene, cameraRef.current);
+const octx = out.getContext("2d")!;
+octx.drawImage(bgImg, 0, 0, outW, outH);
 
-      const glTemp = renderer.domElement;
-      octx.drawImage(glTemp, 0, 0);
+if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
+  throw new Error("3D renderer nie je pripravený.");
+}
 
-      const blob: Blob = await new Promise((res) => out.toBlob((b) => res(b as Blob), "image/png"));
+const renderer = rendererRef.current;
+const scene = sceneRef.current;
+
+applyTransformsForCurrentState(outW, outH);
+renderer.setSize(outW, outH, false);
+renderer.render(scene, cameraRef.current);
+
+const glTemp = renderer.domElement;
+octx.drawImage(glTemp, 0, 0);
+
+// export ako JPEG (PNG býva obrovské a spôsobí 413)
+const blob: Blob = await new Promise((res, rej) =>
+  out.toBlob(
+    (b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
+    "image/jpeg",
+    0.9
+  )
+);
+
+// voliteľné: log veľkosti exportu
+// console.log("Export size (MB):", (blob.size / 1024 / 1024).toFixed(2));
+
 
       const form = new FormData();
-      form.append("image", blob, "collage.png");
+      form.append("image", blob, "collage.jpg");
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
