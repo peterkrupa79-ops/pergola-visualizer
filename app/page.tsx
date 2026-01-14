@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mode = "move" | "rotate3d" | "setGround" | "resize";
+type Mode = "move" | "rotate3d" | "size" | "setGround" | "resize"; // ✅ size = mobilný režim pre slidre
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -149,81 +149,24 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // mobile sheet
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetY, setSheetY] = useState(0);
-  const sheetDragRef = useRef<{
-    dragging: boolean;
-    startY: number;
-    startSheetY: number;
-    maxDown: number;
-  }>({ dragging: false, startY: 0, startSheetY: 0, maxDown: 0 });
-
+  // ✅ Mobile UX
   const isMobileRef = useRef(false);
-
-  const getSheetMaxDown = () => {
-    const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-
-    // otvorený sheet ukazuje cca 72% výšky
-    const openPeek = Math.round(vh * 0.72);
-    const openTop = vh - openPeek;
-
-    // zatvorený sheet ukáže len malý "peek"
-    const collapsedPeek = 92;
-    const collapsedTop = vh - collapsedPeek;
-
-    // o koľko treba posunúť otvorený sheet nadol, aby ostal len peek
-    return Math.max(0, collapsedTop - openTop);
-  };
-
-  const openSheet = () => {
-    setSheetOpen(true);
-    setSheetY(0);
-  };
-  const closeSheet = () => {
-    setSheetOpen(false);
-    setSheetY(getSheetMaxDown());
-  };
+  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
+  const [floatOpen, setFloatOpen] = useState(true);
+  const [sizeAxis, setSizeAxis] = useState<"x" | "y" | "z">("x");
 
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
       isMobileRef.current = mq.matches;
-
-      // ✅ FIX: na mobile nech je sheet renderovaný a dostupný hneď (slidre nezmiznú),
-      // ale vizuálne ostáva "zatvorený" cez translateY(maxDown)
-      if (mq.matches) {
-        setSheetOpen(true);
-        setSheetY(getSheetMaxDown());
-      } else {
-        setSheetOpen(false);
-        setSheetY(0);
-      }
+      // na mobile nech je ovládanie viditeľné
+      if (mq.matches) setFloatOpen(true);
+      setMobileSettingsOpen(false);
     };
-
     apply();
     mq.addEventListener?.("change", apply);
     return () => mq.removeEventListener?.("change", apply);
   }, []);
-
-  // reaguj na resize (mobil UI lišty menia innerHeight) – nech sa sheet správne zavrie a NEPREKRÝVA canvas
-  useEffect(() => {
-    if (!isMobileRef.current) return;
-
-    const onResize = () => {
-      const maxDown = getSheetMaxDown();
-      if (!sheetDragRef.current.dragging) {
-        // ak je sheet "zatvorený" (vizuálne), drž ho pri maxDown
-        if (!sheetOpen || sheetY > maxDown * 0.5) {
-          setSheetY(maxDown);
-        }
-      }
-    };
-
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sheetOpen, sheetY]);
 
   // canvas drag ref
   const dragRef = useRef<{
@@ -310,6 +253,11 @@ export default function Page() {
     setGroundA(null);
     setGroundB(null);
     setError("");
+  }
+
+  function resetRotation() {
+    setRot3D({ yaw: 0.35, pitch: -0.12 });
+    setRot2D(0);
   }
 
   // background image load
@@ -755,7 +703,6 @@ export default function Page() {
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
-    // ✅ vždy: zablokuj scroll a chyť pointer
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -793,8 +740,6 @@ export default function Page() {
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
-
-    // ✅ počas editovania vždy blokuj default (scroll)
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -803,7 +748,8 @@ export default function Page() {
 
     const currentMode = dragRef.current.modeAtDown;
 
-    if (currentMode === "move") {
+    if (currentMode === "move" || currentMode === "size") {
+      // ✅ v size režime nechávame drag stále ako MOVE (komfort)
       const nx = dragRef.current.startPos.x + dx / canvasW;
       const ny = dragRef.current.startPos.y + dy / canvasH;
       setPos({ x: clamp(nx, 0, 1), y: clamp(ny, 0, 1) });
@@ -844,7 +790,7 @@ export default function Page() {
     }
   }
 
-  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+  function onPointerUp() {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     setActiveHandle(null);
@@ -915,40 +861,8 @@ export default function Page() {
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  const onHandlePointerDown = (e: React.PointerEvent) => {
-    if (!isMobileRef.current) return;
-    e.preventDefault();
-
-    const maxDown = getSheetMaxDown();
-    sheetDragRef.current = {
-      dragging: true,
-      startY: e.clientY,
-      startSheetY: sheetOpen ? sheetY : maxDown,
-      maxDown,
-    };
-
-    (e.currentTarget as any).setPointerCapture(e.pointerId);
-  };
-
-  const onHandlePointerMove = (e: React.PointerEvent) => {
-    if (!sheetDragRef.current.dragging) return;
-    e.preventDefault();
-    const dy = e.clientY - sheetDragRef.current.startY;
-    const next = clamp(sheetDragRef.current.startSheetY + dy, 0, sheetDragRef.current.maxDown);
-    setSheetY(next);
-    setSheetOpen(next < sheetDragRef.current.maxDown * 0.5);
-  };
-
-  const onHandlePointerUp = (e: React.PointerEvent) => {
-    if (!sheetDragRef.current.dragging) return;
-    e.preventDefault();
-    sheetDragRef.current.dragging = false;
-
-    const maxDown = sheetDragRef.current.maxDown;
-    const shouldOpen = sheetY < maxDown * 0.5;
-    if (shouldOpen) openSheet();
-    else closeSheet();
-  };
+  // ✅ Floating panel helpers
+  const mobileScaleVal = scalePct[sizeAxis];
 
   return (
     <section className="ter-wrap">
@@ -1122,6 +1036,7 @@ export default function Page() {
           display: grid;
           gap: 10px;
         }
+
         .canvasShell {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
@@ -1129,6 +1044,14 @@ export default function Page() {
           overflow: hidden;
           padding: 10px;
         }
+
+        .canvasStage {
+          position: relative;
+          width: 100%;
+          display: grid;
+          place-items: start;
+        }
+
         canvas {
           border-radius: 12px;
           display: block;
@@ -1159,6 +1082,7 @@ export default function Page() {
           font-size: 13px;
           cursor: pointer;
           color: rgba(0, 0, 0, 0.7);
+          user-select: none;
         }
         .tab.active {
           background: #fff;
@@ -1454,91 +1378,162 @@ export default function Page() {
             left: 0;
             right: 0;
             bottom: 0;
-            padding: 12px 16px;
+            padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
             background: rgba(246, 246, 246, 0.92);
             backdrop-filter: blur(10px);
             border-top: 1px solid rgba(0, 0, 0, 0.08);
             z-index: 60;
           }
           .mobileSpacer {
-            height: 70px;
+            height: 86px;
           }
         }
 
-        .sheet {
+        /* ✅ Mobile inline control bar nad canvasom */
+        .mobileInlineBar {
           display: none;
         }
         @media (max-width: 960px) {
-          .sheet {
-            display: block;
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-
-            /* ✅ nech je určite nad editorom, ale pod modalom */
-            z-index: 70;
-
-            /* ✅ dôležité: nech .sheet nikdy neblokuje dotyky mimo karty */
-            pointer-events: none;
-          }
-          .sheetCard {
-            pointer-events: auto;
-
-            border-top-left-radius: 18px;
-            border-top-right-radius: 18px;
-            background: #fff;
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            box-shadow: 0 -16px 60px rgba(0, 0, 0, 0.14);
-            overflow: hidden;
-          }
-          .sheetHandleRow {
-            padding: 10px 16px 6px;
-            display: grid;
-            gap: 6px;
-          }
-          .handle {
-            width: 46px;
-            height: 5px;
-            border-radius: 999px;
-            background: rgba(0, 0, 0, 0.18);
-            margin: 0 auto;
-          }
-          .sheetTopLine {
+          .mobileInlineBar {
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 10px;
+            flex-wrap: wrap;
+            padding: 10px 0 2px;
           }
-          .sheetTitle {
+          .iconBtn {
+            border-radius: 12px;
+            padding: 9px 10px;
             font-weight: 950;
-            letter-spacing: -0.01em;
-            font-size: 13px;
-            color: rgba(0, 0, 0, 0.7);
-          }
-          .sheetToggle {
-            font-weight: 900;
             border: 1px solid rgba(0, 0, 0, 0.12);
             background: rgba(0, 0, 0, 0.03);
-            border-radius: 999px;
-            padding: 8px 10px;
             cursor: pointer;
+            user-select: none;
           }
-          .sheetBody {
-            padding: 10px 16px 110px; /* ✅ nech nie je pod mobileBar */
-            max-height: 72vh;
-            overflow: auto;
-          }
-          .sheetGrid {
-            display: grid;
-            gap: 12px;
-          }
-          .sheetBlock {
-            border: 1px solid rgba(0, 0, 0, 0.08);
-            border-radius: 14px;
-            padding: 12px;
-            background: rgba(0, 0, 0, 0.015);
-          }
+        }
+
+        /* ✅ Floating controls priamo na canvase */
+        .floatWrap {
+          position: absolute;
+          right: 10px;
+          bottom: 10px;
+          z-index: 20;
+          pointer-events: none; /* dôležité: mimo panelu neblokuj edit */
+        }
+        .floatCard {
+          pointer-events: auto;
+          width: min(320px, calc(100vw - 48px));
+          border-radius: 16px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: rgba(255, 255, 255, 0.92);
+          backdrop-filter: blur(10px);
+          box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
+          overflow: hidden;
+        }
+        .floatHead {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 10px 12px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        }
+        .floatTitle {
+          font-weight: 950;
+          font-size: 12px;
+          color: rgba(0, 0, 0, 0.72);
+          letter-spacing: -0.01em;
+        }
+        .floatToggle {
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: rgba(0, 0, 0, 0.03);
+          border-radius: 999px;
+          padding: 7px 10px;
+          font-weight: 950;
+          cursor: pointer;
+          user-select: none;
+        }
+        .floatBody {
+          padding: 10px 12px 12px;
+          display: grid;
+          gap: 10px;
+        }
+        .pillRow {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .pill {
+          border-radius: 999px;
+          padding: 7px 10px;
+          font-weight: 950;
+          font-size: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: rgba(0, 0, 0, 0.03);
+          cursor: pointer;
+          user-select: none;
+        }
+        .pill.on {
+          background: #111;
+          border-color: #111;
+          color: #fff;
+        }
+
+        .miniRow {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .miniLabel {
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.68);
+        }
+        .miniVal {
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.85);
+          font-variant-numeric: tabular-nums;
+        }
+
+        /* Modal (mobil settings) */
+        .miniModalOverlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, 0.55);
+          display: grid;
+          place-items: center;
+          padding: 16px;
+          z-index: 9998;
+        }
+        .miniModalCard {
+          width: min(520px, 100%);
+          border-radius: 18px;
+          background: #fff;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+          overflow: hidden;
+        }
+        .miniModalHead {
+          padding: 14px 16px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+        }
+        .miniModalTitle {
+          font-weight: 1000;
+          letter-spacing: -0.01em;
+          margin: 0;
+          font-size: 16px;
+        }
+        .miniModalBody {
+          padding: 14px 16px 16px;
+          display: grid;
+          gap: 12px;
         }
 
         .modalOverlay {
@@ -1667,13 +1662,17 @@ export default function Page() {
             <div className="cardHeader">
               <div className="cardTitle">Editor</div>
               <div className="hint">
-                Režim: <b>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode.toUpperCase()}</b>
+                Režim:{" "}
+                <b>
+                  {mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode === "size" ? "VEĽKOSŤ" : mode.toUpperCase()}
+                </b>
               </div>
             </div>
 
             <div className="cardBody">
               <div className="canvasWrap">
-                <div className="toolbar">
+                {/* ✅ Desktop toolbar (ponechané) */}
+                <div className="toolbar desktopOnly">
                   <div className="tabs" role="tablist" aria-label="Režimy">
                     <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
                       Posun
@@ -1683,7 +1682,7 @@ export default function Page() {
                     </button>
                   </div>
 
-                  <div className="row desktopOnly">
+                  <div className="row">
                     <div className="field" style={{ minWidth: 260 }}>
                       <div className="label">Zoom</div>
                       <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
@@ -1697,22 +1696,132 @@ export default function Page() {
                   </div>
                 </div>
 
+                {/* ✅ Mobile inline bar (priamo pri canvase) */}
+                <div className="mobileInlineBar">
+                  <div className="tabs" role="tablist" aria-label="Režimy (mobil)">
+                    <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
+                      Posun
+                    </button>
+                    <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
+                      Otoč 3D
+                    </button>
+                    <button type="button" className={`tab ${mode === "size" ? "active" : ""}`} onClick={() => setMode("size")}>
+                      Veľkosť
+                    </button>
+                  </div>
+
+                  <div className="row" style={{ gap: 8 }}>
+                    <button type="button" className="iconBtn" onClick={() => setMobileSettingsOpen(true)}>
+                      Nastavenia
+                    </button>
+                    <button type="button" className="iconBtn" onClick={snapToGround}>
+                      Zem
+                    </button>
+                    <button type="button" className="iconBtn" onClick={resetAll}>
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
                 <div className="canvasShell">
-                  <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
-                    <canvas
-                      ref={canvasRef}
-                      width={canvasW}
-                      height={canvasH}
-                      style={{
-                        width: `${(canvasW * editorZoom) / 100}px`,
-                        height: `${(canvasH * editorZoom) / 100}px`,
-                        touchAction: "none",
-                      }}
-                      onPointerDown={onPointerDown}
-                      onPointerMove={onPointerMove}
-                      onPointerUp={onPointerUp}
-                      onPointerCancel={onPointerUp}
-                    />
+                  <div className="canvasStage">
+                    <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+                      <canvas
+                        ref={canvasRef}
+                        width={canvasW}
+                        height={canvasH}
+                        style={{
+                          width: `${(canvasW * editorZoom) / 100}px`,
+                          height: `${(canvasH * editorZoom) / 100}px`,
+                          touchAction: "none",
+                        }}
+                        onPointerDown={onPointerDown}
+                        onPointerMove={onPointerMove}
+                        onPointerUp={onPointerUp}
+                        onPointerCancel={onPointerUp}
+                      />
+                    </div>
+
+                    {/* ✅ Floating panel priamo na canvase (mobil) */}
+                    <div className="floatWrap">
+                      <div className="floatCard">
+                        <div className="floatHead">
+                          <div className="floatTitle">Ovládanie</div>
+                          <button type="button" className="floatToggle" onClick={() => setFloatOpen((v) => !v)}>
+                            {floatOpen ? "Skryť" : "Zobraziť"}
+                          </button>
+                        </div>
+
+                        {floatOpen ? (
+                          <div className="floatBody">
+                            {/* Zoom (vždy dostupný) */}
+                            <div className="miniRow">
+                              <div className="miniLabel">Zoom</div>
+                              <div className="miniVal">{editorZoom}%</div>
+                            </div>
+                            <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
+
+                            {/* Režim SIZE: os + slider */}
+                            {mode === "size" ? (
+                              <>
+                                <div className="miniRow" style={{ marginTop: 2 }}>
+                                  <div className="miniLabel">Rozmer</div>
+                                  <div className="miniVal">
+                                    {sizeAxis.toUpperCase()}: {mobileScaleVal.toFixed(1)}%
+                                  </div>
+                                </div>
+
+                                <div className="pillRow" aria-label="Os rozmeru">
+                                  <button type="button" className={`pill ${sizeAxis === "x" ? "on" : ""}`} onClick={() => setSizeAxis("x")}>
+                                    X
+                                  </button>
+                                  <button type="button" className={`pill ${sizeAxis === "y" ? "on" : ""}`} onClick={() => setSizeAxis("y")}>
+                                    Y
+                                  </button>
+                                  <button type="button" className={`pill ${sizeAxis === "z" ? "on" : ""}`} onClick={() => setSizeAxis("z")}>
+                                    Z
+                                  </button>
+                                </div>
+
+                                <div className="miniRow" style={{ gap: 8 }}>
+                                  <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, -SCALE_STEP)} aria-label="Zmenšiť">
+                                    −
+                                  </button>
+                                  <input
+                                    className="range range--big"
+                                    type="range"
+                                    min={SCALE_MIN}
+                                    max={SCALE_MAX}
+                                    step={SCALE_STEP}
+                                    value={mobileScaleVal}
+                                    disabled={loading}
+                                    onChange={(e) => setScaleAxis(sizeAxis, Number(e.target.value))}
+                                    aria-label="Rozmer"
+                                  />
+                                  <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, SCALE_STEP)} aria-label="Zväčšiť">
+                                    +
+                                  </button>
+                                </div>
+
+                                <div className="note" style={{ marginTop: 4 }}>
+                                  Tip: v režime <b>Veľkosť</b> stále môžeš pergolu prstom posúvať.
+                                </div>
+                              </>
+                            ) : null}
+
+                            {/* Režim ROTATE: rýchle reset */}
+                            {mode === "rotate3d" ? (
+                              <div className="row" style={{ justifyContent: "space-between", marginTop: 2 }}>
+                                <div className="note">Tip: ťah prstom = otočenie</div>
+                                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetRotation}>
+                                  Reset rotácie
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1796,7 +1905,7 @@ export default function Page() {
             </div>
           </div>
 
-          {/* RIGHT sticky */}
+          {/* RIGHT sticky (desktop only) */}
           <div className="card sticky desktopOnly">
             <div className="cardHeader">
               <div className="cardTitle">Ovládanie</div>
@@ -1872,7 +1981,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Mobile action bar */}
+      {/* ✅ Mobile action bar (dole) */}
       <div className="mobileBar">
         <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
           {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
@@ -1883,88 +1992,66 @@ export default function Page() {
         </button>
       </div>
 
-      {/* Mobile bottom-sheet */}
-      <div className="sheet" aria-hidden={!isMobileRef.current}>
+      {/* ✅ Mobile settings modal (upload + typ) */}
+      {mobileSettingsOpen ? (
         <div
-          className="sheetCard"
-          style={{
-            transform: `translateY(${sheetY}px)`,
-            transition: sheetDragRef.current.dragging ? "none" : "transform 220ms ease",
+          className="miniModalOverlay"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={(ev) => {
+            if (ev.target === ev.currentTarget) setMobileSettingsOpen(false);
           }}
         >
-          <div className="sheetHandleRow" onPointerDown={onHandlePointerDown} onPointerMove={onHandlePointerMove} onPointerUp={onHandlePointerUp} onPointerCancel={onHandlePointerUp}>
-            <div className="handle" />
-            <div className="sheetTopLine">
-              <div className="sheetTitle">Nastavenia (typ / zoom / rozmery)</div>
-              <button type="button" className="sheetToggle" onClick={() => (sheetOpen ? closeSheet() : openSheet())}>
-                {sheetOpen ? "Zavrieť" : "Otvoriť"}
+          <div className="miniModalCard">
+            <div className="miniModalHead">
+              <p className="miniModalTitle">Nastavenia</p>
+              <button type="button" className="ter-btn ter-btn--ghost" onClick={() => setMobileSettingsOpen(false)}>
+                ✕
               </button>
             </div>
-          </div>
 
-          {/* ✅ FIX: body je vždy renderovaný (slidre nezmiznú), viditeľnosť rieši translateY */}
-          <div className="sheetBody">
-            {error ? <div className="errorBox">Chyba: {error}</div> : null}
+            <div className="miniModalBody">
+              {error ? <div className="errorBox">Chyba: {error}</div> : null}
 
-            <div className="sheetGrid">
-              <div className="sheetBlock">
-                <div className="sectionTitle">Fotka</div>
-                <div className="field">
-                  <div className="label">Nahraj</div>
-                  <input
-                    className="input"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setBgFile(f);
-                      setError("");
-                    }}
-                  />
-                </div>
+              <div className="field">
+                <div className="label">Fotka (podklad)</div>
+                <input
+                  className="input"
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setBgFile(f);
+                    setError("");
+                  }}
+                />
               </div>
 
-              <div className="sheetBlock">
-                <div className="sectionTitle">Typ (pre ďalšiu generáciu)</div>
-                <div className="field">
-                  <div className="label">Vyber</div>
-                  <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                    <option value="bioklim">Bioklimatická pergola</option>
-                    <option value="pevna">Pergola s pevnou strechou</option>
-                    <option value="zimna">Zimná záhrada</option>
-                  </select>
-                </div>
+              <div className="field">
+                <div className="label">Typ (pre ďalšiu generáciu)</div>
+                <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
+                  <option value="bioklim">Bioklimatická pergola</option>
+                  <option value="pevna">Pergola s pevnou strechou</option>
+                  <option value="zimna">Zimná záhrada</option>
+                </select>
               </div>
 
-              <div className="sheetBlock">
-                <div className="sectionTitle">Zoom</div>
-                <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-              </div>
-
-              <div className="sheetBlock">
-                <div className="sectionTitle">Rozmery (1% – 200%)</div>
-                <div className="scaleBlock">
-                  <ScaleRow label="X" axis="x" value={scalePct.x} />
-                  <ScaleRow label="Y" axis="y" value={scalePct.y} />
-                  <ScaleRow label="Z" axis="z" value={scalePct.z} />
-                </div>
-              </div>
-
-              <div className="sheetBlock">
+              <div className="row" style={{ justifyContent: "space-between" }}>
                 <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
                   Reset
                 </button>
+                <button type="button" className="ter-btn" onClick={() => setMobileSettingsOpen(false)}>
+                  Hotovo
+                </button>
               </div>
 
-              <div className="sheetBlock">
-                <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                  Stiahnuť všetky ({variants.length})
-                </button>
+              <div className="note">
+                Tip: režim <b>Veľkosť</b> otvorí slidre priamo na obrázku (floating panel).
               </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : null}
 
       {/* Lead modal */}
       {leadOpen ? (
