@@ -5,8 +5,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "resize";
 type Vec2 = { x: number; y: number };
-
 type HandleId = "nw" | "ne" | "se" | "sw";
+
 const HANDLE_R = 9;
 const HANDLE_HIT = 18;
 
@@ -32,14 +32,6 @@ function dist(a: Vec2, b: Vec2) {
   const dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-function lineYAtX(a: Vec2, b: Vec2, x: number) {
-  if (Math.abs(b.x - a.x) < 1e-6) return (a.y + b.y) / 2;
-  const t = (x - a.x) / (b.x - a.x);
-  return lerp(a.y, b.y, t);
-}
 function roundToStep(v: number, step = SCALE_STEP) {
   return Math.round(v / step) * step;
 }
@@ -56,6 +48,13 @@ function typeLabel(t: PergolaType) {
   if (t === "pevna") return "Pergola s pevnou strechou";
   return "Zimná záhrada";
 }
+function makeId() {
+  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
+}
+async function b64PngToBlob(b64: string): Promise<Blob> {
+  const r = await fetch(`data:image/png;base64,${b64}`);
+  return await r.blob();
+}
 
 type VariantItem = {
   id: string;
@@ -64,58 +63,54 @@ type VariantItem = {
   createdAt: number;
 };
 
-function makeId() {
-  return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
-}
-
-async function b64PngToBlob(b64: string): Promise<Blob> {
-  const r = await fetch(`data:image/png;base64,${b64}`);
-  return await r.blob();
-}
+type Panel = "zoom" | "x" | "y" | "z";
 
 export default function Page() {
-  // ======================
-  // RESPONSIVE CANVAS SIZE
-  // ======================
+  // ========= Responsive canvas size =========
   const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 980, h: 560 });
   const canvasW = canvasSize.w;
   const canvasH = canvasSize.h;
 
   const isMobileRef = useRef(false);
-
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 960px)");
-
-    const compute = () => {
+    const apply = () => {
       isMobileRef.current = mq.matches;
 
-      // dostupná šírka (padding 16px na každej strane)
-      const availW = Math.max(320, Math.floor(window.innerWidth - 32));
-      const maxW = Math.min(980, availW);
-
-      // zachovaj pomer 980x560
-      const h = Math.max(240, Math.round((maxW * 560) / 980));
-
-      setCanvasSize({ w: maxW, h });
+      // Mobile: väčšie okno editora + pomer viac "portrait friendly"
+      if (mq.matches) {
+        const vw = Math.max(320, Math.min(980, window.innerWidth - 32));
+        const h = Math.round(vw * 0.78); // vyššie okno
+        setCanvasSize({ w: Math.round(vw), h });
+      } else {
+        setCanvasSize({ w: 980, h: 560 });
+      }
     };
-
-    compute();
-    window.addEventListener("resize", compute);
-    mq.addEventListener?.("change", compute);
-
+    apply();
+    mq.addEventListener?.("change", apply);
+    window.addEventListener("resize", apply);
     return () => {
-      window.removeEventListener("resize", compute);
-      mq.removeEventListener?.("change", compute);
+      mq.removeEventListener?.("change", apply);
+      window.removeEventListener("resize", apply);
     };
   }, []);
 
-  // ======================
-  // BACKGROUND + SETTINGS
-  // ======================
+  // ========= Background =========
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
   const [bgImg, setBgImg] = useState<HTMLImageElement | null>(null);
 
+  useEffect(() => {
+    if (!bgUrl) {
+      setBgImg(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setBgImg(img);
+    img.src = bgUrl;
+  }, [bgUrl]);
+
+  // ========= Model type =========
   const [pergolaType, setPergolaType] = useState<PergolaType>("bioklim");
   const glbPath = useMemo(() => {
     if (pergolaType === "bioklim") return "/models/bioklim.glb";
@@ -123,45 +118,44 @@ export default function Page() {
     return "/models/zimna.glb";
   }, [pergolaType]);
 
+  // ========= Editor state =========
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [mode, setMode] = useState<Mode>("move");
+  const [panel, setPanel] = useState<Panel>("zoom");
 
   const [editorZoom, setEditorZoom] = useState(100);
 
-  const [mode, setMode] = useState<Mode>("move");
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
-  // optional (funkcia ostáva, UI tlačidlá sme odstránili)
-  const [groundA, setGroundA] = useState<Vec2 | null>(null);
-  const [groundB, setGroundB] = useState<Vec2 | null>(null);
+  // Default menšia pergola na mobile, aby bola celá viditeľná
+  useEffect(() => {
+    if (!isMobileRef.current) return;
+    setScalePct({ x: 82, y: 82, z: 82 });
+    setPos({ x: 0.5, y: 0.72 });
+    setRot3D({ yaw: 0.35, pitch: -0.12 });
+    setRot2D(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [glbPath]);
 
   const [bboxRect, setBboxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
 
-  // three.js refs
-  const threeReadyRef = useRef(false);
-  const rendererRef = useRef<any>(null);
-  const sceneRef = useRef<any>(null);
-  const cameraRef = useRef<any>(null);
-  const rootRef = useRef<any>(null);
-  const baseScaleRef = useRef<number>(1);
-
   const [prompt] = useState(FINAL_PROMPT_DEFAULT);
 
-  // variants (max 6)
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // lead gating
+  // ========= Lead gating =========
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
-
   const [pendingAction, setPendingAction] = useState<{ kind: "single"; index: number } | { kind: "all" } | null>(null);
 
   const [lead, setLead] = useState({
@@ -186,36 +180,21 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // ======================
-  // SLIDER PANEL SELECTION
-  // ======================
-  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
+  // ========= Helpers =========
+  function bumpScaleAxis(axis: "x" | "y" | "z", delta: number) {
+    setScalePct((prev) => ({ ...prev, [axis]: clampPct(prev[axis] + delta) }));
+  }
+  function setScaleAxis(axis: "x" | "y" | "z", value: number) {
+    setScalePct((prev) => ({ ...prev, [axis]: clampPct(value) }));
+  }
 
-  // ======================
-  // MOBILE: start smaller pergola
-  // ======================
-  useEffect(() => {
-    if (!isMobileRef.current) return;
-
-    // menšia na mobile, aby bola celá viditeľná hneď
-    setScalePct({ x: 75, y: 75, z: 75 });
-    setPos({ x: 0.5, y: 0.78 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // background image load
-  useEffect(() => {
-    if (!bgUrl) {
-      setBgImg(null);
-      return;
-    }
-    const img = new Image();
-    img.onload = () => setBgImg(img);
-    img.src = bgUrl;
-  }, [bgUrl]);
-
-  const selectedVariant = variants[selectedVariantIndex] || null;
-  const remaining = Math.max(0, MAX_VARIANTS - variants.length);
+  function resetAll() {
+    setScalePct(isMobileRef.current ? { x: 82, y: 82, z: 82 } : { x: 100, y: 100, z: 100 });
+    setRot3D({ yaw: 0.35, pitch: -0.12 });
+    setRot2D(0);
+    setPos({ x: 0.5, y: 0.72 });
+    setError("");
+  }
 
   function toCanvasXY(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current!;
@@ -223,10 +202,6 @@ export default function Page() {
     const x = ((e.clientX - rect.left) * canvasW) / rect.width;
     const y = ((e.clientY - rect.top) * canvasH) / rect.height;
     return { x, y };
-  }
-
-  function computeProjectedRect() {
-    return bboxRect;
   }
 
   function hitHandle(p: Vec2, r: { x: number; y: number; w: number; h: number }) {
@@ -242,42 +217,15 @@ export default function Page() {
     return null;
   }
 
-  function snapToGround() {
-    // funkcia zostáva, ale tlačidlá sme odstránili
-    if (!groundA || !groundB || !bboxRect) return;
+  // ========= Three.js refs =========
+  const threeReadyRef = useRef(false);
+  const rendererRef = useRef<any>(null);
+  const sceneRef = useRef<any>(null);
+  const cameraRef = useRef<any>(null);
+  const rootRef = useRef<any>(null);
+  const baseScaleRef = useRef<number>(1);
 
-    const leftX = bboxRect.x;
-    const rightX = bboxRect.x + bboxRect.w;
-
-    const yL = lineYAtX(groundA, groundB, leftX);
-    const yR = lineYAtX(groundA, groundB, rightX);
-    const yMid = (yL + yR) / 2;
-
-    const bottom = bboxRect.y + bboxRect.h;
-    const dyPx = yMid - bottom;
-    const dyNorm = dyPx / canvasH;
-
-    setPos((p) => ({ ...p, y: p.y + dyNorm }));
-  }
-
-  function setScaleAxis(axis: "x" | "y" | "z", value: number) {
-    setScalePct((prev) => ({ ...prev, [axis]: clampPct(value) }));
-  }
-
-  function resetAll() {
-    setScalePct(isMobileRef.current ? { x: 75, y: 75, z: 75 } : { x: 100, y: 100, z: 100 });
-    setRot3D({ yaw: 0.35, pitch: -0.12 });
-    setRot2D(0);
-    setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
-    setGroundA(null);
-    setGroundB(null);
-    setError("");
-    setPanel("zoom");
-  }
-
-  // ======================
-  // THREE INIT / RELOAD
-  // ======================
+  // init / reload three when model changes
   useEffect(() => {
     let cancelled = false;
 
@@ -361,7 +309,7 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, groundA, groundB]);
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct]);
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -390,18 +338,17 @@ export default function Page() {
 
     ctx.clearRect(0, 0, canvasW, canvasH);
 
-    // ✅ Fotka vždy vyplní celé okno (cover), aby nebol biely pás
+    // === Background (COVER on mobile & desktop to avoid white bars) ===
     if (bgImg) {
-      const cw = canvasW;
-      const ch = canvasH;
-      const iw = bgImg.width;
-      const ih = bgImg.height;
+      const rw = canvasW / bgImg.width;
+      const rh = canvasH / bgImg.height;
 
-      const r = Math.max(cw / iw, ch / ih); // cover
-      const dw = iw * r;
-      const dh = ih * r;
-      const dx = (cw - dw) / 2;
-      const dy = (ch - dh) / 2;
+      // COVER (vyplň celé okno, orež prebytok)
+      const r = Math.max(rw, rh);
+      const dw = bgImg.width * r;
+      const dh = bgImg.height * r;
+      const dx = (canvasW - dw) / 2;
+      const dy = (canvasH - dh) / 2;
 
       ctx.drawImage(bgImg, dx, dy, dw, dh);
     } else {
@@ -412,17 +359,7 @@ export default function Page() {
       ctx.fillText("Nahraj fotku (JPG/PNG)", 18, 28);
     }
 
-    if (groundA && groundB) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(0,140,110,0.9)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(groundA.x, groundA.y);
-      ctx.lineTo(groundB.x, groundB.y);
-      ctx.stroke();
-      ctx.restore();
-    }
-
+    // === Render 3D ===
     if (threeReadyRef.current && rendererRef.current && sceneRef.current && cameraRef.current && rootRef.current) {
       const renderer = rendererRef.current;
       const scene = sceneRef.current;
@@ -435,6 +372,7 @@ export default function Page() {
       const glCanvas = renderer.domElement;
       ctx.drawImage(glCanvas, 0, 0);
 
+      // bbox for resize handles
       try {
         const gl = renderer.getContext();
         const pixels = new Uint8Array(canvasW * canvasH * 4);
@@ -484,15 +422,14 @@ export default function Page() {
           for (const id of Object.keys(corners) as HandleId[]) {
             const c = corners[id];
             ctx.beginPath();
-            ctx.fillStyle = "rgba(255,255,255,0.9)";
+            ctx.fillStyle = "rgba(255,255,255,0.92)";
             ctx.arc(c.x, c.y, 11, 0, Math.PI * 2);
             ctx.fill();
             ctx.beginPath();
-            ctx.fillStyle = "rgba(0,0,0,0.65)";
+            ctx.fillStyle = "rgba(0,0,0,0.72)";
             ctx.arc(c.x, c.y, HANDLE_R, 0, Math.PI * 2);
             ctx.fill();
           }
-
           ctx.restore();
         } else {
           setBboxRect(null);
@@ -501,9 +438,125 @@ export default function Page() {
     }
   }
 
-  // ======================
-  // GENERATE
-  // ======================
+  // ========= One-finger canvas edit =========
+  const dragRef = useRef<{
+    active: boolean;
+    start: Vec2;
+    startPos: Vec2;
+    startRot3D: { yaw: number; pitch: number };
+    startRot2D: number;
+    startScalePct: { x: number; y: number; z: number };
+    handle: HandleId | null;
+    modeAtDown: Mode;
+  }>({
+    active: false,
+    start: { x: 0, y: 0 },
+    startPos: { x: 0.5, y: 0.72 },
+    startRot3D: { yaw: 0.35, pitch: -0.12 },
+    startRot2D: 0,
+    startScalePct: { x: 100, y: 100, z: 100 },
+    handle: null,
+    modeAtDown: "move",
+  });
+
+  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
+    const p = toCanvasXY(e);
+
+    // vždy blokuj scroll pri editovaní
+    e.preventDefault();
+    (e.currentTarget as any).setPointerCapture(e.pointerId);
+
+    const rect = bboxRect;
+    if (rect) {
+      const h = hitHandle(p, rect);
+      if (h) {
+        setMode("resize");
+        setActiveHandle(h);
+        dragRef.current = {
+          active: true,
+          start: p,
+          startPos: pos,
+          startRot3D: rot3D,
+          startRot2D: rot2D,
+          startScalePct: scalePct,
+          handle: h,
+          modeAtDown: "resize",
+        };
+        return;
+      }
+    }
+
+    dragRef.current = {
+      active: true,
+      start: p,
+      startPos: pos,
+      startRot3D: rot3D,
+      startRot2D: rot2D,
+      startScalePct: scalePct,
+      handle: null,
+      modeAtDown: mode,
+    };
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!dragRef.current.active) return;
+    e.preventDefault();
+
+    const p = toCanvasXY(e);
+    const dx = p.x - dragRef.current.start.x;
+    const dy = p.y - dragRef.current.start.y;
+
+    const currentMode = dragRef.current.modeAtDown;
+
+    if (currentMode === "move") {
+      const nx = dragRef.current.startPos.x + dx / canvasW;
+      const ny = dragRef.current.startPos.y + dy / canvasH;
+      setPos({ x: clamp(nx, 0, 1), y: clamp(ny, 0, 1) });
+      return;
+    }
+
+    if (currentMode === "rotate3d") {
+      const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
+      const pitch = dragRef.current.startRot3D.pitch + dy * 0.01;
+      setRot3D({ yaw, pitch: clamp(pitch, -1.25, 1.25) });
+      return;
+    }
+
+    if (currentMode === "resize") {
+      const rect = bboxRect;
+      if (!rect || !dragRef.current.handle) return;
+
+      const start = dragRef.current.start;
+      const handle = dragRef.current.handle;
+
+      const sx = handle === "ne" || handle === "se" ? 1 : -1;
+      const sy = handle === "sw" || handle === "se" ? 1 : -1;
+
+      const dx2 = (p.x - start.x) * sx;
+      const dy2 = (p.y - start.y) * sy;
+
+      const newW = clamp(rect.w + dx2, 40, canvasW);
+      const newH = clamp(rect.h + dy2, 40, canvasH);
+
+      const wRatio = newW / rect.w;
+      const hRatio = newH / rect.h;
+
+      const nextX = clampPct(dragRef.current.startScalePct.x * wRatio);
+      const nextY = clampPct(dragRef.current.startScalePct.y * hRatio);
+
+      setScalePct((s2) => ({ ...s2, x: nextX, y: nextY }));
+      return;
+    }
+  }
+
+  function onPointerUp() {
+    if (!dragRef.current.active) return;
+    dragRef.current.active = false;
+    setActiveHandle(null);
+    if (mode === "resize") setMode("move");
+  }
+
+  // ========= Generate =========
   async function generate() {
     if (!bgImg) return;
     if (variants.length >= MAX_VARIANTS) return;
@@ -512,6 +565,7 @@ export default function Page() {
     setError("");
 
     try {
+      // --- EXPORT pre OpenAI: downscale + JPEG ---
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -561,8 +615,7 @@ export default function Page() {
 
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
-        return next;
+        return [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
       });
 
       setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
@@ -709,131 +762,11 @@ export default function Page() {
     setLeadOpen(true);
   }
 
-  // ===========================
-  // ✅ 1 PRST = VŽDY EDIT CANVAS
-  // ===========================
-  const dragRef = useRef<{
-    active: boolean;
-    start: Vec2;
-    startPos: Vec2;
-    startRot3D: { yaw: number; pitch: number };
-    startRot2D: number;
-    startScalePct: { x: number; y: number; z: number };
-    handle: HandleId | null;
-    modeAtDown: Mode;
-  }>({
-    active: false,
-    start: { x: 0, y: 0 },
-    startPos: { x: 0.5, y: 0.72 },
-    startRot3D: { yaw: 0.35, pitch: -0.12 },
-    startRot2D: 0,
-    startScalePct: { x: 100, y: 100, z: 100 },
-    handle: null,
-    modeAtDown: "move",
-  });
+  // ========= UI helpers =========
+  const selectedVariant = variants[selectedVariantIndex] || null;
+  const remaining = Math.max(0, MAX_VARIANTS - variants.length);
+  const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    const p = toCanvasXY(e);
-
-    // zablokuj scroll len pri canvas-e
-    e.preventDefault();
-    (e.currentTarget as any).setPointerCapture(e.pointerId);
-
-    const rect = computeProjectedRect();
-    if (rect) {
-      const h = hitHandle(p, rect);
-      if (h) {
-        setMode("resize");
-        setActiveHandle(h);
-        dragRef.current = {
-          active: true,
-          start: p,
-          startPos: pos,
-          startRot3D: rot3D,
-          startRot2D: rot2D,
-          startScalePct: scalePct,
-          handle: h,
-          modeAtDown: "resize",
-        };
-        return;
-      }
-    }
-
-    dragRef.current = {
-      active: true,
-      start: p,
-      startPos: pos,
-      startRot3D: rot3D,
-      startRot2D: rot2D,
-      startScalePct: scalePct,
-      handle: null,
-      modeAtDown: mode,
-    };
-  }
-
-  function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (!dragRef.current.active) return;
-
-    e.preventDefault();
-
-    const p = toCanvasXY(e);
-    const dx = p.x - dragRef.current.start.x;
-    const dy = p.y - dragRef.current.start.y;
-
-    const currentMode = dragRef.current.modeAtDown;
-
-    if (currentMode === "move") {
-      const nx = dragRef.current.startPos.x + dx / canvasW;
-      const ny = dragRef.current.startPos.y + dy / canvasH;
-      setPos({ x: clamp(nx, 0, 1), y: clamp(ny, 0, 1) });
-      return;
-    }
-
-    if (currentMode === "rotate3d") {
-      const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
-      const pitch = dragRef.current.startRot3D.pitch + dy * 0.01;
-      setRot3D({ yaw, pitch: clamp(pitch, -1.25, 1.25) });
-      return;
-    }
-
-    if (currentMode === "resize") {
-      const rect = bboxRect;
-      if (!rect || !dragRef.current.handle) return;
-
-      const start = dragRef.current.start;
-      const handle = dragRef.current.handle;
-
-      const sx = handle === "ne" || handle === "se" ? 1 : -1;
-      const sy = handle === "sw" || handle === "se" ? 1 : -1;
-
-      const dx2 = (p.x - start.x) * sx;
-      const dy2 = (p.y - start.y) * sy;
-
-      const newW = clamp(rect.w + dx2, 40, canvasW);
-      const newH = clamp(rect.h + dy2, 40, canvasH);
-
-      const wRatio = newW / rect.w;
-      const hRatio = newH / rect.h;
-
-      const nextX = clampPct(dragRef.current.startScalePct.x * wRatio);
-      const nextY = clampPct(dragRef.current.startScalePct.y * hRatio);
-
-      setScalePct((s) => ({ ...s, x: nextX, y: nextY }));
-      return;
-    }
-  }
-
-  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (!dragRef.current.active) return;
-    dragRef.current.active = false;
-    setActiveHandle(null);
-
-    if (mode === "resize") setMode("move");
-  }
-
-  // ======================
-  // UI COMPONENTS
-  // ======================
   function Stepper() {
     const hasAnyVariant = variants.length > 0;
     const current = !bgImg ? 1 : !hasAnyVariant ? 2 : !leadSubmitted ? 4 : 5;
@@ -850,13 +783,13 @@ export default function Page() {
       <div className="ter-stepper stepperWrap" aria-label="Postup">
         <div className="stepperBar">
           <div className="stepperTrack" aria-hidden="true" />
-          {steps.map((s) => {
-            const on = current >= s.n;
-            const active = current === s.n;
+          {steps.map((s2) => {
+            const on = current >= s2.n;
+            const active = current === s2.n;
             return (
-              <div className="stepItem" key={s.n}>
-                <div className={`stepCircle ${on ? "on" : ""} ${active ? "active" : ""}`}>{s.n}</div>
-                <div className={`stepText ${active ? "active" : ""}`}>{s.text}</div>
+              <div className="stepItem" key={s2.n}>
+                <div className={`stepCircle ${on ? "on" : ""} ${active ? "active" : ""}`}>{s2.n}</div>
+                <div className={`stepText ${active ? "active" : ""}`}>{s2.text}</div>
               </div>
             );
           })}
@@ -865,206 +798,76 @@ export default function Page() {
     );
   }
 
-  function SliderBlock(props: {
-  title: string;
-  valueLabel: string;
-  min: number;
-  max: number;
-  step: number;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  const { title, valueLabel, min, max, step, value, onChange } = props;
-function CustomSlider({
-  min,
-  max,
-  step,
-  value,
-  onChange,
-  ariaLabel,
-}: {
-  min: number;
-  max: number;
-  step: number;
-  value: number;
-  onChange: (v: number) => void;
-  ariaLabel: string;
-}) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const draggingRef = useRef(false);
+  function SliderRow(props: {
+    title: string;
+    valueLabel: string;
+    min: number;
+    max: number;
+    step: number;
+    value: number;
+    onChange: (v: number) => void;
+  }) {
+    const { title, valueLabel, min, max, step, value, onChange } = props;
 
-  const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
-
-  const snap = (v: number) => {
-    const s = step > 0 ? step : 1;
-    const snapped = Math.round(v / s) * s;
-    // fix floating errors
-    return Number(snapped.toFixed(6));
-  };
-
-  const setFromClientX = (clientX: number) => {
-    const el = trackRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const t = clamp01((clientX - r.left) / Math.max(1, r.width));
-    const raw = min + t * (max - min);
-    const next = snap(raw);
-    onChange(Math.max(min, Math.min(max, next)));
-  };
-
-  const pct = ((value - min) / Math.max(1e-9, max - min)) * 100;
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gap: 8,
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        touchAction: "none", // tu chceme úplnú kontrolu
-      }}
-      aria-label={ariaLabel}
-    >
-      <div
-        ref={trackRef}
-        onPointerDown={(e) => {
-          e.preventDefault();
-          draggingRef.current = true;
-          (e.currentTarget as any).setPointerCapture(e.pointerId);
-          setFromClientX(e.clientX);
-        }}
-        onPointerMove={(e) => {
-          if (!draggingRef.current) return;
-          e.preventDefault();
-          setFromClientX(e.clientX);
-        }}
-        onPointerUp={(e) => {
-          if (!draggingRef.current) return;
-          e.preventDefault();
-          draggingRef.current = false;
-          try {
-            (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
-          } catch {}
-        }}
-        onPointerCancel={(e) => {
-          draggingRef.current = false;
-          try {
-            (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
-          } catch {}
-        }}
-        role="slider"
-        aria-valuemin={min}
-        aria-valuemax={max}
-        aria-valuenow={value}
-        tabIndex={0}
-        onKeyDown={(e) => {
-          const s = step > 0 ? step : 1;
-          if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-            e.preventDefault();
-            onChange(Math.max(min, snap(value - s)));
-          }
-          if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-            e.preventDefault();
-            onChange(Math.min(max, snap(value + s)));
-          }
-          if (e.key === "Home") {
-            e.preventDefault();
-            onChange(min);
-          }
-          if (e.key === "End") {
-            e.preventDefault();
-            onChange(max);
-          }
-        }}
-        style={{
-          height: 44,
-          borderRadius: 999,
-          background: "rgba(0,0,0,0.14)",
-          position: "relative",
-          padding: "0 14px",
-          display: "flex",
-          alignItems: "center",
-        }}
-      >
-        {/* filled */}
-        <div
-          style={{
-            position: "absolute",
-            left: 14,
-            right: 14,
-            height: 12,
-            borderRadius: 999,
-            background: "rgba(0,0,0,0.18)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              width: `${pct}%`,
-              background: "rgba(0,0,0,0.55)",
-            }}
-          />
+    return (
+      <div className="sliderRow">
+        <div className="sliderTop">
+          <div className="sliderTitle">{title}</div>
+          <div className="sliderValue">{valueLabel}</div>
         </div>
 
-        {/* thumb */}
-        <div
-          style={{
-            position: "absolute",
-            left: `calc(14px + (${pct}% * (100% - 28px) / 100))`,
-            transform: "translateX(-50%)",
-            width: 26,
-            height: 26,
-            borderRadius: 999,
-            background: "#111",
-            boxShadow: "0 10px 24px rgba(0,0,0,0.18)",
-            border: "2px solid rgba(255,255,255,0.9)",
-          }}
+        {/* NATÍVNY RANGE – ťahanie prstom funguje */}
+        <input
+          className="range range--big"
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
         />
       </div>
-    </div>
-  );
-}
-
-  return (
-    <div className="sliderPanel">
-      <div className="sliderTitle">{title}</div>
-      <div className="sliderRow" style={{ alignItems: "center" }}>
-        <div style={{ flex: "1 1 auto" }}>
-          <CustomSlider min={min} max={max} step={step} value={value} onChange={onChange} ariaLabel={title} />
-        </div>
-        <div className="sliderVal">{valueLabel}</div>
-      </div>
-    </div>
-  );
-}
-
-
-  const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
+    );
+  }
 
   return (
     <section className="ter-wrap">
-      {/* ✅ Range styling: drag musí fungovať na mobile + viditeľnosť na desktope */}
+      {/* Range styling (thumb/track viditeľné na desktope aj mobile) */}
       <style jsx global>{`
-        .ter-wrap :global(input.rangeBig) {
+        .ter-wrap :global(input.range--big) {
           width: 100%;
-          height: 42px;
-          accent-color: #111; /* najspoľahlivejšie pre drag (Safari/Chrome) */
-          touch-action: pan-x; /* umožní ťahanie prstom */
+          height: 44px;
+          accent-color: #111;
+          background: transparent;
+          touch-action: pan-x;
         }
-        /* zlepšenie viditeľnosti aj keď accent-color nestačí */
-        .ter-wrap :global(input.rangeBig::-webkit-slider-runnable-track) {
-          height: 12px;
+        .ter-wrap :global(input.range--big::-webkit-slider-runnable-track) {
+          height: 10px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.22);
+          background: rgba(0, 0, 0, 0.18);
         }
-        .ter-wrap :global(input.rangeBig::-webkit-slider-thumb) {
-          appearance: auto;
-        }
-        .ter-wrap :global(input.rangeBig::-moz-range-track) {
-          height: 12px;
+        .ter-wrap :global(input.range--big::-webkit-slider-thumb) {
+          -webkit-appearance: none;
+          width: 24px;
+          height: 24px;
+          margin-top: -7px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.22);
+          background: #111;
+          border: 2px solid #fff;
+          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+        }
+        .ter-wrap :global(input.range--big::-moz-range-track) {
+          height: 10px;
+          border-radius: 999px;
+          background: rgba(0, 0, 0, 0.18);
+        }
+        .ter-wrap :global(input.range--big::-moz-range-thumb) {
+          width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          background: #111;
+          border: 2px solid #fff;
+          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
         }
       `}</style>
 
@@ -1145,7 +948,7 @@ function CustomSlider({
         .ter-wrap {
           background: #f6f6f6;
           color: #111;
-          padding: 40px 16px;
+          padding: 28px 16px 46px;
           font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto;
         }
         .container {
@@ -1155,97 +958,19 @@ function CustomSlider({
         .hero {
           display: grid;
           gap: 10px;
-          margin-bottom: 14px;
+          margin-bottom: 10px;
         }
         h2 {
           margin: 0;
-          font-size: 34px;
+          font-size: 32px;
           line-height: 1.15;
           letter-spacing: -0.02em;
         }
         .sub {
           margin: 0;
           color: rgba(0, 0, 0, 0.7);
-          font-size: 16px;
+          font-size: 15px;
           max-width: 110ch;
-        }
-
-        .topBars {
-          display: grid;
-          gap: 10px;
-          margin: 12px 0 12px;
-        }
-        .bar {
-          background: #fff;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          border-radius: 16px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
-          padding: 10px;
-        }
-        .barRow {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-        .barLeft {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          align-items: center;
-        }
-        .barRight {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          margin-left: auto;
-        }
-
-        .btn {
-          border-radius: 12px;
-          padding: 10px 12px;
-          font-weight: 950;
-          cursor: pointer;
-          border: 1px solid rgba(0, 0, 0, 0.14);
-          background: #fff;
-          color: #111;
-          white-space: nowrap;
-        }
-        .btn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-        }
-        .btnActive {
-          background: rgba(0, 0, 0, 0.06);
-          border-color: rgba(0, 0, 0, 0.18);
-        }
-        .btnPrimary {
-          background: #111;
-          color: #fff;
-          border-color: #111;
-        }
-        .btnPrimary:disabled {
-          opacity: 0.55;
-        }
-
-        .fileBtn {
-          position: relative;
-          overflow: hidden;
-        }
-        .fileBtn input {
-          position: absolute;
-          inset: 0;
-          opacity: 0;
-          cursor: pointer;
-        }
-
-        .select {
-          padding: 10px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          font-weight: 800;
         }
 
         .card {
@@ -1256,26 +981,83 @@ function CustomSlider({
           overflow: hidden;
         }
 
-        .cardHeader {
-          padding: 14px 16px;
+        .topBars {
+          display: grid;
+          gap: 10px;
+          padding: 12px;
           border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+          background: rgba(0, 0, 0, 0.015);
+        }
+
+        .bar {
           display: flex;
-          justify-content: space-between;
           align-items: center;
-          gap: 12px;
+          gap: 10px;
+          flex-wrap: wrap;
         }
-        .cardTitle {
-          font-size: 16px;
-          font-weight: 950;
-          letter-spacing: -0.01em;
+
+        .barGroup {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
         }
-        .hint {
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.55);
-          font-weight: 700;
+
+        .barRight {
+          margin-left: auto;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
         }
-        .cardBody {
-          padding: 14px 16px;
+
+        .btn {
+          border-radius: 12px;
+          padding: 10px 12px;
+          font-weight: 900;
+          cursor: pointer;
+          border: 1px solid rgba(0, 0, 0, 0.14);
+          background: #fff;
+          color: #111;
+          font-size: 13px;
+        }
+        .btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+        .btnPrimary {
+          background: #111;
+          color: #fff;
+          border-color: #111;
+        }
+        .btnAccent {
+          background: #0f172a;
+          color: #fff;
+          border-color: #0f172a;
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
+        }
+        .btnSoft {
+          background: rgba(0, 0, 0, 0.03);
+          border-color: rgba(0, 0, 0, 0.12);
+          color: #111;
+        }
+        .btnActive {
+          outline: 3px solid rgba(0, 0, 0, 0.85);
+          outline-offset: 0;
+        }
+
+        .select {
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          font-weight: 800;
+          color: #111;
+        }
+
+        .canvasArea {
+          padding: 12px;
         }
 
         .canvasShell {
@@ -1292,35 +1074,48 @@ function CustomSlider({
         }
 
         .sliderPanel {
-          margin-top: 10px;
-          display: grid;
-          gap: 6px;
-        }
-        .sliderTitle {
-          font-size: 12px;
-          font-weight: 950;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-          color: rgba(0, 0, 0, 0.6);
+          padding: 0 12px 12px;
         }
         .sliderRow {
-          display: flex;
-          gap: 10px;
-          align-items: center;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          border-radius: 14px;
+          padding: 12px;
+          background: rgba(0, 0, 0, 0.015);
         }
-        .sliderVal {
-          width: 84px;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
+        .sliderTop {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .sliderTitle {
           font-weight: 950;
-          color: rgba(0, 0, 0, 0.7);
-          flex: 0 0 auto;
+          font-size: 13px;
+          color: rgba(0, 0, 0, 0.8);
+        }
+        .sliderValue {
+          font-weight: 950;
+          font-size: 13px;
+          color: rgba(0, 0, 0, 0.65);
+          font-variant-numeric: tabular-nums;
+        }
+
+        .errorBox {
+          margin-top: 10px;
+          padding: 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(160, 0, 0, 0.25);
+          background: rgba(210, 0, 0, 0.06);
+          color: rgba(120, 0, 0, 0.95);
+          font-weight: 800;
         }
 
         .variantsWrap {
           display: grid;
           gap: 10px;
-          margin-top: 12px;
+          padding: 12px;
+          border-top: 1px solid rgba(0, 0, 0, 0.06);
         }
         .variantsHead {
           display: flex;
@@ -1351,7 +1146,6 @@ function CustomSlider({
             grid-template-columns: 1fr;
           }
         }
-
         .variantCard {
           border: 1px solid rgba(0, 0, 0, 0.1);
           background: rgba(0, 0, 0, 0.015);
@@ -1364,12 +1158,9 @@ function CustomSlider({
           grid-template-rows: auto 1fr;
           min-height: 120px;
         }
-        .variantCard:disabled {
-          cursor: default;
-          opacity: 0.75;
-        }
         .variantCard.selected {
           outline: 3px solid rgba(0, 0, 0, 0.85);
+          outline-offset: 0;
           border-color: rgba(0, 0, 0, 0.85);
           background: #fff;
         }
@@ -1409,7 +1200,6 @@ function CustomSlider({
           font-weight: 800;
           color: rgba(0, 0, 0, 0.45);
         }
-
         .variantActions {
           display: flex;
           gap: 8px;
@@ -1433,17 +1223,19 @@ function CustomSlider({
           color: #fff;
         }
 
-        .errorBox {
-          margin-top: 10px;
-          padding: 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(160, 0, 0, 0.25);
-          background: rgba(210, 0, 0, 0.06);
-          color: rgba(120, 0, 0, 0.95);
-          font-weight: 800;
+        .footRow {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .note {
+          font-size: 13px;
+          color: rgba(0, 0, 0, 0.65);
+          font-weight: 650;
         }
 
-        /* modal (ponechané) */
         .modalOverlay {
           position: fixed;
           inset: 0;
@@ -1556,6 +1348,7 @@ function CustomSlider({
         }
         .pickCard.selected {
           outline: 3px solid rgba(0, 0, 0, 0.85);
+          outline-offset: 0;
           border-color: rgba(0, 0, 0, 0.85);
           background: #fff;
         }
@@ -1573,6 +1366,12 @@ function CustomSlider({
           object-fit: cover;
           display: block;
         }
+
+        @media (max-width: 960px) {
+          h2 {
+            font-size: 26px;
+          }
+        }
       `}</style>
 
       <div className="container">
@@ -1586,23 +1385,25 @@ function CustomSlider({
           <Stepper />
         </div>
 
-        {/* BAR 1: upload + typ */}
-        <div className="topBars">
-          <div className="bar">
-            <div className="barRow">
-              <div className="barLeft">
-                <div className="btn fileBtn">
+        <div className="card">
+          {/* 2 horné lišty */}
+          <div className="topBars">
+            {/* Bar 1: upload + typ */}
+            <div className="bar">
+              <div className="barGroup">
+                <label className="btn btnSoft" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   Nahraj fotku (podklad)
                   <input
                     type="file"
                     accept="image/*"
+                    style={{ display: "none" }}
                     onChange={(e) => {
                       const f = e.target.files?.[0] || null;
                       setBgFile(f);
                       setError("");
                     }}
                   />
-                </div>
+                </label>
 
                 <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
                   <option value="bioklim">Bioklimatická pergola</option>
@@ -1610,17 +1411,11 @@ function CustomSlider({
                   <option value="zimna">Zimná záhrada</option>
                 </select>
               </div>
-
-              <div className="hint">
-                Režim: <b>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode.toUpperCase()}</b>
-              </div>
             </div>
-          </div>
 
-          {/* BAR 2: mode + sliders + reset + generate */}
-          <div className="bar">
-            <div className="barRow">
-              <div className="barLeft">
+            {/* Bar 2: režimy + X/Y/Z/Zoom + Reset + Generate (vpravo) */}
+            <div className="bar">
+              <div className="barGroup">
                 <button type="button" className={`btn ${mode === "move" ? "btnActive" : ""}`} onClick={() => setMode("move")}>
                   Posun
                 </button>
@@ -1628,9 +1423,6 @@ function CustomSlider({
                   Otoč 3D
                 </button>
 
-                <button type="button" className={`btn ${panel === "zoom" ? "btnActive" : ""}`} onClick={() => setPanel("zoom")}>
-                  Zoom
-                </button>
                 <button type="button" className={`btn ${panel === "x" ? "btnActive" : ""}`} onClick={() => setPanel("x")}>
                   Šírka
                 </button>
@@ -1640,43 +1432,42 @@ function CustomSlider({
                 <button type="button" className={`btn ${panel === "z" ? "btnActive" : ""}`} onClick={() => setPanel("z")}>
                   Hĺbka
                 </button>
+                <button type="button" className={`btn ${panel === "zoom" ? "btnActive" : ""}`} onClick={() => setPanel("zoom")}>
+                  Zoom
+                </button>
               </div>
 
               <div className="barRight">
-                <button type="button" className="btn" onClick={resetAll} disabled={loading}>
+                <button type="button" className="btn btnSoft" onClick={resetAll}>
                   Reset
                 </button>
-                <button type="button" className="btn btnPrimary" onClick={generate} disabled={!canGenerate}>
+
+                <button type="button" className="btn btnAccent" onClick={generate} disabled={!canGenerate}>
                   {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                 </button>
               </div>
             </div>
+          </div>
 
-            {/* Slider panel pod lištou (rovnaký mechanizmus pre zoom aj X/Y/Z) */}
+          {/* Slider panel pod lištami */}
+          <div className="sliderPanel">
             {panel === "zoom" ? (
-              <SliderBlock title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
+              <SliderRow title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
             ) : panel === "x" ? (
-              <SliderBlock title="Šírka (X)" value={scalePct.x} valueLabel={`${scalePct.x.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("x", v)} />
+              <SliderRow title="Šírka (X)" value={scalePct.x} valueLabel={`${scalePct.x.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("x", v)} />
             ) : panel === "y" ? (
-              <SliderBlock title="Výška (Y)" value={scalePct.y} valueLabel={`${scalePct.y.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("y", v)} />
+              <SliderRow title="Výška (Y)" value={scalePct.y} valueLabel={`${scalePct.y.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("y", v)} />
             ) : (
-              <SliderBlock title="Hĺbka (Z)" value={scalePct.z} valueLabel={`${scalePct.z.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("z", v)} />
+              <SliderRow title="Hĺbka (Z)" value={scalePct.z} valueLabel={`${scalePct.z.toFixed(1)}%`} min={SCALE_MIN} max={SCALE_MAX} step={SCALE_STEP} onChange={(v) => setScaleAxis("z", v)} />
             )}
 
             {error ? <div className="errorBox">Chyba: {error}</div> : null}
           </div>
-        </div>
 
-        {/* EDITOR CARD */}
-        <div className="card">
-          <div className="cardHeader">
-            <div className="cardTitle">Editor</div>
-            <div className="hint">Tip: 1 prst = edit • rohy = zmena veľkosti</div>
-          </div>
-
-          <div className="cardBody">
+          {/* Canvas */}
+          <div className="canvasArea">
             <div className="canvasShell">
-              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100), maxWidth: "100%" }}>
                 <canvas
                   ref={canvasRef}
                   width={canvasW}
@@ -1684,6 +1475,7 @@ function CustomSlider({
                   style={{
                     width: `${(canvasW * editorZoom) / 100}px`,
                     height: `${(canvasH * editorZoom) / 100}px`,
+                    maxWidth: "100%",
                     touchAction: "none",
                   }}
                   onPointerDown={onPointerDown}
@@ -1693,76 +1485,84 @@ function CustomSlider({
                 />
               </div>
             </div>
+          </div>
 
-            {/* VARIANTS */}
-            <div className="variantsWrap">
-              <div className="variantsHead">
-                <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
-                <div className="variantsNote">
-                  Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
-                </div>
-              </div>
-
-              <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
-                {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
-                  const v = variants[i] || null;
-                  const selected = selectedVariantIndex === i;
-
-                  return (
-                    <div key={i} style={{ display: "grid", gap: 0 }}>
-                      <button
-                        type="button"
-                        className={`variantCard ${selected ? "selected" : ""}`}
-                        onClick={() => {
-                          if (!v) return;
-                          setSelectedVariantIndex(i);
-                        }}
-                        disabled={!v}
-                        aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
-                      >
-                        <div className="variantTop">
-                          <div>
-                            <div className="variantBadge">Variant {i + 1}</div>
-                            {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
-                          </div>
-                          {selected ? <div className="variantSelected">Vybrané</div> : null}
-                        </div>
-
-                        {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
-                      </button>
-
-                      {v ? (
-                        <div className="variantActions">
-                          <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
-                            Stiahnuť
-                          </button>
-                          <button
-                            type="button"
-                            className={`smallBtn ${selected ? "primary" : ""}`}
-                            onClick={() => {
-                              setSelectedVariantIndex(i);
-                              if (!leadSubmitted) {
-                                setPendingAction({ kind: "single", index: i });
-                                setLeadOpen(true);
-                              }
-                            }}
-                          >
-                            Vybrať do formulára
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* ✅ iba dole pod variantami */}
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                <button type="button" className="btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                  Stiahnuť všetky ({variants.length})
-                </button>
+          {/* Variants */}
+          <div className="variantsWrap">
+            <div className="variantsHead">
+              <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
+              <div className="variantsNote">
+                Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
               </div>
             </div>
+
+            <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
+              {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
+                const v = variants[i] || null;
+                const selected = selectedVariantIndex === i;
+
+                return (
+                  <div key={i} style={{ display: "grid", gap: 0 }}>
+                    <button
+                      type="button"
+                      className={`variantCard ${selected ? "selected" : ""}`}
+                      onClick={() => {
+                        if (!v) return;
+                        setSelectedVariantIndex(i);
+                      }}
+                      disabled={!v}
+                      aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
+                    >
+                      <div className="variantTop">
+                        <div>
+                          <div className="variantBadge">Variant {i + 1}</div>
+                          {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+                        </div>
+                        {selected ? <div className="variantSelected">Vybrané</div> : null}
+                      </div>
+
+                      {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
+                    </button>
+
+                    {v ? (
+                      <div className="variantActions">
+                        <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
+                          Stiahnuť
+                        </button>
+                        <button
+                          type="button"
+                          className={`smallBtn ${selected ? "primary" : ""}`}
+                          onClick={() => {
+                            setSelectedVariantIndex(i);
+                            if (!leadSubmitted) {
+                              setPendingAction({ kind: "single", index: i });
+                              setLeadOpen(true);
+                            }
+                          }}
+                        >
+                          Vybrať do formulára
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="footRow">
+              <div className="note">Tip: 1 prst = posun / otoč • rohy = zmena veľkosti</div>
+
+              {/* Stiahnuť všetky: iba dole pod variantami */}
+              <button type="button" className="btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                Stiahnuť všetky ({variants.length})
+              </button>
+            </div>
+
+            {selectedVariant ? (
+              <div className="note">
+                Vybrané do formulára: <b>Variant {selectedVariantIndex + 1}</b> • {typeLabel(selectedVariant.type)}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1785,7 +1585,7 @@ function CustomSlider({
                   Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
                 </p>
               </div>
-              <button type="button" className="btn" onClick={closeLeadForm}>
+              <button type="button" className="btn btnSoft" onClick={closeLeadForm}>
                 ✕
               </button>
             </div>
@@ -1793,12 +1593,21 @@ function CustomSlider({
             <div className="modalBody">
               <form onSubmit={submitLead} className="formGrid">
                 <div className="span2">
-                  <div className="label">Vyber vizualizáciu *</div>
+                  <div className="label" style={{ marginBottom: 8 }}>
+                    Vyber vizualizáciu, ktorú odošleš *
+                  </div>
+
                   <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
                     {variants.map((v, i) => {
                       const sel = selectedVariantIndex === i;
                       return (
-                        <div key={v.id} className={`pickCard ${sel ? "selected" : ""}`} onClick={() => setSelectedVariantIndex(i)} role="button" tabIndex={0}>
+                        <div
+                          key={v.id}
+                          className={`pickCard ${sel ? "selected" : ""}`}
+                          onClick={() => setSelectedVariantIndex(i)}
+                          role="button"
+                          tabIndex={0}
+                        >
                           <div className="pickTop">
                             <div>
                               <b>Variant {i + 1}</b>
@@ -1811,6 +1620,7 @@ function CustomSlider({
                       );
                     })}
                   </div>
+
                   {leadErr.selectedVariant ? <div className="errText" style={{ marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
                 </div>
 
@@ -1839,7 +1649,10 @@ function CustomSlider({
                 </div>
 
                 <div className="span2" style={{ marginTop: 4 }}>
-                  <div className="label">Približné rozmery pergoly *</div>
+                  <div className="label" style={{ marginBottom: 8 }}>
+                    Približné rozmery pergoly *
+                  </div>
+
                   <div className="dimsGrid">
                     <div className="field">
                       <div className="label">Šírka</div>
@@ -1872,7 +1685,7 @@ function CustomSlider({
                 </div>
 
                 <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-                  <button type="button" className="btn" onClick={closeLeadForm} disabled={leadSubmitting}>
+                  <button type="button" className="btn btnSoft" onClick={closeLeadForm} disabled={leadSubmitting}>
                     Zrušiť
                   </button>
 
@@ -1881,7 +1694,7 @@ function CustomSlider({
                   </button>
                 </div>
 
-                <div className="span2" style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.65)", fontWeight: 650 }}>
+                <div className="span2 note" style={{ marginTop: 6 }}>
                   Odoslaním formulára súhlasíte so spracovaním osobných údajov.
                 </div>
               </form>
