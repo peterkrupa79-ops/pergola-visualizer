@@ -1176,7 +1176,7 @@ export default function Page() {
               />
 
               <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <label style={btnStyle}>
+                <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                     <Icon name="upload" size={16} />
                     Nahraj fotku
@@ -1215,6 +1215,23 @@ export default function Page() {
                     Reset
                   </span>
                 </button>
+
+                {!isMobile ? (
+                  <button
+                    type="button"
+                    onClick={generate}
+                    disabled={!canGenerate}
+                    style={{
+                      ...btnStyle,
+                      background: !canGenerate ? "rgba(0,0,0,0.10)" : "#111",
+                      color: !canGenerate ? "rgba(0,0,0,0.45)" : "#fff",
+                      borderColor: !canGenerate ? "rgba(0,0,0,0.12)" : "#111",
+                      cursor: !canGenerate ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -1459,6 +1476,9 @@ export default function Page() {
               border: "1px solid rgba(0,0,0,0.12)",
               boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
               overflow: "hidden",
+              maxHeight: "calc(100dvh - 32px)",
+              display: "grid",
+              gridTemplateRows: "auto 1fr",
             }}
           >
             <div
@@ -1482,7 +1502,7 @@ export default function Page() {
               </button>
             </div>
 
-            <div style={{ padding: "14px 16px 16px" }}>
+            <div style={{ padding: "14px 16px 16px", overflow: "auto", WebkitOverflowScrolling: "touch" }}>
               <form onSubmit={submitLead} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
                   <div style={labelStyle}>Vyber vizualizáciu *</div>
