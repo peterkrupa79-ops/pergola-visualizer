@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mode = "move" | "rotate3d" | "setGround" | "resize";
+type Mode = "move" | "rotate3d" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -34,11 +34,6 @@ function dist(a: Vec2, b: Vec2) {
 }
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
-}
-function lineYAtX(a: Vec2, b: Vec2, x: number) {
-  if (Math.abs(b.x - a.x) < 1e-6) return (a.y + b.y) / 2;
-  const t = (x - a.x) / (b.x - a.x);
-  return lerp(a.y, b.y, t);
 }
 function roundToStep(v: number, step = SCALE_STEP) {
   return Math.round(v / step) * step;
@@ -73,8 +68,6 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
-type Panel = "zoom" | "x" | "y" | "z";
-
 export default function Page() {
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
@@ -90,16 +83,17 @@ export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasW] = useState(980);
   const [canvasH] = useState(560);
-  const [editorZoom, setEditorZoom] = useState(100);
 
+  // UI state
   const [mode, setMode] = useState<Mode>("move");
+  const [activePanel, setActivePanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
+
+  // transforms
+  const [editorZoom, setEditorZoom] = useState(100);
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
-
-  const [groundA, setGroundA] = useState<Vec2 | null>(null);
-  const [groundB, setGroundB] = useState<Vec2 | null>(null);
 
   const [bboxRect, setBboxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
@@ -114,7 +108,7 @@ export default function Page() {
 
   const [prompt] = useState(FINAL_PROMPT_DEFAULT);
 
-  // variants (max 6)
+  // variants
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
 
@@ -126,7 +120,6 @@ export default function Page() {
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
 
-  // čo chce user spraviť po odomknutí
   const [pendingAction, setPendingAction] = useState<{ kind: "single"; index: number } | { kind: "all" } | null>(null);
 
   const [lead, setLead] = useState({
@@ -151,7 +144,17 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  const [panel, setPanel] = useState<Panel>("zoom");
+  // mobile detection (used for some small UI tweaks)
+  const isMobileRef = useRef(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 960px)");
+    const apply = () => {
+      isMobileRef.current = mq.matches;
+    };
+    apply();
+    mq.addEventListener?.("change", apply);
+    return () => mq.removeEventListener?.("change", apply);
+  }, []);
 
   // canvas drag ref
   const dragRef = useRef<{
@@ -218,8 +221,6 @@ export default function Page() {
     setRot3D({ yaw: 0.35, pitch: -0.12 });
     setRot2D(0);
     setPos({ x: 0.5, y: 0.72 });
-    setGroundA(null);
-    setGroundB(null);
     setError("");
   }
 
@@ -319,7 +320,7 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, groundA, groundB]);
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct]);
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -363,17 +364,6 @@ export default function Page() {
       ctx.fillStyle = "rgba(0,0,0,0.65)";
       ctx.font = "14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
       ctx.fillText("Nahraj fotku (JPG/PNG)", 18, 28);
-    }
-
-    if (groundA && groundB) {
-      ctx.save();
-      ctx.strokeStyle = "rgba(0,140,110,0.9)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(groundA.x, groundA.y);
-      ctx.lineTo(groundB.x, groundB.y);
-      ctx.stroke();
-      ctx.restore();
     }
 
     if (threeReadyRef.current && rendererRef.current && sceneRef.current && cameraRef.current && rootRef.current) {
@@ -462,7 +452,6 @@ export default function Page() {
     setError("");
 
     try {
-      // --- EXPORT pre OpenAI: downscale + JPEG ---
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -661,10 +650,11 @@ export default function Page() {
   }
 
   // ===========================
-  // ✅ 1 PRST = VŽDY EDIT (CANVAS)
+  // ✅ 1 PRST = VŽDY EDIT (MOBILE)
   // ===========================
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
+
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -672,7 +662,6 @@ export default function Page() {
     if (rect) {
       const h = hitHandle(p, rect);
       if (h) {
-        setMode("resize");
         setActiveHandle(h);
         dragRef.current = {
           active: true,
@@ -702,6 +691,7 @@ export default function Page() {
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
+
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -751,12 +741,10 @@ export default function Page() {
     }
   }
 
-  function onPointerUp() {
+  function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     setActiveHandle(null);
-
-    if (mode === "resize") setMode("move");
   }
 
   function Stepper() {
@@ -775,13 +763,13 @@ export default function Page() {
       <div className="ter-stepper stepperWrap" aria-label="Postup">
         <div className="stepperBar">
           <div className="stepperTrack" aria-hidden="true" />
-          {steps.map((s) => {
-            const on = current >= s.n;
-            const active = current === s.n;
+          {steps.map((s2) => {
+            const on = current >= s2.n;
+            const active = current === s2.n;
             return (
-              <div className="stepItem" key={s.n}>
-                <div className={`stepCircle ${on ? "on" : ""} ${active ? "active" : ""}`}>{s.n}</div>
-                <div className={`stepText ${active ? "active" : ""}`}>{s.text}</div>
+              <div className="stepItem" key={s2.n}>
+                <div className={`stepCircle ${on ? "on" : ""} ${active ? "active" : ""}`}>{s2.n}</div>
+                <div className={`stepText ${active ? "active" : ""}`}>{s2.text}</div>
               </div>
             );
           })}
@@ -790,87 +778,84 @@ export default function Page() {
     );
   }
 
-  function SliderRow({
-    title,
-    value,
-    valueLabel,
-    min,
-    max,
-    step,
-    onChange,
-  }: {
+  function SliderRow(props: {
     title: string;
-    value: number;
     valueLabel: string;
     min: number;
     max: number;
     step: number;
+    value: number;
     onChange: (v: number) => void;
   }) {
+    const { title, valueLabel, min, max, step, value, onChange } = props;
+
     return (
       <div className="sliderRow">
-        <div className="sliderLeft">
+        <div className="sliderTop">
           <div className="sliderTitle">{title}</div>
-          <div className="sliderVal">{valueLabel}</div>
+          <div className="sliderValue">{valueLabel}</div>
         </div>
 
+        {/* NATÍVNY RANGE – ťahanie prstom funguje */}
         <input
-        className="range range--big"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onPointerDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        onInput={(e) => onChange(Number((e.target as HTMLInputElement).value))}
-        onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
-      />
-
+          className="range range--big"
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onInput={(e) => onChange(Number((e.target as HTMLInputElement).value))}
+          onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
+        />
       </div>
     );
   }
 
-  const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
-
   return (
     <section className="ter-wrap">
-      {/* range global styling */}
+      {/* Range styling (thumb/track viditeľné na desktope aj mobile) */}
       <style jsx global>{`
         .ter-wrap :global(input.range--big) {
           width: 100%;
-          height: 42px;
+          height: 44px;
           accent-color: #111;
-          -webkit-appearance: none;
-          appearance: none;
+          background: transparent;
           touch-action: pan-x;
         }
         .ter-wrap :global(input.range--big::-webkit-slider-runnable-track) {
           height: 10px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18);
+          background: rgba(0, 0, 0, 0.16);
         }
         .ter-wrap :global(input.range--big::-webkit-slider-thumb) {
           -webkit-appearance: none;
-          appearance: none;
-          width: 22px;
-          height: 22px;
-          margin-top: -6px;
+          width: 24px;
+          height: 24px;
+          margin-top: -7px;
           border-radius: 999px;
           background: #111;
           border: 2px solid #fff;
+          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
         }
         .ter-wrap :global(input.range--big::-moz-range-track) {
           height: 10px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.18);
+          background: rgba(0, 0, 0, 0.16);
         }
         .ter-wrap :global(input.range--big::-moz-range-thumb) {
-          width: 22px;
-          height: 22px;
+          width: 24px;
+          height: 24px;
           border-radius: 999px;
-          border: 2px solid #fff;
           background: #111;
+          border: 2px solid #fff;
+          box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+        }
+        .ter-wrap :global(input.range--big:focus-visible) {
+          outline: 2px solid rgba(0, 0, 0, 0.85);
+          outline-offset: 3px;
+          border-radius: 12px;
         }
       `}</style>
 
@@ -977,6 +962,13 @@ export default function Page() {
           max-width: 110ch;
         }
 
+        .grid {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 18px;
+          margin-top: 18px;
+          align-items: start;
+        }
         .card {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
@@ -984,105 +976,61 @@ export default function Page() {
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
           overflow: hidden;
         }
+        .cardHeader {
+          padding: 14px 16px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+        }
+        .cardTitle {
+          font-size: 16px;
+          font-weight: 900;
+          letter-spacing: -0.01em;
+        }
+        .hint {
+          font-size: 12px;
+          color: rgba(0, 0, 0, 0.55);
+          font-weight: 700;
+        }
+        .cardBody {
+          padding: 14px 16px;
+        }
 
         .topBars {
           display: grid;
           gap: 10px;
-          padding: 14px 16px 0;
+          margin-bottom: 10px;
         }
         .bar {
           display: flex;
+          gap: 10px;
           align-items: center;
-          justify-content: space-between;
-          gap: 12px;
           flex-wrap: wrap;
+          justify-content: space-between;
+          padding: 10px;
+          border-radius: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          background: rgba(0, 0, 0, 0.01);
         }
-        .barGroup {
-          display: inline-flex;
+        .barLeft {
+          display: flex;
           gap: 10px;
           align-items: center;
           flex-wrap: wrap;
         }
         .barRight {
-          display: inline-flex;
+          display: flex;
           gap: 10px;
           align-items: center;
-          justify-content: flex-end;
           flex-wrap: wrap;
+          justify-content: flex-end;
         }
 
-        .btn {
-          border-radius: 12px;
-          padding: 11px 12px;
-          font-weight: 900;
-          cursor: pointer;
-          border: 1px solid rgba(0, 0, 0, 0.14);
-          background: #fff;
-          color: #111;
-          font-size: 13px;
-        }
-        .btn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-        }
-        .btnSoft {
-          background: rgba(0, 0, 0, 0.03);
-          border-color: rgba(0, 0, 0, 0.12);
-        }
-        .btnActive {
-          background: #111;
-          color: #fff;
-          border-color: #111;
-        }
-        .btnAccent {
-          background: #111;
-          color: #fff;
-          border-color: #111;
-          box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
-        }
-
-        .select {
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 800;
-          color: #111;
-          min-width: 260px;
-        }
-
-        .sliderPanel {
-          padding: 10px 16px 12px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-        }
-        .sliderRow {
+        .canvasWrap {
           display: grid;
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
-        .sliderLeft {
-          display: flex;
-          align-items: baseline;
-          justify-content: space-between;
           gap: 10px;
-        }
-        .sliderTitle {
-          font-size: 12px;
-          font-weight: 950;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: rgba(0, 0, 0, 0.6);
-        }
-        .sliderVal {
-          font-size: 13px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.85);
-          font-variant-numeric: tabular-nums;
-        }
-
-        .canvasArea {
-          padding: 12px 16px 16px;
         }
         .canvasShell {
           background: #fff;
@@ -1095,6 +1043,126 @@ export default function Page() {
           border-radius: 12px;
           display: block;
           background: #fff;
+        }
+
+        .tabs {
+          display: inline-flex;
+          border: 1px solid rgba(0, 0, 0, 0.1);
+          background: rgba(0, 0, 0, 0.03);
+          border-radius: 999px;
+          padding: 4px;
+          gap: 4px;
+        }
+        .tab {
+          border: none;
+          background: transparent;
+          border-radius: 999px;
+          padding: 9px 12px;
+          font-weight: 800;
+          font-size: 13px;
+          cursor: pointer;
+          color: rgba(0, 0, 0, 0.7);
+          user-select: none;
+        }
+        .tab.active {
+          background: #fff;
+          color: #111;
+          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+        }
+
+        .row {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .ter-btn {
+          border-radius: 12px;
+          padding: 11px 12px;
+          font-weight: 900;
+          cursor: pointer;
+          border: 1px solid rgba(0, 0, 0, 0.14);
+          background: #fff;
+          color: #111;
+          user-select: none;
+        }
+        .ter-btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+        .ter-btn--primary {
+          background: #111;
+          color: #fff;
+          border-color: #111;
+        }
+        .ter-btn--cta {
+          background: #0b0b0b;
+          color: #fff;
+          border-color: #0b0b0b;
+          box-shadow: 0 12px 26px rgba(0, 0, 0, 0.18);
+        }
+        .ter-btn--ghost {
+          background: rgba(0, 0, 0, 0.03);
+          border-color: rgba(0, 0, 0, 0.12);
+          color: #111;
+        }
+
+        .field {
+          display: grid;
+          gap: 6px;
+        }
+        .label {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.65);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .input,
+        .select,
+        .textarea {
+          width: 100%;
+          padding: 11px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          outline: none;
+          font-weight: 700;
+          color: #111;
+        }
+        .textarea {
+          min-height: 96px;
+          resize: vertical;
+          line-height: 1.35;
+        }
+
+        .sliderRow {
+          display: grid;
+          gap: 8px;
+          padding: 10px;
+          border-radius: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          background: rgba(0, 0, 0, 0.015);
+        }
+        .sliderTop {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          align-items: baseline;
+        }
+        .sliderTitle {
+          font-size: 12px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: rgba(0, 0, 0, 0.6);
+        }
+        .sliderValue {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.75);
+          font-variant-numeric: tabular-nums;
         }
 
         .errorBox {
@@ -1110,7 +1178,7 @@ export default function Page() {
         .variantsWrap {
           display: grid;
           gap: 10px;
-          padding: 0 16px 18px;
+          margin-top: 12px;
         }
         .variantsHead {
           display: flex;
@@ -1151,6 +1219,9 @@ export default function Page() {
         .variantCard:disabled {
           cursor: default;
           opacity: 0.75;
+        }
+        .variantCard.has:hover {
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
         }
         .variantCard.selected {
           outline: 3px solid rgba(0, 0, 0, 0.85);
@@ -1194,6 +1265,7 @@ export default function Page() {
           font-weight: 800;
           color: rgba(0, 0, 0, 0.45);
         }
+
         .variantActions {
           display: flex;
           gap: 8px;
@@ -1210,6 +1282,11 @@ export default function Page() {
           background: #fff;
           color: #111;
           font-size: 12px;
+          user-select: none;
+        }
+        .smallBtn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
         }
         .smallBtn.primary {
           background: #111;
@@ -1217,31 +1294,12 @@ export default function Page() {
           color: #fff;
         }
 
-        .footRow {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
-        .note {
-          font-size: 13px;
-          color: rgba(0, 0, 0, 0.65);
-          font-weight: 650;
-        }
-
         @media (max-width: 960px) {
           .variantsGrid {
             grid-template-columns: 1fr;
           }
           .variantCard img {
-            height: 160px;
-          }
-          h2 {
-            font-size: 26px;
-          }
-          .select {
-            min-width: 220px;
+            height: 180px;
           }
         }
 
@@ -1293,33 +1351,6 @@ export default function Page() {
         .span2 {
           grid-column: 1 / -1;
         }
-        .field {
-          display: grid;
-          gap: 6px;
-        }
-        .label {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.65);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-        .input,
-        .textarea {
-          width: 100%;
-          padding: 11px 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          outline: none;
-          font-weight: 700;
-          color: #111;
-        }
-        .textarea {
-          min-height: 96px;
-          resize: vertical;
-          line-height: 1.35;
-        }
         .errText {
           color: rgba(160, 0, 0, 0.9);
           font-size: 12px;
@@ -1338,6 +1369,7 @@ export default function Page() {
             grid-template-columns: 1fr;
           }
         }
+
         .pickGrid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -1369,6 +1401,9 @@ export default function Page() {
           justify-content: space-between;
           gap: 10px;
         }
+        .pickTop b {
+          font-size: 12px;
+        }
         .pickCard img {
           width: 100%;
           height: 130px;
@@ -1388,335 +1423,343 @@ export default function Page() {
           <Stepper />
         </div>
 
-        <div className="card">
-          {/* 2 horné lišty */}
-          <div className="topBars">
-            {/* Bar 1: upload + typ */}
-            <div className="bar">
-              <div className="barGroup">
-                <label className="btn btnSoft" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  Nahraj fotku (podklad)
-                  <input
-                    type="file"
-                    accept="image/*"
-                    style={{ display: "none" }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setBgFile(f);
-                      setError("");
-                    }}
-                  />
-                </label>
-
-                <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                  <option value="bioklim">Bioklimatická pergola</option>
-                  <option value="pevna">Pergola s pevnou strechou</option>
-                  <option value="zimna">Zimná záhrada</option>
-                </select>
+        <div className="grid">
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardTitle">Editor</div>
+              <div className="hint">
+                Režim: <b>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : "RESIZE"}</b>
               </div>
             </div>
 
-            {/* Bar 2: režimy + X/Y/Z/Zoom + Reset + Generate (vpravo) */}
-            <div className="bar">
-              <div className="barGroup">
-                <button type="button" className={`btn ${mode === "move" ? "btnActive" : ""}`} onClick={() => setMode("move")}>
-                  Posun
-                </button>
-                <button type="button" className={`btn ${mode === "rotate3d" ? "btnActive" : ""}`} onClick={() => setMode("rotate3d")}>
-                  Otoč 3D
-                </button>
+            <div className="cardBody">
+              <div className="topBars">
+                {/* Bar 1: fotka + typ */}
+                <div className="bar">
+                  <div className="barLeft">
+                    <div className="field" style={{ minWidth: 220 }}>
+                      <div className="label">Fotka (podklad)</div>
+                      <input
+                        className="input"
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          setBgFile(f);
+                          setError("");
+                        }}
+                      />
+                    </div>
 
-                <button type="button" className={`btn ${panel === "x" ? "btnActive" : ""}`} onClick={() => setPanel("x")}>
-                  Šírka
-                </button>
-                <button type="button" className={`btn ${panel === "y" ? "btnActive" : ""}`} onClick={() => setPanel("y")}>
-                  Výška
-                </button>
-                <button type="button" className={`btn ${panel === "z" ? "btnActive" : ""}`} onClick={() => setPanel("z")}>
-                  Hĺbka
-                </button>
-                <button type="button" className={`btn ${panel === "zoom" ? "btnActive" : ""}`} onClick={() => setPanel("zoom")}>
-                  Zoom
-                </button>
-              </div>
+                    <div className="field" style={{ minWidth: 240 }}>
+                      <div className="label">Typ (pre ďalšiu generáciu)</div>
+                      <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
+                        <option value="bioklim">Bioklimatická pergola</option>
+                        <option value="pevna">Pergola s pevnou strechou</option>
+                        <option value="zimna">Zimná záhrada</option>
+                      </select>
+                    </div>
+                  </div>
 
-              <div className="barRight">
-                <button type="button" className="btn btnSoft" onClick={resetAll}>
-                  Reset
-                </button>
+                  <div className="barRight">{error ? <div className="errorBox">Chyba: {error}</div> : null}</div>
+                </div>
 
-                <button type="button" className="btn btnAccent" onClick={generate} disabled={!canGenerate}>
-                  {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
-                </button>
-              </div>
-            </div>
-          </div>
+                {/* Bar 2: režimy + rozmery + reset + generate */}
+                <div className="bar">
+                  <div className="barLeft">
+                    <div className="tabs" role="tablist" aria-label="Režimy">
+                      <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
+                        Posun
+                      </button>
+                      <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
+                        Otoč 3D
+                      </button>
+                    </div>
 
-          {/* Slider panel pod lištami */}
-          <div className="sliderPanel">
-            {panel === "zoom" ? (
-              <SliderRow title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
-            ) : panel === "x" ? (
-              <SliderRow
-                title="Šírka (X)"
-                value={scalePct.x}
-                valueLabel={`${scalePct.x.toFixed(1)}%`}
-                min={SCALE_MIN}
-                max={SCALE_MAX}
-                step={SCALE_STEP}
-                onChange={(v) => setScaleAxis("x", v)}
-              />
-            ) : panel === "y" ? (
-              <SliderRow
-                title="Výška (Y)"
-                value={scalePct.y}
-                valueLabel={`${scalePct.y.toFixed(1)}%`}
-                min={SCALE_MIN}
-                max={SCALE_MAX}
-                step={SCALE_STEP}
-                onChange={(v) => setScaleAxis("y", v)}
-              />
-            ) : (
-              <SliderRow
-                title="Hĺbka (Z)"
-                value={scalePct.z}
-                valueLabel={`${scalePct.z.toFixed(1)}%`}
-                min={SCALE_MIN}
-                max={SCALE_MAX}
-                step={SCALE_STEP}
-                onChange={(v) => setScaleAxis("z", v)}
-              />
-            )}
+                    <div className="tabs" role="tablist" aria-label="Panel">
+                      <button type="button" className={`tab ${activePanel === "x" ? "active" : ""}`} onClick={() => setActivePanel("x")}>
+                        Šírka
+                      </button>
+                      <button type="button" className={`tab ${activePanel === "y" ? "active" : ""}`} onClick={() => setActivePanel("y")}>
+                        Výška
+                      </button>
+                      <button type="button" className={`tab ${activePanel === "z" ? "active" : ""}`} onClick={() => setActivePanel("z")}>
+                        Hĺbka
+                      </button>
+                      <button type="button" className={`tab ${activePanel === "zoom" ? "active" : ""}`} onClick={() => setActivePanel("zoom")}>
+                        Zoom
+                      </button>
+                    </div>
+                  </div>
 
-            {error ? <div className="errorBox">Chyba: {error}</div> : null}
-          </div>
-
-          {/* Canvas */}
-          <div className="canvasArea">
-            <div className="canvasShell">
-              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100), maxWidth: "100%" }}>
-                <canvas
-                  ref={canvasRef}
-                  width={canvasW}
-                  height={canvasH}
-                  style={{
-                    width: `${(canvasW * editorZoom) / 100}px`,
-                    height: `${(canvasH * editorZoom) / 100}px`,
-                    maxWidth: "100%",
-                    touchAction: "none",
-                  }}
-                  onPointerDown={onPointerDown}
-                  onPointerMove={onPointerMove}
-                  onPointerUp={onPointerUp}
-                  onPointerCancel={onPointerUp}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Variants */}
-          <div className="variantsWrap">
-            <div className="variantsHead">
-              <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
-              <div className="variantsNote">
-                Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
-              </div>
-            </div>
-
-            <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
-              {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
-                const v = variants[i] || null;
-                const selected = selectedVariantIndex === i;
-
-                return (
-                  <div key={i} style={{ display: "grid", gap: 0 }}>
-                    <button
-                      type="button"
-                      className={`variantCard ${selected ? "selected" : ""}`}
-                      onClick={() => {
-                        if (!v) return;
-                        setSelectedVariantIndex(i);
-                      }}
-                      disabled={!v}
-                      aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
-                    >
-                      <div className="variantTop">
-                        <div>
-                          <div className="variantBadge">Variant {i + 1}</div>
-                          {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
-                        </div>
-                        {selected ? <div className="variantSelected">Vybrané</div> : null}
-                      </div>
-
-                      {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
+                  <div className="barRight">
+                    <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
+                      Reset
                     </button>
 
-                    {v ? (
-                      <div className="variantActions">
-                        <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
-                          Stiahnuť
-                        </button>
-                        <button
-                          type="button"
-                          className={`smallBtn ${selected ? "primary" : ""}`}
-                          onClick={() => {
-                            setSelectedVariantIndex(i);
-                            if (!leadSubmitted) {
-                              setPendingAction({ kind: "single", index: i });
-                              setLeadOpen(true);
-                            }
-                          }}
-                        >
-                          Vybrať do formulára
-                        </button>
-                      </div>
-                    ) : null}
+                    <button type="button" className="ter-btn ter-btn--cta" onClick={generate} disabled={!bgImg || loading || variants.length >= MAX_VARIANTS}>
+                      {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                    </button>
                   </div>
-                );
-              })}
-            </div>
+                </div>
 
-            <div className="footRow">
-              <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
-              <button type="button" className="btn btnSoft" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                Stiahnuť všetky ({variants.length})
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Lead modal */}
-      {leadOpen ? (
-        <div
-          className="modalOverlay"
-          role="dialog"
-          aria-modal="true"
-          onMouseDown={(ev) => {
-            if (ev.target === ev.currentTarget) closeLeadForm();
-          }}
-        >
-          <div className="modalCard">
-            <div className="modalHead">
-              <div>
-                <p className="modalTitle">Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</p>
-                <p className="modalSub">
-                  Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
-                </p>
+                {/* Slider panel: zoom alebo X/Y/Z */}
+                {activePanel === "zoom" ? (
+                  <SliderRow title="Zoom" valueLabel={`${editorZoom}%`} min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(v)} />
+                ) : activePanel === "x" ? (
+                  <SliderRow
+                    title="Šírka (X)"
+                    valueLabel={`${scalePct.x.toFixed(1)}%`}
+                    min={SCALE_MIN}
+                    max={SCALE_MAX}
+                    step={SCALE_STEP}
+                    value={scalePct.x}
+                    onChange={(v) => setScaleAxis("x", v)}
+                  />
+                ) : activePanel === "y" ? (
+                  <SliderRow
+                    title="Výška (Y)"
+                    valueLabel={`${scalePct.y.toFixed(1)}%`}
+                    min={SCALE_MIN}
+                    max={SCALE_MAX}
+                    step={SCALE_STEP}
+                    value={scalePct.y}
+                    onChange={(v) => setScaleAxis("y", v)}
+                  />
+                ) : (
+                  <SliderRow
+                    title="Hĺbka (Z)"
+                    valueLabel={`${scalePct.z.toFixed(1)}%`}
+                    min={SCALE_MIN}
+                    max={SCALE_MAX}
+                    step={SCALE_STEP}
+                    value={scalePct.z}
+                    onChange={(v) => setScaleAxis("z", v)}
+                  />
+                )}
               </div>
-              <button type="button" className="btn btnSoft" onClick={closeLeadForm}>
-                ✕
-              </button>
-            </div>
 
-            <div className="modalBody">
-              <form onSubmit={submitLead} className="formGrid">
-                <div className="span2">
-                  <div className="sliderTitle" style={{ marginBottom: 8 }}>
-                    Vyber vizualizáciu, ktorú odošleš *
+              <div className="canvasWrap">
+                <div className="canvasShell">
+                  <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+                    <canvas
+                      ref={canvasRef}
+                      width={canvasW}
+                      height={canvasH}
+                      style={{
+                        width: `${(canvasW * editorZoom) / 100}px`,
+                        height: `${(canvasH * editorZoom) / 100}px`,
+                        touchAction: "none",
+                      }}
+                      onPointerDown={onPointerDown}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                      onPointerCancel={onPointerUp}
+                    />
                   </div>
-                  <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
-                    {variants.map((v, i) => {
-                      const sel = selectedVariantIndex === i;
+                </div>
+
+                <div className="variantsWrap">
+                  <div className="variantsHead">
+                    <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
+                    <div className="variantsNote">
+                      Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
+                    </div>
+                  </div>
+
+                  <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
+                    {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
+                      const v = variants[i] || null;
+                      const selected = selectedVariantIndex === i;
+
                       return (
-                        <div
-                          key={v.id}
-                          className={`pickCard ${sel ? "selected" : ""}`}
-                          onClick={() => setSelectedVariantIndex(i)}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <div className="pickTop">
-                            <div style={{ fontWeight: 950, fontSize: 12 }}>Variant {i + 1}</div>
-                            <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
-                          </div>
-                          <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} />
+                        <div key={i} style={{ display: "grid", gap: 0 }}>
+                          <button
+                            type="button"
+                            className={`variantCard ${selected ? "selected" : ""} ${v ? "has" : ""}`}
+                            onClick={() => {
+                              if (!v) return;
+                              setSelectedVariantIndex(i);
+                            }}
+                            disabled={!v}
+                            aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
+                          >
+                            <div className="variantTop">
+                              <div>
+                                <div className="variantBadge">Variant {i + 1}</div>
+                                {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+                              </div>
+                              {selected ? <div className="variantSelected">Vybrané</div> : null}
+                            </div>
+
+                            {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
+                          </button>
+
+                          {v ? (
+                            <div className="variantActions">
+                              <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
+                                Stiahnuť
+                              </button>
+                              <button
+                                type="button"
+                                className={`smallBtn ${selected ? "primary" : ""}`}
+                                onClick={() => {
+                                  setSelectedVariantIndex(i);
+                                  if (!leadSubmitted) {
+                                    setPendingAction({ kind: "single", index: i });
+                                    setLeadOpen(true);
+                                  }
+                                }}
+                              >
+                                Vybrať do formulára
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
                   </div>
-                  {leadErr.selectedVariant ? <div className="errText" style={{ marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
-                </div>
 
-                <div className="field">
-                  <div className="label">Meno *</div>
-                  <input className="input" value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" />
-                  {leadErr.name ? <div className="errText">{leadErr.name}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Mesto *</div>
-                  <input className="input" value={lead.city} onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))} placeholder="Mesto" />
-                  {leadErr.city ? <div className="errText">{leadErr.city}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Telefón *</div>
-                  <input className="input" value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" />
-                  {leadErr.phone ? <div className="errText">{leadErr.phone}</div> : null}
-                </div>
-
-                <div className="field">
-                  <div className="label">Emailová adresa *</div>
-                  <input className="input" value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" />
-                  {leadErr.email ? <div className="errText">{leadErr.email}</div> : null}
-                </div>
-
-                <div className="span2" style={{ marginTop: 4 }}>
-                  <div className="sliderTitle" style={{ marginBottom: 8 }}>
-                    Približné rozmery pergoly *
-                  </div>
-                  <div className="dimsGrid">
-                    <div className="field">
-                      <div className="label">Šírka</div>
-                      <input className="input" value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" />
-                      {leadErr.approxWidth ? <div className="errText">{leadErr.approxWidth}</div> : null}
-                    </div>
-
-                    <div className="field">
-                      <div className="label">Hĺbka</div>
-                      <input className="input" value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" />
-                      {leadErr.approxDepth ? <div className="errText">{leadErr.approxDepth}</div> : null}
-                    </div>
-
-                    <div className="field">
-                      <div className="label">Výška</div>
-                      <input className="input" value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.5 m" />
-                      {leadErr.approxHeight ? <div className="errText">{leadErr.approxHeight}</div> : null}
-                    </div>
+                  <div className="row" style={{ justifyContent: "flex-end" }}>
+                    <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                      Stiahnuť všetky ({variants.length})
+                    </button>
                   </div>
                 </div>
-
-                <div className="span2">
-                  <div className="sliderTitle" style={{ marginBottom: 8 }}>
-                    Poznámka zákazníka (voliteľné)
-                  </div>
-                  <textarea
-                    className="textarea"
-                    value={lead.customerNote}
-                    onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
-                    placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
-                  />
-                </div>
-
-                <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-                  <button type="button" className="btn btnSoft" onClick={closeLeadForm} disabled={leadSubmitting}>
-                    Zrušiť
-                  </button>
-
-                  <button type="submit" className="btn btnAccent" disabled={leadSubmitting}>
-                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
-                  </button>
-                </div>
-
-                <div className="span2 note" style={{ marginTop: 6 }}>
-                  Odoslaním formulára súhlasíte so spracovaním osobných údajov.
-                </div>
-              </form>
+              </div>
             </div>
           </div>
         </div>
-      ) : null}
+
+        {/* Lead modal */}
+        {leadOpen ? (
+          <div
+            className="modalOverlay"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(ev) => {
+              if (ev.target === ev.currentTarget) closeLeadForm();
+            }}
+          >
+            <div className="modalCard">
+              <div className="modalHead">
+                <div>
+                  <p className="modalTitle">Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</p>
+                  <p className="modalSub">
+                    Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
+                  </p>
+                </div>
+                <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm}>
+                  ✕
+                </button>
+              </div>
+
+              <div className="modalBody">
+                <form onSubmit={submitLead} className="formGrid">
+                  <div className="span2">
+                    <div className="sliderTitle" style={{ marginBottom: 8 }}>
+                      Vyber vizualizáciu, ktorú odošleš *
+                    </div>
+                    <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
+                      {variants.map((v, i) => {
+                        const sel = selectedVariantIndex === i;
+                        return (
+                          <div key={v.id} className={`pickCard ${sel ? "selected" : ""}`} onClick={() => setSelectedVariantIndex(i)} role="button" tabIndex={0}>
+                            <div className="pickTop">
+                              <div>
+                                <b>Variant {i + 1}</b>
+                                <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)", marginTop: 2 }}>{typeLabel(v.type)}</div>
+                              </div>
+                              <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
+                            </div>
+                            <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {leadErr.selectedVariant ? <div className="errText" style={{ marginTop: 8 }}>{leadErr.selectedVariant}</div> : null}
+                  </div>
+
+                  <div className="field">
+                    <div className="label">Meno *</div>
+                    <input className="input" value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" />
+                    {leadErr.name ? <div className="errText">{leadErr.name}</div> : null}
+                  </div>
+
+                  <div className="field">
+                    <div className="label">Mesto *</div>
+                    <input className="input" value={lead.city} onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))} placeholder="Mesto" />
+                    {leadErr.city ? <div className="errText">{leadErr.city}</div> : null}
+                  </div>
+
+                  <div className="field">
+                    <div className="label">Telefón *</div>
+                    <input className="input" value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" />
+                    {leadErr.phone ? <div className="errText">{leadErr.phone}</div> : null}
+                  </div>
+
+                  <div className="field">
+                    <div className="label">Emailová adresa *</div>
+                    <input className="input" value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" />
+                    {leadErr.email ? <div className="errText">{leadErr.email}</div> : null}
+                  </div>
+
+                  <div className="span2" style={{ marginTop: 4 }}>
+                    <div className="sliderTitle" style={{ marginBottom: 8 }}>
+                      Približné rozmery pergoly *
+                    </div>
+                    <div className="dimsGrid">
+                      <div className="field">
+                        <div className="label">Šírka</div>
+                        <input className="input" value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" />
+                        {leadErr.approxWidth ? <div className="errText">{leadErr.approxWidth}</div> : null}
+                      </div>
+
+                      <div className="field">
+                        <div className="label">Hĺbka</div>
+                        <input className="input" value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" />
+                        {leadErr.approxDepth ? <div className="errText">{leadErr.approxDepth}</div> : null}
+                      </div>
+
+                      <div className="field">
+                        <div className="label">Výška</div>
+                        <input className="input" value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.5 m" />
+                        {leadErr.approxHeight ? <div className="errText">{leadErr.approxHeight}</div> : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="span2">
+                    <div className="sliderTitle" style={{ marginBottom: 8 }}>
+                      Poznámka zákazníka (voliteľné)
+                    </div>
+                    <textarea
+                      className="textarea"
+                      value={lead.customerNote}
+                      onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
+                      placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
+                    />
+                  </div>
+
+                  <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+                    <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm} disabled={leadSubmitting}>
+                      Zrušiť
+                    </button>
+
+                    <button type="submit" className="ter-btn ter-btn--primary" disabled={leadSubmitting}>
+                      {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
+                    </button>
+                  </div>
+
+                  <div className="span2" style={{ marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.65)", fontWeight: 650 }}>
+                    Odoslaním formulára súhlasíte so spracovaním osobných údajov.
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
