@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mode = "move" | "rotate3d" | "size" | "setGround" | "resize"; // ✅ size = mobilný režim pre slidre
+type Mode = "move" | "rotate3d" | "setGround" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -72,6 +72,8 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   const r = await fetch(`data:image/png;base64,${b64}`);
   return await r.blob();
 }
+
+type Panel = "zoom" | "x" | "y" | "z";
 
 export default function Page() {
   const [bgFile, setBgFile] = useState<File | null>(null);
@@ -149,24 +151,7 @@ export default function Page() {
     selectedVariant?: string;
   }>({});
 
-  // ✅ Mobile UX
-  const isMobileRef = useRef(false);
-  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
-  const [floatOpen, setFloatOpen] = useState(true);
-  const [sizeAxis, setSizeAxis] = useState<"x" | "y" | "z">("x");
-
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 960px)");
-    const apply = () => {
-      isMobileRef.current = mq.matches;
-      // na mobile nech je ovládanie viditeľné
-      if (mq.matches) setFloatOpen(true);
-      setMobileSettingsOpen(false);
-    };
-    apply();
-    mq.addEventListener?.("change", apply);
-    return () => mq.removeEventListener?.("change", apply);
-  }, []);
+  const [panel, setPanel] = useState<Panel>("zoom");
 
   // canvas drag ref
   const dragRef = useRef<{
@@ -217,23 +202,6 @@ export default function Page() {
     return null;
   }
 
-  function snapToGround() {
-    if (!groundA || !groundB || !bboxRect) return;
-
-    const leftX = bboxRect.x;
-    const rightX = bboxRect.x + bboxRect.w;
-
-    const yL = lineYAtX(groundA, groundB, leftX);
-    const yR = lineYAtX(groundA, groundB, rightX);
-    const yMid = (yL + yR) / 2;
-
-    const bottom = bboxRect.y + bboxRect.h;
-    const dyPx = yMid - bottom;
-    const dyNorm = dyPx / canvasH;
-
-    setPos((p) => ({ ...p, y: p.y + dyNorm }));
-  }
-
   function bumpScaleAxis(axis: "x" | "y" | "z", delta: number) {
     setScalePct((prev) => {
       const next = { ...prev };
@@ -253,11 +221,6 @@ export default function Page() {
     setGroundA(null);
     setGroundB(null);
     setError("");
-  }
-
-  function resetRotation() {
-    setRot3D({ yaw: 0.35, pitch: -0.12 });
-    setRot2D(0);
   }
 
   // background image load
@@ -698,11 +661,10 @@ export default function Page() {
   }
 
   // ===========================
-  // ✅ 1 PRST = VŽDY EDIT (MOBILE)
+  // ✅ 1 PRST = VŽDY EDIT (CANVAS)
   // ===========================
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
-
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -748,8 +710,7 @@ export default function Page() {
 
     const currentMode = dragRef.current.modeAtDown;
 
-    if (currentMode === "move" || currentMode === "size") {
-      // ✅ v size režime nechávame drag stále ako MOVE (komfort)
+    if (currentMode === "move") {
       const nx = dragRef.current.startPos.x + dx / canvasW;
       const ny = dragRef.current.startPos.y + dy / canvasH;
       setPos({ x: clamp(nx, 0, 1), y: clamp(ny, 0, 1) });
@@ -829,40 +790,50 @@ export default function Page() {
     );
   }
 
-  function ScaleRow({ label, value, axis }: { label: string; value: number; axis: "x" | "y" | "z" }) {
+  function SliderRow({
+    title,
+    value,
+    valueLabel,
+    min,
+    max,
+    step,
+    onChange,
+  }: {
+    title: string;
+    value: number;
+    valueLabel: string;
+    min: number;
+    max: number;
+    step: number;
+    onChange: (v: number) => void;
+  }) {
     return (
-      <div className="scaleRow">
-        <div className="scaleLbl">{label}</div>
-
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, -SCALE_STEP)} aria-label={`Zmenšiť ${label}`}>
-          −
-        </button>
+      <div className="sliderRow">
+        <div className="sliderLeft">
+          <div className="sliderTitle">{title}</div>
+          <div className="sliderVal">{valueLabel}</div>
+        </div>
 
         <input
           className="range range--big"
           type="range"
-          min={SCALE_MIN}
-          max={SCALE_MAX}
-          step={SCALE_STEP}
+          min={min}
+          max={max}
+          step={step}
           value={value}
-          disabled={loading}
-          onChange={(e) => setScaleAxis(axis, Number(e.target.value))}
-          aria-label={`Rozmer ${label}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerMove={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          onChange={(e) => onChange(Number(e.target.value))}
         />
-
-        <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(axis, SCALE_STEP)} aria-label={`Zväčšiť ${label}`}>
-          +
-        </button>
-
-        <div className="scaleVal">{value.toFixed(1)}%</div>
       </div>
     );
   }
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
-
-  // ✅ Floating panel helpers
-  const mobileScaleVal = scalePct[sizeAxis];
 
   return (
     <section className="ter-wrap">
@@ -872,24 +843,36 @@ export default function Page() {
           width: 100%;
           height: 42px;
           accent-color: #111;
+          -webkit-appearance: none;
+          appearance: none;
+          touch-action: pan-x;
         }
         .ter-wrap :global(input.range--big::-webkit-slider-runnable-track) {
           height: 10px;
           border-radius: 999px;
+          background: rgba(0, 0, 0, 0.18);
         }
         .ter-wrap :global(input.range--big::-webkit-slider-thumb) {
+          -webkit-appearance: none;
+          appearance: none;
           width: 22px;
           height: 22px;
           margin-top: -6px;
+          border-radius: 999px;
+          background: #111;
+          border: 2px solid #fff;
         }
         .ter-wrap :global(input.range--big::-moz-range-track) {
           height: 10px;
           border-radius: 999px;
+          background: rgba(0, 0, 0, 0.18);
         }
         .ter-wrap :global(input.range--big::-moz-range-thumb) {
           width: 22px;
           height: 22px;
-          border: none;
+          border-radius: 999px;
+          border: 2px solid #fff;
+          background: #111;
         }
       `}</style>
 
@@ -996,13 +979,6 @@ export default function Page() {
           max-width: 110ch;
         }
 
-        .grid {
-          display: grid;
-          grid-template-columns: 2.2fr 0.8fr;
-          gap: 18px;
-          margin-top: 18px;
-          align-items: start;
-        }
         .card {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
@@ -1010,94 +986,34 @@ export default function Page() {
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
           overflow: hidden;
         }
-        .cardHeader {
-          padding: 14px 16px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+
+        .topBars {
+          display: grid;
+          gap: 10px;
+          padding: 14px 16px 0;
+        }
+        .bar {
           display: flex;
-          justify-content: space-between;
           align-items: center;
+          justify-content: space-between;
           gap: 12px;
-        }
-        .cardTitle {
-          font-size: 16px;
-          font-weight: 900;
-          letter-spacing: -0.01em;
-        }
-        .hint {
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.55);
-          font-weight: 700;
-        }
-        .cardBody {
-          padding: 14px 16px;
-        }
-
-        .canvasWrap {
-          display: grid;
-          gap: 10px;
-        }
-
-        .canvasShell {
-          background: #fff;
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          border-radius: 14px;
-          overflow: hidden;
-          padding: 10px;
-        }
-
-        .canvasStage {
-          position: relative;
-          width: 100%;
-          display: grid;
-          place-items: start;
-        }
-
-        canvas {
-          border-radius: 12px;
-          display: block;
-          background: #fff;
-        }
-
-        .toolbar {
-          display: flex;
-          gap: 10px;
           flex-wrap: wrap;
-          align-items: center;
-          justify-content: space-between;
         }
-        .tabs {
+        .barGroup {
           display: inline-flex;
-          border: 1px solid rgba(0, 0, 0, 0.1);
-          background: rgba(0, 0, 0, 0.03);
-          border-radius: 999px;
-          padding: 4px;
-          gap: 4px;
-        }
-        .tab {
-          border: none;
-          background: transparent;
-          border-radius: 999px;
-          padding: 9px 12px;
-          font-weight: 800;
-          font-size: 13px;
-          cursor: pointer;
-          color: rgba(0, 0, 0, 0.7);
-          user-select: none;
-        }
-        .tab.active {
-          background: #fff;
-          color: #111;
-          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
-        }
-
-        .row {
-          display: flex;
           gap: 10px;
           align-items: center;
           flex-wrap: wrap;
         }
+        .barRight {
+          display: inline-flex;
+          gap: 10px;
+          align-items: center;
+          justify-content: flex-end;
+          flex-wrap: wrap;
+        }
 
-        .ter-btn {
+        .btn {
           border-radius: 12px;
           padding: 11px 12px;
           font-weight: 900;
@@ -1105,121 +1021,84 @@ export default function Page() {
           border: 1px solid rgba(0, 0, 0, 0.14);
           background: #fff;
           color: #111;
+          font-size: 13px;
         }
-        .ter-btn:disabled {
+        .btn:disabled {
           opacity: 0.55;
           cursor: not-allowed;
         }
-        .ter-btn--primary {
+        .btnSoft {
+          background: rgba(0, 0, 0, 0.03);
+          border-color: rgba(0, 0, 0, 0.12);
+        }
+        .btnActive {
           background: #111;
           color: #fff;
           border-color: #111;
         }
-        .ter-btn--ghost {
-          background: rgba(0, 0, 0, 0.03);
-          border-color: rgba(0, 0, 0, 0.12);
-          color: #111;
+        .btnAccent {
+          background: #111;
+          color: #fff;
+          border-color: #111;
+          box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
         }
 
-        .miniBtn {
-          width: 34px;
-          height: 34px;
-          min-width: 34px;
-          min-height: 34px;
-          border-radius: 10px;
-          border: 1px solid rgba(0, 0, 0, 0.16);
-          background: rgba(0, 0, 0, 0.03);
-          color: #111;
-          font-weight: 950;
-          font-size: 18px;
-          line-height: 1;
-          display: inline-grid;
-          place-items: center;
-          cursor: pointer;
-          user-select: none;
-        }
-        .miniBtn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-        }
-
-        .field {
-          display: grid;
-          gap: 6px;
-        }
-        .label {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.65);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-        .input,
-        .select,
-        .textarea {
-          width: 100%;
+        .select {
           padding: 11px 12px;
           border-radius: 12px;
           border: 1px solid rgba(0, 0, 0, 0.12);
           background: #fff;
           outline: none;
-          font-weight: 700;
+          font-weight: 800;
           color: #111;
-        }
-        .textarea {
-          min-height: 96px;
-          resize: vertical;
-          line-height: 1.35;
+          min-width: 260px;
         }
 
-        .scaleBlock {
-          display: grid;
-          gap: 12px;
-          margin-top: 6px;
+        .sliderPanel {
+          padding: 10px 16px 12px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
         }
-        .scaleRow {
+        .sliderRow {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .sliderLeft {
           display: flex;
-          align-items: center;
+          align-items: baseline;
+          justify-content: space-between;
           gap: 10px;
         }
-        .scaleLbl {
-          width: 18px;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.75);
-          flex: 0 0 auto;
-        }
-        .scaleVal {
-          width: 76px;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
-          font-weight: 900;
-          color: rgba(0, 0, 0, 0.7);
-          flex: 0 0 auto;
-        }
-
-        .sticky {
-          position: sticky;
-          top: 16px;
-        }
-        .sectionTitle {
+        .sliderTitle {
           font-size: 12px;
-          font-weight: 900;
+          font-weight: 950;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          color: rgba(0, 0, 0, 0.55);
-          margin: 2px 0 10px;
+          color: rgba(0, 0, 0, 0.6);
         }
-        .divider {
-          height: 1px;
-          background: rgba(0, 0, 0, 0.08);
-          margin: 14px 0;
+        .sliderVal {
+          font-size: 13px;
+          font-weight: 950;
+          color: rgba(0, 0, 0, 0.85);
+          font-variant-numeric: tabular-nums;
         }
 
-        .note {
-          font-size: 13px;
-          color: rgba(0, 0, 0, 0.65);
-          font-weight: 650;
+        .canvasArea {
+          padding: 12px 16px 16px;
         }
+        .canvasShell {
+          background: #fff;
+          border: 1px solid rgba(0, 0, 0, 0.08);
+          border-radius: 14px;
+          overflow: hidden;
+          padding: 10px;
+        }
+        canvas {
+          border-radius: 12px;
+          display: block;
+          background: #fff;
+        }
+
         .errorBox {
           margin-top: 10px;
           padding: 12px;
@@ -1233,7 +1112,7 @@ export default function Page() {
         .variantsWrap {
           display: grid;
           gap: 10px;
-          margin-top: 12px;
+          padding: 0 16px 18px;
         }
         .variantsHead {
           display: flex;
@@ -1274,9 +1153,6 @@ export default function Page() {
         .variantCard:disabled {
           cursor: default;
           opacity: 0.75;
-        }
-        .variantCard.has:hover {
-          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
         }
         .variantCard.selected {
           outline: 3px solid rgba(0, 0, 0, 0.85);
@@ -1320,7 +1196,6 @@ export default function Page() {
           font-weight: 800;
           color: rgba(0, 0, 0, 0.45);
         }
-
         .variantActions {
           display: flex;
           gap: 8px;
@@ -1338,202 +1213,38 @@ export default function Page() {
           color: #111;
           font-size: 12px;
         }
-        .smallBtn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-        }
         .smallBtn.primary {
           background: #111;
           border-color: #111;
           color: #fff;
         }
 
-        .mobileBar {
-          display: none;
+        .footRow {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
         }
+        .note {
+          font-size: 13px;
+          color: rgba(0, 0, 0, 0.65);
+          font-weight: 650;
+        }
+
         @media (max-width: 960px) {
-          .grid {
-            grid-template-columns: 1fr;
-          }
-          h2 {
-            font-size: 28px;
-          }
-          .sticky {
-            position: static;
-          }
-          .desktopOnly {
-            display: none;
-          }
           .variantsGrid {
             grid-template-columns: 1fr;
           }
           .variantCard img {
             height: 160px;
           }
-          .mobileBar {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-            background: rgba(246, 246, 246, 0.92);
-            backdrop-filter: blur(10px);
-            border-top: 1px solid rgba(0, 0, 0, 0.08);
-            z-index: 60;
+          h2 {
+            font-size: 26px;
           }
-          .mobileSpacer {
-            height: 86px;
+          .select {
+            min-width: 220px;
           }
-        }
-
-        /* ✅ Mobile inline control bar nad canvasom */
-        .mobileInlineBar {
-          display: none;
-        }
-        @media (max-width: 960px) {
-          .mobileInlineBar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            flex-wrap: wrap;
-            padding: 10px 0 2px;
-          }
-          .iconBtn {
-            border-radius: 12px;
-            padding: 9px 10px;
-            font-weight: 950;
-            border: 1px solid rgba(0, 0, 0, 0.12);
-            background: rgba(0, 0, 0, 0.03);
-            cursor: pointer;
-            user-select: none;
-          }
-        }
-
-        /* ✅ Floating controls priamo na canvase */
-        .floatWrap {
-          position: absolute;
-          right: 10px;
-          bottom: 10px;
-          z-index: 20;
-          pointer-events: none; /* dôležité: mimo panelu neblokuj edit */
-        }
-        .floatCard {
-          pointer-events: auto;
-          width: min(320px, calc(100vw - 48px));
-          border-radius: 16px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(255, 255, 255, 0.92);
-          backdrop-filter: blur(10px);
-          box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
-          overflow: hidden;
-        }
-        .floatHead {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          padding: 10px 12px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-        }
-        .floatTitle {
-          font-weight: 950;
-          font-size: 12px;
-          color: rgba(0, 0, 0, 0.72);
-          letter-spacing: -0.01em;
-        }
-        .floatToggle {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(0, 0, 0, 0.03);
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-weight: 950;
-          cursor: pointer;
-          user-select: none;
-        }
-        .floatBody {
-          padding: 10px 12px 12px;
-          display: grid;
-          gap: 10px;
-        }
-        .pillRow {
-          display: flex;
-          gap: 6px;
-          flex-wrap: wrap;
-        }
-        .pill {
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-weight: 950;
-          font-size: 12px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: rgba(0, 0, 0, 0.03);
-          cursor: pointer;
-          user-select: none;
-        }
-        .pill.on {
-          background: #111;
-          border-color: #111;
-          color: #fff;
-        }
-
-        .miniRow {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-        }
-        .miniLabel {
-          font-size: 12px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.68);
-        }
-        .miniVal {
-          font-size: 12px;
-          font-weight: 950;
-          color: rgba(0, 0, 0, 0.85);
-          font-variant-numeric: tabular-nums;
-        }
-
-        /* Modal (mobil settings) */
-        .miniModalOverlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.55);
-          display: grid;
-          place-items: center;
-          padding: 16px;
-          z-index: 9998;
-        }
-        .miniModalCard {
-          width: min(520px, 100%);
-          border-radius: 18px;
-          background: #fff;
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
-          overflow: hidden;
-        }
-        .miniModalHead {
-          padding: 14px 16px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 12px;
-        }
-        .miniModalTitle {
-          font-weight: 1000;
-          letter-spacing: -0.01em;
-          margin: 0;
-          font-size: 16px;
-        }
-        .miniModalBody {
-          padding: 14px 16px 16px;
-          display: grid;
-          gap: 12px;
         }
 
         .modalOverlay {
@@ -1584,6 +1295,33 @@ export default function Page() {
         .span2 {
           grid-column: 1 / -1;
         }
+        .field {
+          display: grid;
+          gap: 6px;
+        }
+        .label {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(0, 0, 0, 0.65);
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .input,
+        .textarea {
+          width: 100%;
+          padding: 11px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          outline: none;
+          font-weight: 700;
+          color: #111;
+        }
+        .textarea {
+          min-height: 96px;
+          resize: vertical;
+          line-height: 1.35;
+        }
         .errText {
           color: rgba(160, 0, 0, 0.9);
           font-size: 12px;
@@ -1602,7 +1340,6 @@ export default function Page() {
             grid-template-columns: 1fr;
           }
         }
-
         .pickGrid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -1634,9 +1371,6 @@ export default function Page() {
           justify-content: space-between;
           gap: 10px;
         }
-        .pickTop b {
-          font-size: 12px;
-        }
         .pickCard img {
           width: 100%;
           height: 130px;
@@ -1656,402 +1390,203 @@ export default function Page() {
           <Stepper />
         </div>
 
-        <div className="grid">
-          {/* LEFT */}
-          <div className="card">
-            <div className="cardHeader">
-              <div className="cardTitle">Editor</div>
-              <div className="hint">
-                Režim:{" "}
-                <b>
-                  {mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode === "size" ? "VEĽKOSŤ" : mode.toUpperCase()}
-                </b>
-              </div>
-            </div>
+        <div className="card">
+          {/* 2 horné lišty */}
+          <div className="topBars">
+            {/* Bar 1: upload + typ */}
+            <div className="bar">
+              <div className="barGroup">
+                <label className="btn btnSoft" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  Nahraj fotku (podklad)
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] || null;
+                      setBgFile(f);
+                      setError("");
+                    }}
+                  />
+                </label>
 
-            <div className="cardBody">
-              <div className="canvasWrap">
-                {/* ✅ Desktop toolbar (ponechané) */}
-                <div className="toolbar desktopOnly">
-                  <div className="tabs" role="tablist" aria-label="Režimy">
-                    <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
-                      Posun
-                    </button>
-                    <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
-                      Otoč 3D
-                    </button>
-                  </div>
-
-                  <div className="row">
-                    <div className="field" style={{ minWidth: 260 }}>
-                      <div className="label">Zoom</div>
-                      <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-                    </div>
-                    <div className="note" style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {editorZoom}%
-                    </div>
-                    <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
-                      Reset
-                    </button>
-                  </div>
-                </div>
-
-                {/* ✅ Mobile inline bar (priamo pri canvase) */}
-                <div className="mobileInlineBar">
-                  <div className="tabs" role="tablist" aria-label="Režimy (mobil)">
-                    <button type="button" className={`tab ${mode === "move" ? "active" : ""}`} onClick={() => setMode("move")}>
-                      Posun
-                    </button>
-                    <button type="button" className={`tab ${mode === "rotate3d" ? "active" : ""}`} onClick={() => setMode("rotate3d")}>
-                      Otoč 3D
-                    </button>
-                    <button type="button" className={`tab ${mode === "size" ? "active" : ""}`} onClick={() => setMode("size")}>
-                      Veľkosť
-                    </button>
-                  </div>
-
-                  <div className="row" style={{ gap: 8 }}>
-                    <button type="button" className="iconBtn" onClick={() => setMobileSettingsOpen(true)}>
-                      Nastavenia
-                    </button>
-                    <button type="button" className="iconBtn" onClick={snapToGround}>
-                      Zem
-                    </button>
-                    <button type="button" className="iconBtn" onClick={resetAll}>
-                      Reset
-                    </button>
-                  </div>
-                </div>
-
-                <div className="canvasShell">
-                  <div className="canvasStage">
-                    <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
-                      <canvas
-                        ref={canvasRef}
-                        width={canvasW}
-                        height={canvasH}
-                        style={{
-                          width: `${(canvasW * editorZoom) / 100}px`,
-                          height: `${(canvasH * editorZoom) / 100}px`,
-                          touchAction: "none",
-                        }}
-                        onPointerDown={onPointerDown}
-                        onPointerMove={onPointerMove}
-                        onPointerUp={onPointerUp}
-                        onPointerCancel={onPointerUp}
-                      />
-                    </div>
-
-                    {/* ✅ Floating panel priamo na canvase (mobil) */}
-                    <div className="floatWrap">
-                      <div className="floatCard">
-                        <div className="floatHead">
-                          <div className="floatTitle">Ovládanie</div>
-                          <button type="button" className="floatToggle" onClick={() => setFloatOpen((v) => !v)}>
-                            {floatOpen ? "Skryť" : "Zobraziť"}
-                          </button>
-                        </div>
-
-                        {floatOpen ? (
-                          <div className="floatBody">
-                            {/* Zoom (vždy dostupný) */}
-                            <div className="miniRow">
-                              <div className="miniLabel">Zoom</div>
-                              <div className="miniVal">{editorZoom}%</div>
-                            </div>
-                            <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-
-                            {/* Režim SIZE: os + slider */}
-                            {mode === "size" ? (
-                              <>
-                                <div className="miniRow" style={{ marginTop: 2 }}>
-                                  <div className="miniLabel">Rozmer</div>
-                                  <div className="miniVal">
-                                    {sizeAxis.toUpperCase()}: {mobileScaleVal.toFixed(1)}%
-                                  </div>
-                                </div>
-
-                                <div className="pillRow" aria-label="Os rozmeru">
-                                  <button type="button" className={`pill ${sizeAxis === "x" ? "on" : ""}`} onClick={() => setSizeAxis("x")}>
-                                    X
-                                  </button>
-                                  <button type="button" className={`pill ${sizeAxis === "y" ? "on" : ""}`} onClick={() => setSizeAxis("y")}>
-                                    Y
-                                  </button>
-                                  <button type="button" className={`pill ${sizeAxis === "z" ? "on" : ""}`} onClick={() => setSizeAxis("z")}>
-                                    Z
-                                  </button>
-                                </div>
-
-                                <div className="miniRow" style={{ gap: 8 }}>
-                                  <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, -SCALE_STEP)} aria-label="Zmenšiť">
-                                    −
-                                  </button>
-                                  <input
-                                    className="range range--big"
-                                    type="range"
-                                    min={SCALE_MIN}
-                                    max={SCALE_MAX}
-                                    step={SCALE_STEP}
-                                    value={mobileScaleVal}
-                                    disabled={loading}
-                                    onChange={(e) => setScaleAxis(sizeAxis, Number(e.target.value))}
-                                    aria-label="Rozmer"
-                                  />
-                                  <button type="button" className="miniBtn" disabled={loading} onClick={() => bumpScaleAxis(sizeAxis, SCALE_STEP)} aria-label="Zväčšiť">
-                                    +
-                                  </button>
-                                </div>
-
-                                <div className="note" style={{ marginTop: 4 }}>
-                                  Tip: v režime <b>Veľkosť</b> stále môžeš pergolu prstom posúvať.
-                                </div>
-                              </>
-                            ) : null}
-
-                            {/* Režim ROTATE: rýchle reset */}
-                            {mode === "rotate3d" ? (
-                              <div className="row" style={{ justifyContent: "space-between", marginTop: 2 }}>
-                                <div className="note">Tip: ťah prstom = otočenie</div>
-                                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetRotation}>
-                                  Reset rotácie
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="variantsWrap">
-                  <div className="variantsHead">
-                    <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
-                    <div className="variantsNote">
-                      Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
-                    </div>
-                  </div>
-
-                  <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
-                    {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
-                      const v = variants[i] || null;
-                      const selected = selectedVariantIndex === i;
-
-                      return (
-                        <div key={i} style={{ display: "grid", gap: 0 }}>
-                          <button
-                            type="button"
-                            className={`variantCard ${selected ? "selected" : ""} ${v ? "has" : ""}`}
-                            onClick={() => {
-                              if (!v) return;
-                              setSelectedVariantIndex(i);
-                            }}
-                            disabled={!v}
-                            aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
-                          >
-                            <div className="variantTop">
-                              <div>
-                                <div className="variantBadge">Variant {i + 1}</div>
-                                {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
-                              </div>
-                              {selected ? <div className="variantSelected">Vybrané</div> : null}
-                            </div>
-
-                            {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
-                          </button>
-
-                          {v ? (
-                            <div className="variantActions">
-                              <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
-                                Stiahnuť
-                              </button>
-                              <button
-                                type="button"
-                                className={`smallBtn ${selected ? "primary" : ""}`}
-                                onClick={() => {
-                                  setSelectedVariantIndex(i);
-                                  if (!leadSubmitted) {
-                                    setPendingAction({ kind: "single", index: i });
-                                    setLeadOpen(true);
-                                  }
-                                }}
-                              >
-                                Vybrať do formulára
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="row" style={{ justifyContent: "space-between" }}>
-                    <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
-                    <button type="button" className="ter-btn ter-btn--ghost" onClick={snapToGround}>
-                      Zarovnať na zem
-                    </button>
-                  </div>
-
-                  <div className="row" style={{ justifyContent: "flex-end" }}>
-                    <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                      Stiahnuť všetky ({variants.length})
-                    </button>
-                  </div>
-
-                  <div className="mobileSpacer" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* RIGHT sticky (desktop only) */}
-          <div className="card sticky desktopOnly">
-            <div className="cardHeader">
-              <div className="cardTitle">Ovládanie</div>
-              <div className="hint">{leadSubmitted ? "✅ Sťahovanie odomknuté" : "🔒 Sťahovanie po formulári"}</div>
-            </div>
-
-            <div className="cardBody">
-              <div className="sectionTitle">Krok 1</div>
-
-              <div className="field">
-                <div className="label">Fotka (podklad)</div>
-                <input
-                  className="input"
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setBgFile(f);
-                    setError("");
-                  }}
-                />
-              </div>
-
-              <div style={{ height: 10 }} />
-
-              <div className="field">
-                <div className="label">Typ (pre ďalšiu generáciu)</div>
                 <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
                   <option value="bioklim">Bioklimatická pergola</option>
                   <option value="pevna">Pergola s pevnou strechou</option>
                   <option value="zimna">Zimná záhrada</option>
                 </select>
               </div>
+            </div>
 
-              <div className="divider" />
-
-              <div className="sectionTitle">Rozmery (1% – 200%)</div>
-              <div className="scaleBlock">
-                <ScaleRow label="X" axis="x" value={scalePct.x} />
-                <ScaleRow label="Y" axis="y" value={scalePct.y} />
-                <ScaleRow label="Z" axis="z" value={scalePct.z} />
-              </div>
-
-              <div className="divider" />
-
-              {error ? <div className="errorBox">Chyba: {error}</div> : null}
-
-              <div className="divider" />
-
-              <div className="sectionTitle">Krok 3</div>
-
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
-                  {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS} variantov` : `Vygenerovať variant (${variants.length + 1}/${MAX_VARIANTS})`}
+            {/* Bar 2: režimy + X/Y/Z/Zoom + Reset + Generate (vpravo) */}
+            <div className="bar">
+              <div className="barGroup">
+                <button type="button" className={`btn ${mode === "move" ? "btnActive" : ""}`} onClick={() => setMode("move")}>
+                  Posun
+                </button>
+                <button type="button" className={`btn ${mode === "rotate3d" ? "btnActive" : ""}`} onClick={() => setMode("rotate3d")}>
+                  Otoč 3D
                 </button>
 
-                <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                  Stiahnuť všetky
+                <button type="button" className={`btn ${panel === "x" ? "btnActive" : ""}`} onClick={() => setPanel("x")}>
+                  Šírka
+                </button>
+                <button type="button" className={`btn ${panel === "y" ? "btnActive" : ""}`} onClick={() => setPanel("y")}>
+                  Výška
+                </button>
+                <button type="button" className={`btn ${panel === "z" ? "btnActive" : ""}`} onClick={() => setPanel("z")}>
+                  Hĺbka
+                </button>
+                <button type="button" className={`btn ${panel === "zoom" ? "btnActive" : ""}`} onClick={() => setPanel("zoom")}>
+                  Zoom
                 </button>
               </div>
 
-              {selectedVariant ? (
-                <div style={{ marginTop: 10 }} className="note">
-                  Vybrané do formulára: <b>Variant {selectedVariantIndex + 1}</b> • {typeLabel(selectedVariant.type)}
-                </div>
-              ) : (
-                <div style={{ marginTop: 10 }} className="note">
-                  Najprv vygeneruj aspoň 1 variantu.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ✅ Mobile action bar (dole) */}
-      <div className="mobileBar">
-        <button type="button" className="ter-btn ter-btn--primary" onClick={generate} disabled={!canGenerate}>
-          {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
-        </button>
-
-        <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-          Stiahnuť všetky
-        </button>
-      </div>
-
-      {/* ✅ Mobile settings modal (upload + typ) */}
-      {mobileSettingsOpen ? (
-        <div
-          className="miniModalOverlay"
-          role="dialog"
-          aria-modal="true"
-          onMouseDown={(ev) => {
-            if (ev.target === ev.currentTarget) setMobileSettingsOpen(false);
-          }}
-        >
-          <div className="miniModalCard">
-            <div className="miniModalHead">
-              <p className="miniModalTitle">Nastavenia</p>
-              <button type="button" className="ter-btn ter-btn--ghost" onClick={() => setMobileSettingsOpen(false)}>
-                ✕
-              </button>
-            </div>
-
-            <div className="miniModalBody">
-              {error ? <div className="errorBox">Chyba: {error}</div> : null}
-
-              <div className="field">
-                <div className="label">Fotka (podklad)</div>
-                <input
-                  className="input"
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    setBgFile(f);
-                    setError("");
-                  }}
-                />
-              </div>
-
-              <div className="field">
-                <div className="label">Typ (pre ďalšiu generáciu)</div>
-                <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                  <option value="bioklim">Bioklimatická pergola</option>
-                  <option value="pevna">Pergola s pevnou strechou</option>
-                  <option value="zimna">Zimná záhrada</option>
-                </select>
-              </div>
-
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
+              <div className="barRight">
+                <button type="button" className="btn btnSoft" onClick={resetAll}>
                   Reset
                 </button>
-                <button type="button" className="ter-btn" onClick={() => setMobileSettingsOpen(false)}>
-                  Hotovo
-                </button>
-              </div>
 
-              <div className="note">
-                Tip: režim <b>Veľkosť</b> otvorí slidre priamo na obrázku (floating panel).
+                <button type="button" className="btn btnAccent" onClick={generate} disabled={!canGenerate}>
+                  {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                </button>
               </div>
             </div>
           </div>
+
+          {/* Slider panel pod lištami */}
+          <div className="sliderPanel">
+            {panel === "zoom" ? (
+              <SliderRow title="Zoom" value={editorZoom} valueLabel={`${editorZoom}%`} min={50} max={160} step={5} onChange={setEditorZoom} />
+            ) : panel === "x" ? (
+              <SliderRow
+                title="Šírka (X)"
+                value={scalePct.x}
+                valueLabel={`${scalePct.x.toFixed(1)}%`}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                onChange={(v) => setScaleAxis("x", v)}
+              />
+            ) : panel === "y" ? (
+              <SliderRow
+                title="Výška (Y)"
+                value={scalePct.y}
+                valueLabel={`${scalePct.y.toFixed(1)}%`}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                onChange={(v) => setScaleAxis("y", v)}
+              />
+            ) : (
+              <SliderRow
+                title="Hĺbka (Z)"
+                value={scalePct.z}
+                valueLabel={`${scalePct.z.toFixed(1)}%`}
+                min={SCALE_MIN}
+                max={SCALE_MAX}
+                step={SCALE_STEP}
+                onChange={(v) => setScaleAxis("z", v)}
+              />
+            )}
+
+            {error ? <div className="errorBox">Chyba: {error}</div> : null}
+          </div>
+
+          {/* Canvas */}
+          <div className="canvasArea">
+            <div className="canvasShell">
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100), maxWidth: "100%" }}>
+                <canvas
+                  ref={canvasRef}
+                  width={canvasW}
+                  height={canvasH}
+                  style={{
+                    width: `${(canvasW * editorZoom) / 100}px`,
+                    height: `${(canvasH * editorZoom) / 100}px`,
+                    maxWidth: "100%",
+                    touchAction: "none",
+                  }}
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
+                  onPointerCancel={onPointerUp}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Variants */}
+          <div className="variantsWrap">
+            <div className="variantsHead">
+              <div className="variantsTitle">Varianty (max {MAX_VARIANTS})</div>
+              <div className="variantsNote">
+                Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
+              </div>
+            </div>
+
+            <div className="variantsGrid" role="list" aria-label="Varianty vizualizácie">
+              {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
+                const v = variants[i] || null;
+                const selected = selectedVariantIndex === i;
+
+                return (
+                  <div key={i} style={{ display: "grid", gap: 0 }}>
+                    <button
+                      type="button"
+                      className={`variantCard ${selected ? "selected" : ""}`}
+                      onClick={() => {
+                        if (!v) return;
+                        setSelectedVariantIndex(i);
+                      }}
+                      disabled={!v}
+                      aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
+                    >
+                      <div className="variantTop">
+                        <div>
+                          <div className="variantBadge">Variant {i + 1}</div>
+                          {v ? <div className="variantType">{typeLabel(v.type)}</div> : null}
+                        </div>
+                        {selected ? <div className="variantSelected">Vybrané</div> : null}
+                      </div>
+
+                      {v ? <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} /> : <div className="variantEmpty">Zatiaľ nevygenerované</div>}
+                    </button>
+
+                    {v ? (
+                      <div className="variantActions">
+                        <button type="button" className="smallBtn" onClick={() => onDownloadOne(i)}>
+                          Stiahnuť
+                        </button>
+                        <button
+                          type="button"
+                          className={`smallBtn ${selected ? "primary" : ""}`}
+                          onClick={() => {
+                            setSelectedVariantIndex(i);
+                            if (!leadSubmitted) {
+                              setPendingAction({ kind: "single", index: i });
+                              setLeadOpen(true);
+                            }
+                          }}
+                        >
+                          Vybrať do formulára
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="footRow">
+              <div className="note">Tip: posuň • otoč 3D • rohy pre zmenu veľkosti</div>
+              <button type="button" className="btn btnSoft" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                Stiahnuť všetky ({variants.length})
+              </button>
+            </div>
+          </div>
         </div>
-      ) : null}
+      </div>
 
       {/* Lead modal */}
       {leadOpen ? (
@@ -2071,7 +1606,7 @@ export default function Page() {
                   Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
                 </p>
               </div>
-              <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm}>
+              <button type="button" className="btn btnSoft" onClick={closeLeadForm}>
                 ✕
               </button>
             </div>
@@ -2079,17 +1614,22 @@ export default function Page() {
             <div className="modalBody">
               <form onSubmit={submitLead} className="formGrid">
                 <div className="span2">
-                  <div className="sectionTitle">Vyber vizualizáciu, ktorú odošleš *</div>
+                  <div className="sliderTitle" style={{ marginBottom: 8 }}>
+                    Vyber vizualizáciu, ktorú odošleš *
+                  </div>
                   <div className="pickGrid" role="list" aria-label="Výber vizualizácie">
                     {variants.map((v, i) => {
                       const sel = selectedVariantIndex === i;
                       return (
-                        <div key={v.id} className={`pickCard ${sel ? "selected" : ""}`} onClick={() => setSelectedVariantIndex(i)} role="button" tabIndex={0}>
+                        <div
+                          key={v.id}
+                          className={`pickCard ${sel ? "selected" : ""}`}
+                          onClick={() => setSelectedVariantIndex(i)}
+                          role="button"
+                          tabIndex={0}
+                        >
                           <div className="pickTop">
-                            <div>
-                              <b>Variant {i + 1}</b>
-                              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)", marginTop: 2 }}>{typeLabel(v.type)}</div>
-                            </div>
+                            <div style={{ fontWeight: 950, fontSize: 12 }}>Variant {i + 1}</div>
                             <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
                           </div>
                           <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} />
@@ -2125,7 +1665,9 @@ export default function Page() {
                 </div>
 
                 <div className="span2" style={{ marginTop: 4 }}>
-                  <div className="sectionTitle">Približné rozmery pergoly *</div>
+                  <div className="sliderTitle" style={{ marginBottom: 8 }}>
+                    Približné rozmery pergoly *
+                  </div>
                   <div className="dimsGrid">
                     <div className="field">
                       <div className="label">Šírka</div>
@@ -2148,7 +1690,9 @@ export default function Page() {
                 </div>
 
                 <div className="span2">
-                  <div className="sectionTitle">Poznámka zákazníka (voliteľné)</div>
+                  <div className="sliderTitle" style={{ marginBottom: 8 }}>
+                    Poznámka zákazníka (voliteľné)
+                  </div>
                   <textarea
                     className="textarea"
                     value={lead.customerNote}
@@ -2158,11 +1702,11 @@ export default function Page() {
                 </div>
 
                 <div className="span2" style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-                  <button type="button" className="ter-btn ter-btn--ghost" onClick={closeLeadForm} disabled={leadSubmitting}>
+                  <button type="button" className="btn btnSoft" onClick={closeLeadForm} disabled={leadSubmitting}>
                     Zrušiť
                   </button>
 
-                  <button type="submit" className="ter-btn ter-btn--primary" disabled={leadSubmitting}>
+                  <button type="submit" className="btn btnAccent" disabled={leadSubmitting}>
                     {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
                   </button>
                 </div>
