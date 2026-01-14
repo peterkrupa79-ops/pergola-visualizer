@@ -24,8 +24,6 @@ Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and
 
 const MAX_VARIANTS = 6;
 
-const CANVAS_BG = "#0b0f16";
-
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
@@ -74,15 +72,7 @@ function Icon({
   name,
   size = 18,
 }: {
-  name:
-    | "upload"
-    | "move"
-    | "rotate"
-    | "resize"
-    | "reset"
-    | "sparkles"
-    | "download"
-    | "zoom";
+  name: "upload" | "move" | "rotate" | "resize" | "reset" | "sparkles" | "download" | "zoom";
   size?: number;
 }) {
   const common = { width: size, height: size, viewBox: "0 0 24 24" };
@@ -163,150 +153,6 @@ function Icon({
   }
 }
 
-function SegBtn({
-  active,
-  onClick,
-  children,
-  title,
-}: {
-  active?: boolean;
-  onClick?: () => void;
-  children: React.ReactNode;
-  title?: string;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "10px 12px",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
-        color: "rgba(255,255,255,0.92)",
-        fontSize: 14,
-        lineHeight: 1,
-        userSelect: "none",
-        WebkitUserSelect: "none",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ChipBtn({
-  active,
-  onClick,
-  children,
-}: {
-  active?: boolean;
-  onClick?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "10px 12px",
-        borderRadius: 999,
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: active ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.05)",
-        color: "rgba(255,255,255,0.92)",
-        fontSize: 14,
-        lineHeight: 1,
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PrimaryBtn({
-  onClick,
-  children,
-  icon,
-  disabled,
-}: {
-  onClick?: () => void;
-  children: React.ReactNode;
-  icon?: React.ReactNode;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "12px 14px",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.14)",
-        background: disabled
-          ? "rgba(255,255,255,0.08)"
-          : "linear-gradient(135deg, rgba(63,181,255,0.24), rgba(255,255,255,0.06))",
-        color: "rgba(255,255,255,0.95)",
-        fontSize: 14,
-        fontWeight: 650,
-        userSelect: "none",
-        cursor: disabled ? "not-allowed" : "pointer",
-      }}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function GhostBtn({
-  onClick,
-  children,
-  icon,
-  disabled,
-}: {
-  onClick?: () => void;
-  children: React.ReactNode;
-  icon?: React.ReactNode;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "12px 14px",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(255,255,255,0.04)",
-        color: "rgba(255,255,255,0.92)",
-        fontSize: 14,
-        fontWeight: 650,
-        userSelect: "none",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.55 : 1,
-      }}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
 /** Custom slider = drag always works on mobile (pointer capture + stopPropagation) */
 function CustomSlider({
   min,
@@ -347,22 +193,14 @@ function CustomSlider({
   };
 
   const pct = ((value - min) / Math.max(1e-9, max - min)) * 100;
-  const pctClamped = clamp(pct, 0, 100);
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: 10,
-        padding: "10px 12px",
-        borderRadius: 14,
-        border: "1px solid rgba(255,255,255,0.12)",
-        background: "rgba(255,255,255,0.04)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13 }}>{label ?? "Hodnota"}</div>
-        <div style={{ color: "rgba(255,255,255,0.95)", fontSize: 13, fontWeight: 700 }}>
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+        <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(0,0,0,0.65)" }}>
+          {label ?? "Hodnota"}
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 950, color: "rgba(0,0,0,0.8)", fontVariantNumeric: "tabular-nums" }}>
           {String(value)}
           {suffix ?? ""}
         </div>
@@ -426,40 +264,100 @@ function CustomSlider({
         }}
         style={{
           position: "relative",
-          height: 22,
+          height: 42,
           borderRadius: 999,
-          background: "rgba(255,255,255,0.10)",
+          background: "rgba(0,0,0,0.10)",
           touchAction: "none",
           userSelect: "none",
           WebkitUserSelect: "none",
           outline: "none",
+          border: "1px solid rgba(0,0,0,0.10)",
         }}
       >
         <div
           style={{
             position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: `${pctClamped}%`,
+            left: 10,
+            right: 10,
+            top: "50%",
+            transform: "translateY(-50%)",
+            height: 12,
             borderRadius: 999,
-            background: "rgba(63,181,255,0.45)",
+            background: "rgba(0,0,0,0.14)",
+            overflow: "hidden",
           }}
-        />
+        >
+          <div style={{ height: "100%", width: `${clamp(pct, 0, 100)}%`, background: "rgba(0,0,0,0.55)" }} />
+        </div>
+
         <div
           style={{
             position: "absolute",
             top: "50%",
-            left: `${pctClamped}%`,
+            left: `calc(10px + (${clamp(pct, 0, 100)}% * (100% - 20px) / 100))`,
             transform: "translate(-50%, -50%)",
-            width: 18,
-            height: 18,
+            width: 26,
+            height: 26,
             borderRadius: 999,
-            background: "rgba(255,255,255,0.92)",
-            boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+            background: "#111",
+            boxShadow: "0 10px 24px rgba(0,0,0,0.18)",
+            border: "2px solid rgba(255,255,255,0.9)",
           }}
         />
       </div>
+    </div>
+  );
+}
+
+function Segmented({
+  value,
+  onChange,
+  items,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  items: { value: string; label: string; icon?: React.ReactNode }[];
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        gap: 6,
+        padding: 6,
+        borderRadius: 999,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "rgba(0,0,0,0.03)",
+      }}
+    >
+      {items.map((it) => {
+        const active = it.value === value;
+        return (
+          <button
+            key={it.value}
+            type="button"
+            onClick={() => onChange(it.value)}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 14px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,0,0,0.10)",
+              background: active ? "#fff" : "transparent",
+              boxShadow: active ? "0 10px 22px rgba(0,0,0,0.10)" : "none",
+              cursor: "pointer",
+              fontWeight: 900,
+              color: active ? "#111" : "rgba(0,0,0,0.55)",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {it.icon}
+            {it.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -478,9 +376,7 @@ export default function Page() {
     isMobileRef.current = isMobile;
   }, [isMobile]);
 
-  // ======================
-  // BG upload
-  // ======================
+  // ===== Background upload =====
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
   const [bgImg, setBgImg] = useState<HTMLImageElement | null>(null);
@@ -495,9 +391,7 @@ export default function Page() {
     img.src = bgUrl;
   }, [bgUrl]);
 
-  // ======================
-  // Pergola type / model
-  // ======================
+  // ===== Pergola type / model =====
   const [pergolaType, setPergolaType] = useState<PergolaType>("bioklim");
   const glbPath = useMemo(() => {
     if (pergolaType === "bioklim") return "/models/bioklim.glb";
@@ -505,16 +399,12 @@ export default function Page() {
     return "/models/zimna.glb";
   }, [pergolaType]);
 
-  // ======================
-  // Canvas sizing (responsive)
-  // ======================
+  // ===== Canvas sizing =====
   const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({ w: 980, h: 560 });
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     const compute = () => {
-      const availW = Math.max(320, Math.floor(window.innerWidth - 28));
-      const maxW = Math.min(1100, availW);
+      const availW = Math.max(320, Math.floor(window.innerWidth - 32));
+      const maxW = Math.min(980, availW);
       const h = Math.max(240, Math.round((maxW * 560) / 980));
       setCanvasSize({ w: maxW, h });
     };
@@ -526,25 +416,10 @@ export default function Page() {
   const canvasW = canvasSize.w;
   const canvasH = canvasSize.h;
 
-  // ======================
-  // Editor state
-  // ======================
+  // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
-
-  // panel selection + open/close
   const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
-  const [panelOpen, setPanelOpen] = useState(true);
-
-  function togglePanel(p: "zoom" | "x" | "y" | "z") {
-    setPanel((prev) => {
-      if (prev === p) {
-        setPanelOpen((o) => !o);
-        return prev;
-      }
-      setPanelOpen(true);
-      return p;
-    });
-  }
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const [editorZoom, setEditorZoom] = useState(100);
 
@@ -553,7 +428,7 @@ export default function Page() {
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
-  // mobile default smaller
+  // mobile defaults
   useEffect(() => {
     if (!isMobileRef.current) return;
     setScalePct({ x: 75, y: 75, z: 75 });
@@ -564,11 +439,8 @@ export default function Page() {
   const [bboxRect, setBboxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
 
-  // ======================
-  // Three.js refs (render to 2D canvas)
-  // ======================
+  // ===== Three.js refs =====
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
   const threeReadyRef = useRef(false);
   const rendererRef = useRef<any>(null);
   const sceneRef = useRef<any>(null);
@@ -581,22 +453,17 @@ export default function Page() {
 
   const [prompt] = useState(FINAL_PROMPT_DEFAULT);
 
-  // ======================
-  // Variants (max 6)
-  // ======================
+  // ===== Variants =====
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
-
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
+
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  // ======================
-  // Lead gating
-  // ======================
+  // ===== Lead gating =====
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadSubmitting, setLeadSubmitting] = useState(false);
-
   const [pendingAction, setPendingAction] = useState<{ kind: "single"; index: number } | { kind: "all" } | null>(null);
 
   const [lead, setLead] = useState({
@@ -739,9 +606,7 @@ export default function Page() {
     setLeadOpen(true);
   }
 
-  // ======================
-  // Helpers
-  // ======================
+  // ===== Helpers =====
   function setScaleAxis(axis: "x" | "y" | "z", value: number) {
     setScalePct((prev) => ({ ...prev, [axis]: clampPct(value) }));
   }
@@ -753,7 +618,6 @@ export default function Page() {
     setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
     setError("");
     setPanel("zoom");
-    setPanelOpen(true);
     setSelectedVariantIndex(0);
   }
 
@@ -778,9 +642,7 @@ export default function Page() {
     return null;
   }
 
-  // ======================
-  // THREE INIT / RELOAD
-  // ======================
+  // ===== THREE INIT / RELOAD =====
   useEffect(() => {
     let cancelled = false;
 
@@ -806,10 +668,10 @@ export default function Page() {
         renderer.setSize(canvasW, canvasH, false);
         renderer.setPixelRatio(1);
 
-        const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.9);
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.95);
         scene.add(hemi);
 
-        const dir = new THREE.DirectionalLight(0xffffff, 1.05);
+        const dir = new THREE.DirectionalLight(0xffffff, 1.15);
         dir.position.set(1, 2, 1.2);
         scene.add(dir);
 
@@ -828,7 +690,6 @@ export default function Page() {
 
         const model = gltf.scene;
 
-        // normalize
         const bbox = new THREE.Box3().setFromObject(model);
         const size = bbox.getSize(new THREE.Vector3());
         const center = bbox.getCenter(new THREE.Vector3());
@@ -891,12 +752,10 @@ export default function Page() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // clear + dark bg
+    // clear (light editor)
     ctx.clearRect(0, 0, canvasW, canvasH);
-    ctx.fillStyle = CANVAS_BG;
-    ctx.fillRect(0, 0, canvasW, canvasH);
 
-    // background photo (cover)
+    // background photo (cover) OR placeholder
     if (bgImg) {
       const cw = canvasW;
       const ch = canvasH;
@@ -910,7 +769,9 @@ export default function Page() {
       const dy = (ch - dh) / 2;
       ctx.drawImage(bgImg, dx, dy, dw, dh);
     } else {
-      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.font = "14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
       ctx.fillText("Nahraj fotku (JPG/PNG)", 18, 28);
     }
@@ -960,9 +821,8 @@ export default function Page() {
           const rect = { x: minX, y: invMinY, w: maxX - minX, h: invMaxY - invMinY };
           setBboxRect(rect);
 
-          // dashed bbox
           ctx.save();
-          ctx.strokeStyle = "rgba(255,255,255,0.55)";
+          ctx.strokeStyle = "rgba(0,0,0,0.55)";
           ctx.lineWidth = 2;
           ctx.setLineDash([8, 6]);
           ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
@@ -999,9 +859,7 @@ export default function Page() {
     }
   }
 
-  // ===========================
-  // ✅ 1 PRST = VŽDY EDIT CANVAS
-  // ===========================
+  // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
     active: boolean;
     start: Vec2;
@@ -1120,9 +978,7 @@ export default function Page() {
     } catch {}
   }
 
-  // ======================
-  // Generate (real API)
-  // ======================
+  // ===== Generate (real API) =====
   async function generate() {
     if (!bgImg) return;
     if (variants.length >= MAX_VARIANTS) return;
@@ -1263,316 +1119,431 @@ export default function Page() {
     );
   }, [panel, editorZoom, scalePct]);
 
+  const stepCurrent = useMemo(() => {
+    const hasAnyVariant = variants.length > 0;
+    if (!bgImg) return 1;
+    if (!hasAnyVariant) return 2;
+    if (!leadSubmitted) return 4;
+    return 5;
+  }, [bgImg, variants.length, leadSubmitted]);
+
   return (
-    <div
-      ref={containerRef}
-      style={{
-        minHeight: "100vh",
-        background: "#070a10",
-        color: "white",
-      }}
-    >
-      {/* Top bar 1 */}
-      <div
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 30,
-          padding: "12px 12px",
-          background: "rgba(7,10,16,0.78)",
-          backdropFilter: "blur(10px)",
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
-          display: "flex",
-          gap: 10,
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <label
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(255,255,255,0.04)",
-              cursor: "pointer",
-              userSelect: "none",
-              WebkitUserSelect: "none",
-            }}
-          >
-            <Icon name="upload" />
-            <span style={{ fontSize: 14 }}>Upload fotky</span>
-            <input
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const f = e.target.files?.[0] || null;
-                setBgFile(f);
-                setError("");
-              }}
-            />
-          </label>
+    <section style={{ background: "#f6f6f6", color: "#111", padding: "28px 16px 90px", fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+        {/* Hero */}
+        <div style={{ display: "grid", gap: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 34, lineHeight: 1.15, letterSpacing: "-0.02em" }}>Vizualizácia pergoly na vašom dome</h2>
+          <p style={{ margin: 0, color: "rgba(0,0,0,0.70)", fontSize: 16, maxWidth: "110ch" }}>
+            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b>. <br />
+            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete (plus môžete dopísať poznámku).
+          </p>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ opacity: 0.75, fontSize: 13, marginLeft: 4 }}>Typ pergoly:</span>
-            <ChipBtn active={pergolaType === "bioklim"} onClick={() => setPergolaType("bioklim")}>
-              Bioklimatická
-            </ChipBtn>
-            <ChipBtn active={pergolaType === "pevna"} onClick={() => setPergolaType("pevna")}>
-              Pevná
-            </ChipBtn>
-            <ChipBtn active={pergolaType === "zimna"} onClick={() => setPergolaType("zimna")}>
-              Zimná
-            </ChipBtn>
+          <Stepper current={stepCurrent} />
+        </div>
+
+        {/* Editor card */}
+        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div style={{ fontSize: 18, fontWeight: 950 }}>Editor</div>
+            <div style={{ fontSize: 14, fontWeight: 850, color: "rgba(0,0,0,0.55)" }}>
+              Režim: <span style={{ color: "rgba(0,0,0,0.9)" }}>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : "RESIZE"}</span>
+            </div>
           </div>
-        </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <GhostBtn onClick={resetAll} icon={<Icon name="reset" />} disabled={loading}>
-            Reset
-          </GhostBtn>
-          <PrimaryBtn onClick={generate} disabled={!canGenerate} icon={<Icon name="sparkles" />}>
-            {loading ? "Generujem…" : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Generate (${variants.length + 1}/${MAX_VARIANTS})`}
-          </PrimaryBtn>
-        </div>
-      </div>
-
-      {/* Top bar 2 */}
-      <div
-        style={{
-          position: "sticky",
-          top: 62,
-          zIndex: 29,
-          padding: "10px 12px",
-          background: "rgba(7,10,16,0.72)",
-          backdropFilter: "blur(10px)",
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
-          display: "flex",
-          gap: 10,
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <SegBtn active={mode === "move"} onClick={() => setMode("move")} title="Posun">
-            <Icon name="move" />
-            Posun
-          </SegBtn>
-          <SegBtn active={mode === "rotate3d"} onClick={() => setMode("rotate3d")} title="Otoč 3D">
-            <Icon name="rotate" />
-            Otoč 3D
-          </SegBtn>
-          <SegBtn active={mode === "resize"} onClick={() => setMode("resize")} title="Resize">
-            <Icon name="resize" />
-            Resize
-          </SegBtn>
-
-          <div style={{ width: 1, height: 28, background: "rgba(255,255,255,0.12)" }} />
-
-          {/* ✅ tlačidlá pri ostatných tlačidlách nad fotkou */}
-          <ChipBtn active={panelOpen && panel === "zoom"} onClick={() => togglePanel("zoom")}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <Icon name="zoom" size={16} />
-              Zoom
-            </span>
-          </ChipBtn>
-          <ChipBtn active={panelOpen && panel === "x"} onClick={() => togglePanel("x")}>
-            Šírka
-          </ChipBtn>
-          <ChipBtn active={panelOpen && panel === "y"} onClick={() => togglePanel("y")}>
-            Výška
-          </ChipBtn>
-          <ChipBtn active={panelOpen && panel === "z"} onClick={() => togglePanel("z")}>
-            Hĺbka
-          </ChipBtn>
-        </div>
-
-        <div style={{ opacity: 0.7, fontSize: 13 }}>
-          1 prst = edit (na canvase) • zostáva {remaining}/{MAX_VARIANTS}
-        </div>
-      </div>
-
-      {/* ✅ slider sa objaví v samostatnom elemente pod tlačidlami */}
-      {panelOpen ? (
-        <div
-          style={{
-            position: "sticky",
-            top: 62 + 58,
-            zIndex: 28,
-            padding: "10px 12px",
-            background: "rgba(7,10,16,0.72)",
-            backdropFilter: "blur(10px)",
-            borderBottom: "1px solid rgba(255,255,255,0.08)",
-          }}
-          onPointerDownCapture={(e) => {
-            // ochrana proti tomu, aby niečo nad tým chytilo pointer v capture fáze
-            e.stopPropagation();
-          }}
-          onPointerMoveCapture={(e) => e.stopPropagation()}
-          onPointerUpCapture={(e) => e.stopPropagation()}
-          onTouchStartCapture={(e) => e.stopPropagation()}
-          onTouchMoveCapture={(e) => e.stopPropagation()}
-          onTouchEndCapture={(e) => e.stopPropagation()}
-        >
-          <div style={{ maxWidth: 520 }}>{sliderBox}</div>
-        </div>
-      ) : null}
-
-      {/* Main */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? "1fr" : "1fr 420px",
-          gap: 14,
-          padding: 14,
-          alignItems: "start",
-        }}
-      >
-        {/* Canvas */}
-        <div
-          style={{
-            borderRadius: 18,
-            overflow: "hidden",
-            border: "1px solid rgba(255,255,255,0.10)",
-            background: "rgba(255,255,255,0.03)",
-          }}
-        >
-          <div style={{ width: "100%", overflow: "auto" }}>
-            <div
-              style={{
-                width: Math.round((canvasW * editorZoom) / 100),
-                maxWidth: "100%",
-              }}
-            >
-              <canvas
-                ref={canvasRef}
-                width={canvasW}
-                height={canvasH}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-                style={{
-                  width: `${(canvasW * editorZoom) / 100}px`,
-                  height: `${(canvasH * editorZoom) / 100}px`,
-                  display: "block",
-                  touchAction: "none",
-                  background: CANVAS_BG,
-                }}
+          <div style={{ padding: 14, display: "grid", gap: 12 }}>
+            {/* Mode controls like screenshot */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <Segmented
+                value={mode}
+                onChange={(v) => setMode(v as Mode)}
+                items={[
+                  { value: "move", label: "Posun", icon: <Icon name="move" size={16} /> },
+                  { value: "rotate3d", label: "Otoč 3D", icon: <Icon name="rotate" size={16} /> },
+                  { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
+                ]}
               />
-            </div>
-          </div>
-        </div>
 
-        {/* Right panel */}
-        <div style={{ display: "grid", gap: 14 }}>
-          {/* ✅ slider už nie je v samostatnom "Nastavenia" prvku vpravo */}
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <label style={btnStyle}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <Icon name="upload" size={16} />
+                    Nahraj fotku
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] || null;
+                      setBgFile(f);
+                      setError("");
+                    }}
+                  />
+                </label>
 
-          {error ? (
-            <div
-              style={{
-                padding: "12px 12px",
-                borderRadius: 16,
-                border: "1px solid rgba(255,80,80,0.35)",
-                background: "rgba(255,80,80,0.08)",
-                color: "rgba(255,255,255,0.92)",
-                fontSize: 13,
-                fontWeight: 650,
-              }}
-            >
-              Chyba: {error}
-            </div>
-          ) : null}
+                <select
+                  value={pergolaType}
+                  onChange={(e) => setPergolaType(e.target.value as PergolaType)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(0,0,0,0.12)",
+                    background: "#fff",
+                    fontWeight: 800,
+                  }}
+                >
+                  <option value="bioklim">Bioklimatická pergola</option>
+                  <option value="pevna">Pergola s pevnou strechou</option>
+                  <option value="zimna">Zimná záhrada</option>
+                </select>
 
-          <div
-            style={{
-              padding: "12px 12px",
-              borderRadius: 16,
-              border: "1px solid rgba(255,255,255,0.10)",
-              background: "rgba(255,255,255,0.03)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-              <div style={{ fontSize: 14, fontWeight: 800 }}>Varianty (max {MAX_VARIANTS})</div>
-              <div style={{ opacity: 0.75, fontSize: 12 }}>{leadSubmitted ? "✅ sťahovanie odomknuté" : "🔒 po formulári"}</div>
-            </div>
-
-            {variants.length === 0 ? (
-              <div style={{ opacity: 0.72, fontSize: 13, marginTop: 10 }}>Zatiaľ nie sú vygenerované varianty.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                {variants.map((v, i) => {
-                  const sel = selectedVariantIndex === i;
-                  return (
-                    <div
-                      key={v.id}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "96px 1fr",
-                        gap: 10,
-                        alignItems: "center",
-                        padding: 10,
-                        borderRadius: 14,
-                        border: sel ? "1px solid rgba(255,255,255,0.35)" : "1px solid rgba(255,255,255,0.10)",
-                        background: sel ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedVariantIndex(i)}
-                        style={{
-                          width: 96,
-                          height: 72,
-                          borderRadius: 12,
-                          overflow: "hidden",
-                          background: "rgba(255,255,255,0.06)",
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          padding: 0,
-                          cursor: "pointer",
-                        }}
-                        aria-label={`Vybrať variant ${i + 1}`}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={`data:image/png;base64,${v.b64}`}
-                          alt={`Variant ${i + 1}`}
-                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                        />
-                      </button>
-
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 800 }}>
-                            Variant {i + 1} {sel ? "• vybrané" : ""}
-                          </div>
-                          <div style={{ opacity: 0.72, fontSize: 12 }}>{typeLabel(v.type)}</div>
-                        </div>
-
-                        <GhostBtn onClick={() => onDownloadOne(i)} icon={<Icon name="download" />}>
-                          Stiahnuť
-                        </GhostBtn>
-                      </div>
-                    </div>
-                  );
-                })}
+                <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <Icon name="reset" size={16} />
+                    Reset
+                  </span>
+                </button>
               </div>
-            )}
+            </div>
 
-            {variants.length > 0 ? (
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                <GhostBtn onClick={onDownloadAllClick} icon={<Icon name="download" />}>
-                  Stiahnuť všetky ({variants.length})
-                </GhostBtn>
+            {/* Canvas */}
+            <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, overflow: "hidden", padding: 10 }}>
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+                <canvas
+                  ref={canvasRef}
+                  width={canvasW}
+                  height={canvasH}
+                  onPointerDown={onPointerDown}
+                  onPointerMove={onPointerMove}
+                  onPointerUp={onPointerUp}
+                  onPointerCancel={onPointerUp}
+                  style={{
+                    width: `${(canvasW * editorZoom) / 100}px`,
+                    height: `${(canvasH * editorZoom) / 100}px`,
+                    display: "block",
+                    touchAction: "none",
+                    background: "#fff",
+                    borderRadius: 12,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Desktop settings (mobile uses bottom sheet) */}
+            {!isMobile ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => setPanel("zoom")} style={{ ...chipStyle, background: panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="zoom" size={16} />
+                      Zoom
+                    </span>
+                  </button>
+                  <button type="button" onClick={() => setPanel("x")} style={{ ...chipStyle, background: panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                    Šírka
+                  </button>
+                  <button type="button" onClick={() => setPanel("y")} style={{ ...chipStyle, background: panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                    Výška
+                  </button>
+                  <button type="button" onClick={() => setPanel("z")} style={{ ...chipStyle, background: panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                    Hĺbka
+                  </button>
+                </div>
+
+                {sliderBox}
               </div>
             ) : null}
+
+            {error ? <div style={errorBoxStyle}>Chyba: {error}</div> : null}
+          </div>
+        </div>
+
+        {/* Variants card */}
+        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 4 }}>
+              <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)" }}>
+                Varianty (max {MAX_VARIANTS})
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.60)" }}>
+                Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
+              </div>
+            </div>
+            <button type="button" onClick={onDownloadAllClick} disabled={variants.length === 0} style={{ ...btnStyle, opacity: variants.length === 0 ? 0.55 : 1, cursor: variants.length === 0 ? "not-allowed" : "pointer" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <Icon name="download" size={16} />
+                Stiahnuť všetky ({variants.length})
+              </span>
+            </button>
+          </div>
+
+          <div style={{ padding: 14 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
+                gap: 10,
+              }}
+              role="list"
+              aria-label="Varianty vizualizácie"
+            >
+              {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
+                const v = variants[i] || null;
+                const selected = selectedVariantIndex === i;
+
+                return (
+                  <div key={i} style={{ display: "grid", gap: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!v) return;
+                        setSelectedVariantIndex(i);
+                      }}
+                      disabled={!v}
+                      style={{
+                        border: selected ? "3px solid rgba(0,0,0,0.85)" : "1px solid rgba(0,0,0,0.10)",
+                        background: selected ? "#fff" : "rgba(0,0,0,0.015)",
+                        borderRadius: 14,
+                        overflow: "hidden",
+                        textAlign: "left",
+                        padding: 0,
+                        cursor: v ? "pointer" : "default",
+                        opacity: v ? 1 : 0.75,
+                      }}
+                      aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "10px 10px 8px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.02)" }}>
+                        <div>
+                          <div style={{ fontWeight: 950, fontSize: 12, color: "rgba(0,0,0,0.75)" }}>Variant {i + 1}</div>
+                          {v ? <div style={{ fontWeight: 900, fontSize: 12, color: "rgba(0,0,0,0.60)" }}>{typeLabel(v.type)}</div> : null}
+                        </div>
+                        {selected ? <div style={{ fontWeight: 950, fontSize: 12, color: "rgba(0,0,0,0.9)" }}>Vybrané</div> : null}
+                      </div>
+
+                      {v ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }} />
+                      ) : (
+                        <div style={{ padding: "14px 10px", fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.45)" }}>Zatiaľ nevygenerované</div>
+                      )}
+                    </button>
+
+                    {v ? (
+                      <div style={{ display: "flex", gap: 8, padding: 10, borderTop: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.015)" }}>
+                        <button type="button" onClick={() => onDownloadOne(i)} style={smallBtnStyle}>
+                          Stiahnuť
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedVariantIndex(i);
+                            if (!leadSubmitted) {
+                              setPendingAction({ kind: "single", index: i });
+                              setLeadOpen(true);
+                            }
+                          }}
+                          style={{ ...smallBtnStyle, background: selected ? "#111" : "#fff", color: selected ? "#fff" : "#111", borderColor: selected ? "#111" : "rgba(0,0,0,0.14)" }}
+                        >
+                          Vybrať do formulára
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Mobile bottom sheet (settings) */}
+      {isMobile ? (
+        <>
+          <div
+            style={{
+              position: "fixed",
+              left: 0,
+              right: 0,
+              bottom: 78,
+              padding: "10px 14px",
+              zIndex: 50,
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                pointerEvents: "auto",
+                background: "#fff",
+                border: "1px solid rgba(0,0,0,0.10)",
+                borderRadius: 18,
+                boxShadow: "0 16px 50px rgba(0,0,0,0.14)",
+                padding: 12,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "grid", gap: 2 }}>
+                <div style={{ fontSize: 14, fontWeight: 950 }}>Nastavenia (typ / zoom / rozmery)</div>
+                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.60)", fontWeight: 700 }}>
+                  Panel: <b>{panel === "zoom" ? "Zoom" : panel.toUpperCase()}</b>
+                </div>
+              </div>
+              <button type="button" onClick={() => setSheetOpen((s) => !s)} style={{ ...btnStyle, borderRadius: 999 }}>
+                {sheetOpen ? "Zavrieť" : "Otvoriť"}
+              </button>
+            </div>
+          </div>
+
+          {sheetOpen ? (
+            <div
+              role="dialog"
+              aria-modal="true"
+              onMouseDown={(ev) => {
+                if (ev.target === ev.currentTarget) setSheetOpen(false);
+              }}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.28)",
+                zIndex: 60,
+                display: "grid",
+                alignItems: "end",
+              }}
+            >
+              <div
+                style={{
+                  background: "#fff",
+                  borderTopLeftRadius: 22,
+                  borderTopRightRadius: 22,
+                  borderTop: "1px solid rgba(0,0,0,0.10)",
+                  boxShadow: "0 -18px 50px rgba(0,0,0,0.18)",
+                  padding: 14,
+                  maxHeight: "78vh",
+                  overflow: "auto",
+                }}
+              >
+                <div style={{ width: 46, height: 5, borderRadius: 999, background: "rgba(0,0,0,0.18)", margin: "0 auto 12px" }} />
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <div style={{ fontSize: 16, fontWeight: 950 }}>Nastavenia</div>
+                  <button type="button" onClick={() => setSheetOpen(false)} style={btnStyle}>
+                    ✕
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)" }}>Typ pergoly</div>
+                    <select
+                      value={pergolaType}
+                      onChange={(e) => setPergolaType(e.target.value as PergolaType)}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(0,0,0,0.12)",
+                        background: "#fff",
+                        fontWeight: 800,
+                      }}
+                    >
+                      <option value="bioklim">Bioklimatická pergola</option>
+                      <option value="pevna">Pergola s pevnou strechou</option>
+                      <option value="zimna">Zimná záhrada</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <button type="button" onClick={() => setPanel("zoom")} style={{ ...chipStyle, background: panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <Icon name="zoom" size={16} />
+                        Zoom
+                      </span>
+                    </button>
+                    <button type="button" onClick={() => setPanel("x")} style={{ ...chipStyle, background: panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                      Šírka
+                    </button>
+                    <button type="button" onClick={() => setPanel("y")} style={{ ...chipStyle, background: panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                      Výška
+                    </button>
+                    <button type="button" onClick={() => setPanel("z")} style={{ ...chipStyle, background: panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                      Hĺbka
+                    </button>
+                  </div>
+
+                  {sliderBox}
+
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, flex: 1, opacity: loading ? 0.6 : 1 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <Icon name="reset" size={16} />
+                        Reset
+                      </span>
+                    </button>
+                    <button type="button" onClick={() => setSheetOpen(false)} style={{ ...btnStyle, flex: 1 }}>
+                      Hotovo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {/* Mobile fixed bottom actions like screenshot */}
+      {isMobile ? (
+        <div
+          style={{
+            position: "fixed",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(246,246,246,0.92)",
+            backdropFilter: "blur(10px)",
+            borderTop: "1px solid rgba(0,0,0,0.08)",
+            padding: "12px 14px",
+            zIndex: 55,
+          }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <button
+              type="button"
+              onClick={generate}
+              disabled={!canGenerate}
+              style={{
+                height: 48,
+                borderRadius: 999,
+                border: "1px solid rgba(0,0,0,0.14)",
+                background: !canGenerate ? "rgba(0,0,0,0.10)" : "#111",
+                color: !canGenerate ? "rgba(0,0,0,0.45)" : "#fff",
+                fontWeight: 950,
+                fontSize: 15,
+                cursor: !canGenerate ? "not-allowed" : "pointer",
+              }}
+            >
+              {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+            </button>
+
+            <button
+              type="button"
+              onClick={onDownloadAllClick}
+              disabled={variants.length === 0}
+              style={{
+                height: 48,
+                borderRadius: 999,
+                border: "1px solid rgba(0,0,0,0.14)",
+                background: "#fff",
+                color: variants.length === 0 ? "rgba(0,0,0,0.45)" : "#111",
+                fontWeight: 950,
+                fontSize: 15,
+                cursor: variants.length === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              Stiahnuť všetky
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Lead modal */}
       {leadOpen ? (
@@ -1585,7 +1556,7 @@ export default function Page() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.62)",
+            background: "rgba(0,0,0,0.55)",
             display: "grid",
             placeItems: "center",
             padding: 16,
@@ -1594,19 +1565,18 @@ export default function Page() {
         >
           <div
             style={{
-              width: "min(940px, 100%)",
+              width: "min(900px, 100%)",
               borderRadius: 18,
-              background: "#0b0f16",
-              border: "1px solid rgba(255,255,255,0.12)",
-              boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
+              background: "#fff",
+              border: "1px solid rgba(0,0,0,0.12)",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
               overflow: "hidden",
-              color: "white",
             }}
           >
             <div
               style={{
                 padding: "14px 16px",
-                borderBottom: "1px solid rgba(255,255,255,0.10)",
+                borderBottom: "1px solid rgba(0,0,0,0.06)",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "flex-start",
@@ -1614,20 +1584,20 @@ export default function Page() {
               }}
             >
               <div>
-                <div style={{ fontWeight: 900, fontSize: 15 }}>Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</div>
-                <div style={{ marginTop: 6, opacity: 0.78, fontSize: 13 }}>
+                <div style={{ fontWeight: 950, fontSize: 16 }}>Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</div>
+                <div style={{ marginTop: 6, color: "rgba(0,0,0,0.65)", fontWeight: 650, fontSize: 13 }}>
                   Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
                 </div>
               </div>
-              <GhostBtn onClick={closeLeadForm}>✕</GhostBtn>
+              <button type="button" onClick={closeLeadForm} style={btnStyle}>
+                ✕
+              </button>
             </div>
 
             <div style={{ padding: "14px 16px 16px" }}>
               <form onSubmit={submitLead} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
-                  <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.8 }}>
-                    Vyber vizualizáciu *
-                  </div>
+                  <div style={labelStyle}>Vyber vizualizáciu *</div>
 
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 10, marginTop: 10 }}>
                     {variants.map((v, i) => {
@@ -1640,38 +1610,31 @@ export default function Page() {
                           style={{
                             borderRadius: 14,
                             overflow: "hidden",
-                            border: sel ? "2px solid rgba(255,255,255,0.85)" : "1px solid rgba(255,255,255,0.14)",
-                            background: sel ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                            border: sel ? "3px solid rgba(0,0,0,0.85)" : "1px solid rgba(0,0,0,0.14)",
+                            background: sel ? "#fff" : "rgba(0,0,0,0.01)",
                             cursor: "pointer",
                             padding: 0,
                             textAlign: "left",
                           }}
                         >
-                          <div style={{ padding: 10, borderBottom: "1px solid rgba(255,255,255,0.10)", display: "flex", justifyContent: "space-between" }}>
-                            <div style={{ fontWeight: 900, fontSize: 13 }}>Variant {i + 1}</div>
-                            <div style={{ fontWeight: 900, fontSize: 12, opacity: sel ? 1 : 0.65 }}>{sel ? "Vybrané" : ""}</div>
+                          <div style={{ padding: 10, borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.02)", display: "flex", justifyContent: "space-between" }}>
+                            <div>
+                              <b>Variant {i + 1}</b>
+                              <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)", marginTop: 2 }}>{typeLabel(v.type)}</div>
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 950, color: sel ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)" }}>{sel ? "Vybrané" : ""}</div>
                           </div>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={`data:image/png;base64,${v.b64}`}
-                            alt={`Variant ${i + 1}`}
-                            style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }}
-                          />
+                          <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }} />
                         </button>
                       );
                     })}
                   </div>
-                  {leadErr.selectedVariant ? <div style={{ marginTop: 8, color: "rgba(255,140,140,0.95)", fontSize: 12, fontWeight: 800 }}>{leadErr.selectedVariant}</div> : null}
+                  {leadErr.selectedVariant ? <div style={errTextStyle}>{leadErr.selectedVariant}</div> : null}
                 </div>
 
-                {/** inputs */}
                 <Field label="Meno *" error={leadErr.name}>
-                  <input
-                    value={lead.name}
-                    onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))}
-                    placeholder="Meno a priezvisko"
-                    style={inputStyle}
-                  />
+                  <input value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" style={inputStyle} />
                 </Field>
 
                 <Field label="Mesto *" error={leadErr.city}>
@@ -1679,29 +1642,15 @@ export default function Page() {
                 </Field>
 
                 <Field label="Telefón *" error={leadErr.phone}>
-                  <input
-                    value={lead.phone}
-                    onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))}
-                    placeholder="+421 9xx xxx xxx"
-                    inputMode="tel"
-                    style={inputStyle}
-                  />
+                  <input value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" style={inputStyle} />
                 </Field>
 
                 <Field label="Emailová adresa *" error={leadErr.email}>
-                  <input
-                    value={lead.email}
-                    onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))}
-                    placeholder="meno@domena.sk"
-                    inputMode="email"
-                    style={inputStyle}
-                  />
+                  <input value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" style={inputStyle} />
                 </Field>
 
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
-                  <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.8 }}>
-                    Približné rozmery pergoly *
-                  </div>
+                  <div style={labelStyle}>Približné rozmery pergoly *</div>
                   <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 12, marginTop: 10 }}>
                     <Field label="Šírka" error={leadErr.approxWidth}>
                       <input value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" style={inputStyle} />
@@ -1716,32 +1665,35 @@ export default function Page() {
                 </div>
 
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
-                  <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.8 }}>
-                    Poznámka zákazníka (voliteľné)
-                  </div>
+                  <div style={labelStyle}>Poznámka zákazníka (voliteľné)</div>
                   <textarea
                     value={lead.customerNote}
                     onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
                     placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
-                    style={{
-                      ...inputStyle,
-                      minHeight: 110,
-                      resize: "vertical",
-                      lineHeight: 1.35,
-                    }}
+                    style={{ ...inputStyle, minHeight: 96, resize: "vertical", lineHeight: 1.35 }}
                   />
                 </div>
 
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
-                  <GhostBtn onClick={closeLeadForm} disabled={leadSubmitting}>
+                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+                  <button type="button" onClick={closeLeadForm} disabled={leadSubmitting} style={{ ...btnStyle, opacity: leadSubmitting ? 0.6 : 1 }}>
                     Zrušiť
-                  </GhostBtn>
-                  <PrimaryBtn disabled={leadSubmitting} icon={<Icon name="sparkles" />}>
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={leadSubmitting}
+                    style={{
+                      ...btnStyle,
+                      background: "#111",
+                      color: "#fff",
+                      borderColor: "#111",
+                      opacity: leadSubmitting ? 0.75 : 1,
+                    }}
+                  >
                     {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
-                  </PrimaryBtn>
+                  </button>
                 </div>
 
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", marginTop: 6, fontSize: 13, opacity: 0.75, fontWeight: 650 }}>
+                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.65)", fontWeight: 650 }}>
                   Odoslaním formulára súhlasíte so spracovaním osobných údajov.
                 </div>
               </form>
@@ -1749,29 +1701,132 @@ export default function Page() {
           </div>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/* ---------- UI helpers ---------- */
+
+function Stepper({ current }: { current: number }) {
+  const steps = [
+    { n: 1, text: "Nahraj fotku" },
+    { n: 2, text: "Umiestni pergolu" },
+    { n: 3, text: "Vygeneruj vizualizácie" },
+    { n: 4, text: "Vyplň údaje + poznámku + vyber vizualizáciu" },
+    { n: 5, text: "Stiahni PNG" },
+  ];
+  return (
+    <div style={{ overflowX: "auto", padding: "14px 0 6px" }} aria-label="Postup">
+      <div style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 18, padding: "6px 2px", minWidth: 980 }}>
+        <div style={{ position: "absolute", left: 26, right: 26, top: 29, height: 2, background: "rgba(0,0,0,0.12)", zIndex: 0 }} />
+        {steps.map((s) => {
+          const on = current >= s.n;
+          const active = current === s.n;
+          return (
+            <div key={s.n} style={{ position: "relative", zIndex: 1, display: "grid", justifyItems: "center", gap: 10, flex: "1 1 0", minWidth: 170 }}>
+              <div
+                style={{
+                  width: 46,
+                  height: 46,
+                  borderRadius: 999,
+                  display: "grid",
+                  placeItems: "center",
+                  fontWeight: 900,
+                  fontSize: 16,
+                  background: on ? "#111" : "#e9e9e9",
+                  color: on ? "#fff" : "rgba(0,0,0,0.45)",
+                  border: `1px solid ${on ? "#111" : "rgba(0,0,0,0.06)"}`,
+                  boxShadow: active ? "0 12px 26px rgba(0,0,0,0.18)" : "none",
+                }}
+              >
+                {s.n}
+              </div>
+              <div style={{ fontSize: 14, color: active ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)", fontWeight: active ? 800 : 650, textAlign: "center", lineHeight: 1.2, maxWidth: 260 }}>
+                {s.text}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-// -------- small helper components/styles (outside Page to keep JSX clean) --------
+const btnStyle: React.CSSProperties = {
+  borderRadius: 12,
+  padding: "10px 12px",
+  fontWeight: 950,
+  cursor: "pointer",
+  border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  color: "#111",
+  whiteSpace: "nowrap",
+};
+
+const chipStyle: React.CSSProperties = {
+  borderRadius: 999,
+  padding: "10px 12px",
+  fontWeight: 900,
+  cursor: "pointer",
+  border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  color: "#111",
+  whiteSpace: "nowrap",
+};
+
+const smallBtnStyle: React.CSSProperties = {
+  borderRadius: 10,
+  padding: "9px 10px",
+  fontWeight: 900,
+  cursor: "pointer",
+  border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  color: "#111",
+  fontSize: 12,
+};
+
+const errorBoxStyle: React.CSSProperties = {
+  marginTop: 10,
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid rgba(160, 0, 0, 0.25)",
+  background: "rgba(210, 0, 0, 0.06)",
+  color: "rgba(120, 0, 0, 0.95)",
+  fontWeight: 800,
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 900,
+  color: "rgba(0,0,0,0.65)",
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "11px 12px",
   borderRadius: 12,
-  border: "1px solid rgba(255,255,255,0.14)",
-  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(0,0,0,0.12)",
+  background: "#fff",
   outline: "none",
   fontWeight: 700,
-  color: "rgba(255,255,255,0.92)",
+  color: "#111",
+};
+
+const errTextStyle: React.CSSProperties = {
+  marginTop: 8,
+  color: "rgba(160, 0, 0, 0.9)",
+  fontSize: 12,
+  fontWeight: 800,
 };
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", opacity: 0.8 }}>{label}</div>
+      <div style={labelStyle}>{label}</div>
       {children}
-      {error ? <div style={{ color: "rgba(255,140,140,0.95)", fontSize: 12, fontWeight: 800 }}>{error}</div> : null}
+      {error ? <div style={errTextStyle}>{error}</div> : null}
     </div>
   );
 }
