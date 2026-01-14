@@ -815,20 +815,18 @@ export default function Page() {
         </div>
 
         <input
-          className="range range--big"
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onPointerDown={(e) => e.stopPropagation()}
-          onPointerMove={(e) => e.stopPropagation()}
-          onPointerUp={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchMove={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
-          onChange={(e) => onChange(Number(e.target.value))}
-        />
+        className="range range--big"
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onInput={(e) => onChange(Number((e.target as HTMLInputElement).value))}
+        onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
+      />
+
       </div>
     );
   }
