@@ -881,6 +881,7 @@ export default function Page() {
     startScalePct: { x: number; y: number; z: number };
     handle: HandleId | null;
     modeAtDown: Mode;
+    rollMode: boolean;
   }>({
     active: false,
     start: { x: 0, y: 0 },
@@ -890,6 +891,7 @@ export default function Page() {
     startScalePct: { x: 100, y: 100, z: 100 },
     handle: null,
     modeAtDown: "move",
+    rollMode: false,
   });
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -911,9 +913,17 @@ export default function Page() {
           startScalePct: scalePct,
           handle: h,
           modeAtDown: "resize",
+          rollMode: false,
         };
         return;
       }
+    }
+
+    let rollMode = false;
+    if (mode === "rotate3d" && bboxRect) {
+      const cx = bboxRect.x + bboxRect.w / 2;
+      const edgeThreshold = Math.max(24, bboxRect.w * 0.35);
+      rollMode = Math.abs(p.x - cx) > edgeThreshold;
     }
 
     dragRef.current = {
@@ -925,6 +935,7 @@ export default function Page() {
       startScalePct: scalePct,
       handle: null,
       modeAtDown: mode,
+      rollMode,
     };
   }
 
@@ -947,9 +958,14 @@ export default function Page() {
     }
 
     if (currentMode === "rotate3d") {
-      const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
-      const pitch = dragRef.current.startRot3D.pitch + dy * 0.01;
-      setRot3D({ yaw, pitch: clamp(pitch, -1.25, 1.25) });
+      if (dragRef.current.rollMode) {
+        const roll = dragRef.current.startRot2D + dy * 0.01;
+        setRot2D(roll);
+      } else {
+        const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
+        const pitch = dragRef.current.startRot3D.pitch + dy * 0.01;
+        setRot3D({ yaw, pitch: clamp(pitch, -1.25, 1.25) });
+      }
       return;
     }
 
@@ -1081,15 +1097,7 @@ export default function Page() {
   const sliderBox = useMemo(() => {
     if (panel === "zoom") {
       return (
-        <CustomSlider
-          min={50}
-          max={160}
-          step={5}
-          value={editorZoom}
-          onChange={(v) => setEditorZoom(Math.round(v))}
-          label="Zoom"
-          suffix="%"
-        />
+        <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />
       );
     }
     if (panel === "x") {
@@ -1236,11 +1244,7 @@ export default function Page() {
             </div>
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={() => togglePanel("zoom")}
-                style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}
-              >
+              <button type="button" onClick={() => togglePanel("zoom")} style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <Icon name="zoom" size={16} />
                   Zoom
@@ -1381,7 +1385,12 @@ export default function Page() {
                               setLeadOpen(true);
                             }
                           }}
-                          style={{ ...smallBtnStyle, background: selected ? "#111" : "#fff", color: selected ? "#fff" : "#111", borderColor: selected ? "#111" : "rgba(0,0,0,0.14)" }}
+                          style={{
+                            ...smallBtnStyle,
+                            background: selected ? "#111" : "#fff",
+                            color: selected ? "#fff" : "#111",
+                            borderColor: selected ? "#111" : "rgba(0,0,0,0.14)",
+                          }}
                         >
                           Vybrať do formulára
                         </button>
@@ -1570,7 +1579,7 @@ export default function Page() {
                       <input value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.6 m" style={inputStyle} />
                     </Field>
                   </div>
-                  {(leadErr.approxWidth || leadErr.approxDepth || leadErr.approxHeight) ? (
+                  {leadErr.approxWidth || leadErr.approxDepth || leadErr.approxHeight ? (
                     <div style={{ display: "grid", gap: 2, marginTop: 8 }}>
                       {leadErr.approxWidth ? <div style={errTextStyle}>{leadErr.approxWidth}</div> : null}
                       {leadErr.approxDepth ? <div style={errTextStyle}>{leadErr.approxDepth}</div> : null}
