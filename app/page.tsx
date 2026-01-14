@@ -20,7 +20,7 @@ const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 const FINAL_PROMPT_DEFAULT =
   "Pergola variant render. Photorealistic, crisp edges, realistic lighting, keep proportions, no extra objects, match camera perspective.";
 
-const CANVAS_BG = ""#ffffff"";
+const CANVAS_BG = "#ffffff";
 const DEFAULT_CANVAS_W = 1200;
 const DEFAULT_CANVAS_H = 1200;
 
