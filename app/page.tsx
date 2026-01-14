@@ -277,8 +277,8 @@ function CustomSlider({
         <div
           style={{
             position: "absolute",
-            left: 10,
-            right: 10,
+            left: 0,
+            right: 0,
             top: "50%",
             transform: "translateY(-50%)",
             height: 12,
@@ -294,7 +294,7 @@ function CustomSlider({
           style={{
             position: "absolute",
             top: "50%",
-            left: `calc(10px + (${clamp(pct, 0, 100)}% * (100% - 20px) / 100))`,
+            left: `${clamp(pct, 0, 100)}%`,
             transform: "translate(-50%, -50%)",
             width: 26,
             height: 26,
@@ -419,7 +419,7 @@ export default function Page() {
   // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
   const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const [editorZoom, setEditorZoom] = useState(100);
 
@@ -618,7 +618,19 @@ export default function Page() {
     setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
     setError("");
     setPanel("zoom");
+    setPanelOpen(false);
     setSelectedVariantIndex(0);
+  }
+
+  function togglePanel(p: "zoom" | "x" | "y" | "z") {
+    setPanel((prev) => {
+      if (prev === p) {
+        setPanelOpen((o) => !o);
+        return prev;
+      }
+      setPanelOpen(true);
+      return p;
+    });
   }
 
   function toCanvasXY(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -1206,6 +1218,41 @@ export default function Page() {
               </div>
             </div>
 
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => togglePanel("zoom")}
+                style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <Icon name="zoom" size={16} />
+                  Zoom
+                </span>
+              </button>
+              <button type="button" onClick={() => togglePanel("x")} style={{ ...chipStyle, background: panelOpen && panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                Šírka
+              </button>
+              <button type="button" onClick={() => togglePanel("y")} style={{ ...chipStyle, background: panelOpen && panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                Výška
+              </button>
+              <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                Hĺbka
+              </button>
+            </div>
+
+            {panelOpen ? (
+              <div
+                style={{
+                  background: "#fff",
+                  border: "1px solid rgba(0,0,0,0.08)",
+                  borderRadius: 14,
+                  padding: 12,
+                }}
+              >
+                {sliderBox}
+              </div>
+            ) : null}
+
             {/* Canvas */}
             <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, overflow: "hidden", padding: 10 }}>
               <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
@@ -1228,31 +1275,6 @@ export default function Page() {
                 />
               </div>
             </div>
-
-            {/* Desktop settings (mobile uses bottom sheet) */}
-            {!isMobile ? (
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <button type="button" onClick={() => setPanel("zoom")} style={{ ...chipStyle, background: panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <Icon name="zoom" size={16} />
-                      Zoom
-                    </span>
-                  </button>
-                  <button type="button" onClick={() => setPanel("x")} style={{ ...chipStyle, background: panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                    Šírka
-                  </button>
-                  <button type="button" onClick={() => setPanel("y")} style={{ ...chipStyle, background: panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                    Výška
-                  </button>
-                  <button type="button" onClick={() => setPanel("z")} style={{ ...chipStyle, background: panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                    Hĺbka
-                  </button>
-                </div>
-
-                {sliderBox}
-              </div>
-            ) : null}
 
             {error ? <div style={errorBoxStyle}>Chyba: {error}</div> : null}
           </div>
@@ -1355,140 +1377,6 @@ export default function Page() {
           </div>
         </div>
       </div>
-
-      {/* Mobile bottom sheet (settings) */}
-      {isMobile ? (
-        <>
-          <div
-            style={{
-              position: "fixed",
-              left: 0,
-              right: 0,
-              bottom: 78,
-              padding: "10px 14px",
-              zIndex: 50,
-              pointerEvents: "none",
-            }}
-          >
-            <div
-              style={{
-                pointerEvents: "auto",
-                background: "#fff",
-                border: "1px solid rgba(0,0,0,0.10)",
-                borderRadius: 18,
-                boxShadow: "0 16px 50px rgba(0,0,0,0.14)",
-                padding: 12,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <div style={{ display: "grid", gap: 2 }}>
-                <div style={{ fontSize: 14, fontWeight: 950 }}>Nastavenia (typ / zoom / rozmery)</div>
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.60)", fontWeight: 700 }}>
-                  Panel: <b>{panel === "zoom" ? "Zoom" : panel.toUpperCase()}</b>
-                </div>
-              </div>
-              <button type="button" onClick={() => setSheetOpen((s) => !s)} style={{ ...btnStyle, borderRadius: 999 }}>
-                {sheetOpen ? "Zavrieť" : "Otvoriť"}
-              </button>
-            </div>
-          </div>
-
-          {sheetOpen ? (
-            <div
-              role="dialog"
-              aria-modal="true"
-              onMouseDown={(ev) => {
-                if (ev.target === ev.currentTarget) setSheetOpen(false);
-              }}
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.28)",
-                zIndex: 60,
-                display: "grid",
-                alignItems: "end",
-              }}
-            >
-              <div
-                style={{
-                  background: "#fff",
-                  borderTopLeftRadius: 22,
-                  borderTopRightRadius: 22,
-                  borderTop: "1px solid rgba(0,0,0,0.10)",
-                  boxShadow: "0 -18px 50px rgba(0,0,0,0.18)",
-                  padding: 14,
-                  maxHeight: "78vh",
-                  overflow: "auto",
-                }}
-              >
-                <div style={{ width: 46, height: 5, borderRadius: 999, background: "rgba(0,0,0,0.18)", margin: "0 auto 12px" }} />
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                  <div style={{ fontSize: 16, fontWeight: 950 }}>Nastavenia</div>
-                  <button type="button" onClick={() => setSheetOpen(false)} style={btnStyle}>
-                    ✕
-                  </button>
-                </div>
-
-                <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)" }}>Typ pergoly</div>
-                    <select
-                      value={pergolaType}
-                      onChange={(e) => setPergolaType(e.target.value as PergolaType)}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: "1px solid rgba(0,0,0,0.12)",
-                        background: "#fff",
-                        fontWeight: 800,
-                      }}
-                    >
-                      <option value="bioklim">Bioklimatická pergola</option>
-                      <option value="pevna">Pergola s pevnou strechou</option>
-                      <option value="zimna">Zimná záhrada</option>
-                    </select>
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <button type="button" onClick={() => setPanel("zoom")} style={{ ...chipStyle, background: panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <Icon name="zoom" size={16} />
-                        Zoom
-                      </span>
-                    </button>
-                    <button type="button" onClick={() => setPanel("x")} style={{ ...chipStyle, background: panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                      Šírka
-                    </button>
-                    <button type="button" onClick={() => setPanel("y")} style={{ ...chipStyle, background: panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                      Výška
-                    </button>
-                    <button type="button" onClick={() => setPanel("z")} style={{ ...chipStyle, background: panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                      Hĺbka
-                    </button>
-                  </div>
-
-                  {sliderBox}
-
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                    <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, flex: 1, opacity: loading ? 0.6 : 1 }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                        <Icon name="reset" size={16} />
-                        Reset
-                      </span>
-                    </button>
-                    <button type="button" onClick={() => setSheetOpen(false)} style={{ ...btnStyle, flex: 1 }}>
-                      Hotovo
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </>
-      ) : null}
 
       {/* Mobile fixed bottom actions like screenshot */}
       {isMobile ? (
@@ -1659,23 +1547,30 @@ export default function Page() {
                       <input value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" style={inputStyle} />
                     </Field>
                     <Field label="Výška" error={leadErr.approxHeight}>
-                      <input value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.5 m" style={inputStyle} />
+                      <input value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.6 m" style={inputStyle} />
                     </Field>
                   </div>
+                  {(leadErr.approxWidth || leadErr.approxDepth || leadErr.approxHeight) ? (
+                    <div style={{ display: "grid", gap: 2, marginTop: 8 }}>
+                      {leadErr.approxWidth ? <div style={errTextStyle}>{leadErr.approxWidth}</div> : null}
+                      {leadErr.approxDepth ? <div style={errTextStyle}>{leadErr.approxDepth}</div> : null}
+                      {leadErr.approxHeight ? <div style={errTextStyle}>{leadErr.approxHeight}</div> : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
-                  <div style={labelStyle}>Poznámka zákazníka (voliteľné)</div>
+                  <div style={labelStyle}>Poznámka (voliteľné)</div>
                   <textarea
                     value={lead.customerNote}
                     onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
-                    placeholder="Sem môžete dopísať doplňujúce informácie (napr. špecifiká terasy, požiadavky, termín, farba...)."
-                    style={{ ...inputStyle, minHeight: 96, resize: "vertical", lineHeight: 1.35 }}
+                    placeholder="Napr. farba, umiestnenie, poznámka k realizácii..."
+                    style={{ ...inputStyle, minHeight: 96, resize: "vertical", paddingTop: 10 }}
                   />
                 </div>
 
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-                  <button type="button" onClick={closeLeadForm} disabled={leadSubmitting} style={{ ...btnStyle, opacity: leadSubmitting ? 0.6 : 1 }}>
+                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6, flexWrap: "wrap" }}>
+                  <button type="button" onClick={closeLeadForm} style={{ ...btnStyle, background: "#fff" }}>
                     Zrušiť
                   </button>
                   <button
@@ -1686,15 +1581,12 @@ export default function Page() {
                       background: "#111",
                       color: "#fff",
                       borderColor: "#111",
-                      opacity: leadSubmitting ? 0.75 : 1,
+                      cursor: leadSubmitting ? "not-allowed" : "pointer",
+                      opacity: leadSubmitting ? 0.7 : 1,
                     }}
                   >
                     {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
                   </button>
-                </div>
-
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", marginTop: 6, fontSize: 13, color: "rgba(0,0,0,0.65)", fontWeight: 650 }}>
-                  Odoslaním formulára súhlasíte so spracovaním osobných údajov.
                 </div>
               </form>
             </div>
@@ -1705,121 +1597,55 @@ export default function Page() {
   );
 }
 
-/* ---------- UI helpers ---------- */
-
 function Stepper({ current }: { current: number }) {
   const steps = [
-    { n: 1, text: "Nahraj fotku" },
-    { n: 2, text: "Umiestni pergolu" },
-    { n: 3, text: "Vygeneruj vizualizácie" },
-    { n: 4, text: "Vyplň údaje + poznámku + vyber vizualizáciu" },
-    { n: 5, text: "Stiahni PNG" },
+    { n: 1, t: "Nahraj fotku" },
+    { n: 2, t: "Umiestni pergolu" },
+    { n: 3, t: "Vygeneruj varianty" },
+    { n: 4, t: "Vyplň formulár" },
+    { n: 5, t: "Stiahni PNG" },
   ];
   return (
-    <div style={{ overflowX: "auto", padding: "14px 0 6px" }} aria-label="Postup">
-      <div style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 18, padding: "6px 2px", minWidth: 980 }}>
-        <div style={{ position: "absolute", left: 26, right: 26, top: 29, height: 2, background: "rgba(0,0,0,0.12)", zIndex: 0 }} />
-        {steps.map((s) => {
-          const on = current >= s.n;
-          const active = current === s.n;
-          return (
-            <div key={s.n} style={{ position: "relative", zIndex: 1, display: "grid", justifyItems: "center", gap: 10, flex: "1 1 0", minWidth: 170 }}>
-              <div
-                style={{
-                  width: 46,
-                  height: 46,
-                  borderRadius: 999,
-                  display: "grid",
-                  placeItems: "center",
-                  fontWeight: 900,
-                  fontSize: 16,
-                  background: on ? "#111" : "#e9e9e9",
-                  color: on ? "#fff" : "rgba(0,0,0,0.45)",
-                  border: `1px solid ${on ? "#111" : "rgba(0,0,0,0.06)"}`,
-                  boxShadow: active ? "0 12px 26px rgba(0,0,0,0.18)" : "none",
-                }}
-              >
-                {s.n}
-              </div>
-              <div style={{ fontSize: 14, color: active ? "rgba(0,0,0,0.9)" : "rgba(0,0,0,0.55)", fontWeight: active ? 800 : 650, textAlign: "center", lineHeight: 1.2, maxWidth: 260 }}>
-                {s.text}
-              </div>
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      {steps.map((s) => {
+        const done = s.n < current;
+        const active = s.n === current;
+        return (
+          <div
+            key={s.n}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 10px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,0,0,0.10)",
+              background: active ? "#fff" : "rgba(0,0,0,0.03)",
+              boxShadow: active ? "0 10px 22px rgba(0,0,0,0.08)" : "none",
+            }}
+          >
+            <div
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 999,
+                display: "grid",
+                placeItems: "center",
+                fontSize: 11,
+                fontWeight: 950,
+                background: done ? "#111" : "rgba(0,0,0,0.08)",
+                color: done ? "#fff" : "rgba(0,0,0,0.70)",
+              }}
+            >
+              {done ? "✓" : s.n}
             </div>
-          );
-        })}
-      </div>
+            <div style={{ fontSize: 12, fontWeight: 900, color: active ? "rgba(0,0,0,0.85)" : "rgba(0,0,0,0.60)" }}>{s.t}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
-
-const btnStyle: React.CSSProperties = {
-  borderRadius: 12,
-  padding: "10px 12px",
-  fontWeight: 950,
-  cursor: "pointer",
-  border: "1px solid rgba(0,0,0,0.14)",
-  background: "#fff",
-  color: "#111",
-  whiteSpace: "nowrap",
-};
-
-const chipStyle: React.CSSProperties = {
-  borderRadius: 999,
-  padding: "10px 12px",
-  fontWeight: 900,
-  cursor: "pointer",
-  border: "1px solid rgba(0,0,0,0.14)",
-  background: "#fff",
-  color: "#111",
-  whiteSpace: "nowrap",
-};
-
-const smallBtnStyle: React.CSSProperties = {
-  borderRadius: 10,
-  padding: "9px 10px",
-  fontWeight: 900,
-  cursor: "pointer",
-  border: "1px solid rgba(0,0,0,0.14)",
-  background: "#fff",
-  color: "#111",
-  fontSize: 12,
-};
-
-const errorBoxStyle: React.CSSProperties = {
-  marginTop: 10,
-  padding: 12,
-  borderRadius: 14,
-  border: "1px solid rgba(160, 0, 0, 0.25)",
-  background: "rgba(210, 0, 0, 0.06)",
-  color: "rgba(120, 0, 0, 0.95)",
-  fontWeight: 800,
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 900,
-  color: "rgba(0,0,0,0.65)",
-  textTransform: "uppercase",
-  letterSpacing: "0.06em",
-};
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "11px 12px",
-  borderRadius: 12,
-  border: "1px solid rgba(0,0,0,0.12)",
-  background: "#fff",
-  outline: "none",
-  fontWeight: 700,
-  color: "#111",
-};
-
-const errTextStyle: React.CSSProperties = {
-  marginTop: 8,
-  color: "rgba(160, 0, 0, 0.9)",
-  fontSize: 12,
-  fontWeight: 800,
-};
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
@@ -1830,3 +1656,73 @@ function Field({ label, error, children }: { label: string; error?: string; chil
     </div>
   );
 }
+
+const btnStyle: React.CSSProperties = {
+  height: 42,
+  padding: "0 14px",
+  borderRadius: 12,
+  border: "1px solid rgba(0,0,0,0.12)",
+  background: "#fff",
+  fontWeight: 900,
+  cursor: "pointer",
+  userSelect: "none",
+  WebkitUserSelect: "none",
+};
+
+const chipStyle: React.CSSProperties = {
+  height: 38,
+  padding: "0 12px",
+  borderRadius: 999,
+  border: "1px solid rgba(0,0,0,0.12)",
+  background: "#fff",
+  fontWeight: 900,
+  cursor: "pointer",
+  userSelect: "none",
+  WebkitUserSelect: "none",
+};
+
+const smallBtnStyle: React.CSSProperties = {
+  height: 34,
+  padding: "0 12px",
+  borderRadius: 999,
+  border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  fontWeight: 900,
+  cursor: "pointer",
+  userSelect: "none",
+  WebkitUserSelect: "none",
+};
+
+const inputStyle: React.CSSProperties = {
+  height: 42,
+  padding: "0 12px",
+  borderRadius: 12,
+  border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  fontWeight: 800,
+  outline: "none",
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 950,
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  color: "rgba(0,0,0,0.55)",
+};
+
+const errTextStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 800,
+  color: "#b00020",
+};
+
+const errorBoxStyle: React.CSSProperties = {
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid rgba(176,0,32,0.25)",
+  background: "rgba(176,0,32,0.06)",
+  color: "rgba(176,0,32,0.95)",
+  fontWeight: 850,
+  fontSize: 13,
+};
