@@ -135,7 +135,7 @@ export default function Page() {
     approxWidth: "",
     approxDepth: "",
     approxHeight: "",
-    customerNote: "", // ✅ NOVÉ: poznámka zákazníka
+    customerNote: "",
   });
 
   const [leadErr, setLeadErr] = useState<{
@@ -160,17 +160,66 @@ export default function Page() {
   }>({ dragging: false, startY: 0, startSheetY: 0, maxDown: 0 });
 
   const isMobileRef = useRef(false);
+
+  const getSheetMaxDown = () => {
+    const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+
+    // otvorený sheet ukazuje cca 72% výšky
+    const openPeek = Math.round(vh * 0.72);
+    const openTop = vh - openPeek;
+
+    // zatvorený sheet ukáže len malý "peek"
+    const collapsedPeek = 92;
+    const collapsedTop = vh - collapsedPeek;
+
+    // o koľko treba posunúť otvorený sheet nadol, aby ostal len peek
+    return Math.max(0, collapsedTop - openTop);
+  };
+
+  const openSheet = () => {
+    setSheetOpen(true);
+    setSheetY(0);
+  };
+  const closeSheet = () => {
+    setSheetOpen(false);
+    setSheetY(getSheetMaxDown());
+  };
+
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 960px)");
     const apply = () => {
       isMobileRef.current = mq.matches;
-      setSheetOpen(false);
-      setSheetY(0);
+
+      // pri prepnutí breakpointu nastav sheet do "zatvoreného" stavu (len peek)
+      if (mq.matches) {
+        setSheetOpen(false);
+        setSheetY(getSheetMaxDown());
+      } else {
+        setSheetOpen(false);
+        setSheetY(0);
+      }
     };
+
     apply();
     mq.addEventListener?.("change", apply);
     return () => mq.removeEventListener?.("change", apply);
   }, []);
+
+  // reaguj na resize (mobil UI lišty menia innerHeight) – nech sa sheet správne zavrie a NEPREKRÝVA canvas
+  useEffect(() => {
+    if (!isMobileRef.current) return;
+
+    const onResize = () => {
+      const maxDown = getSheetMaxDown();
+      if (!sheetOpen && !sheetDragRef.current.dragging) {
+        setSheetY(maxDown);
+      }
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetOpen]);
 
   // canvas drag ref
   const dragRef = useRef<{
@@ -862,32 +911,6 @@ export default function Page() {
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
-  const getSheetMaxDown = () => {
-    const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-    const openPeek = Math.round(vh * 0.72);
-    const openTop = vh - openPeek;
-
-    const collapsedPeek = 92;
-    const collapsedTop = vh - collapsedPeek;
-
-    return Math.max(0, collapsedTop - openTop);
-  };
-
-  const openSheet = () => {
-    setSheetOpen(true);
-    setSheetY(0);
-  };
-  const closeSheet = () => {
-    setSheetOpen(false);
-    setSheetY(getSheetMaxDown());
-  };
-
-  useEffect(() => {
-    if (!isMobileRef.current) return;
-    setSheetY(getSheetMaxDown());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const onHandlePointerDown = (e: React.PointerEvent) => {
     if (!isMobileRef.current) return;
     e.preventDefault();
@@ -1099,7 +1122,7 @@ export default function Page() {
           background: #fff;
           border: 1px solid rgba(0, 0, 0, 0.08);
           border-radius: 14px;
-          overflow: hidden; /* ✅ pri 1-prst edit nech sa shell nehýbe */
+          overflow: hidden;
           padding: 10px;
         }
         canvas {
@@ -1449,9 +1472,13 @@ export default function Page() {
             right: 0;
             bottom: 0;
             z-index: 55;
-            pointer-events: auto;
+
+            /* ✅ dôležité: nech .sheet nikdy neblokuje dotyky mimo karty */
+            pointer-events: none;
           }
           .sheetCard {
+            pointer-events: auto;
+
             border-top-left-radius: 18px;
             border-top-right-radius: 18px;
             background: #fff;
@@ -1673,7 +1700,7 @@ export default function Page() {
                       style={{
                         width: `${(canvasW * editorZoom) / 100}px`,
                         height: `${(canvasH * editorZoom) / 100}px`,
-                        touchAction: "none", // ✅ 1 prst vždy edit
+                        touchAction: "none",
                       }}
                       onPointerDown={onPointerDown}
                       onPointerMove={onPointerMove}
@@ -1852,7 +1879,13 @@ export default function Page() {
 
       {/* Mobile bottom-sheet */}
       <div className="sheet" aria-hidden={!isMobileRef.current}>
-        <div className="sheetCard" style={{ transform: `translateY(${sheetY}px)`, transition: sheetDragRef.current.dragging ? "none" : "transform 220ms ease" }}>
+        <div
+          className="sheetCard"
+          style={{
+            transform: `translateY(${sheetY}px)`,
+            transition: sheetDragRef.current.dragging ? "none" : "transform 220ms ease",
+          }}
+        >
           <div className="sheetHandleRow" onPointerDown={onHandlePointerDown} onPointerMove={onHandlePointerMove} onPointerUp={onHandlePointerUp} onPointerCancel={onHandlePointerUp}>
             <div className="handle" />
             <div className="sheetTopLine">
@@ -1863,70 +1896,69 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="sheetBody">
-            {error ? <div className="errorBox">Chyba: {error}</div> : null}
+          {/* ✅ KRITICKÉ: keď je sheet zatvorený, NERENDERUJ body – inak prekrýva editor a berie dotyky */}
+          {sheetOpen ? (
+            <div className="sheetBody">
+              {error ? <div className="errorBox">Chyba: {error}</div> : null}
 
-            <div className="sheetGrid">
-              <div className="sheetBlock">
-                <div className="sectionTitle">Fotka</div>
-                <div className="field">
-                  <div className="label">Nahraj</div>
-                  <input
-                    className="input"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setBgFile(f);
-                      setError("");
-                    }}
-                  />
+              <div className="sheetGrid">
+                <div className="sheetBlock">
+                  <div className="sectionTitle">Fotka</div>
+                  <div className="field">
+                    <div className="label">Nahraj</div>
+                    <input
+                      className="input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setBgFile(f);
+                        setError("");
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div className="sheetBlock">
-                <div className="sectionTitle">Typ (pre ďalšiu generáciu)</div>
-                <div className="field">
-                  <div className="label">Vyber</div>
-                  <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
-                    <option value="bioklim">Bioklimatická pergola</option>
-                    <option value="pevna">Pergola s pevnou strechou</option>
-                    <option value="zimna">Zimná záhrada</option>
-                  </select>
+                <div className="sheetBlock">
+                  <div className="sectionTitle">Typ (pre ďalšiu generáciu)</div>
+                  <div className="field">
+                    <div className="label">Vyber</div>
+                    <select className="select" value={pergolaType} onChange={(e) => setPergolaType(e.target.value as PergolaType)}>
+                      <option value="bioklim">Bioklimatická pergola</option>
+                      <option value="pevna">Pergola s pevnou strechou</option>
+                      <option value="zimna">Zimná záhrada</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
 
-              <div className="sheetBlock">
-                <div className="sectionTitle">Zoom</div>
-                <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
-              </div>
-
-              <div className="sheetBlock">
-                <div className="sectionTitle">Rozmery (1% – 200%)</div>
-                <div className="scaleBlock">
-                  <ScaleRow label="X" axis="x" value={scalePct.x} />
-                  <ScaleRow label="Y" axis="y" value={scalePct.y} />
-                  <ScaleRow label="Z" axis="z" value={scalePct.z} />
+                <div className="sheetBlock">
+                  <div className="sectionTitle">Zoom</div>
+                  <input className="range range--big" type="range" min={50} max={160} step={5} value={editorZoom} onChange={(e) => setEditorZoom(Number(e.target.value))} />
                 </div>
-              </div>
 
-              <div className="sheetBlock">
-                <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
-                  Reset
-                </button>
-              </div>
+                <div className="sheetBlock">
+                  <div className="sectionTitle">Rozmery (1% – 200%)</div>
+                  <div className="scaleBlock">
+                    <ScaleRow label="X" axis="x" value={scalePct.x} />
+                    <ScaleRow label="Y" axis="y" value={scalePct.y} />
+                    <ScaleRow label="Z" axis="z" value={scalePct.z} />
+                  </div>
+                </div>
 
-              <div className="sheetBlock">
-                <div className="note">Pozn.: Hold/drag na slidere sú vypnuté. Použi klasický slider a kliky na +/−.</div>
-              </div>
+                <div className="sheetBlock">
+                  <button type="button" className="ter-btn ter-btn--ghost" onClick={resetAll}>
+                    Reset
+                  </button>
+                </div>
 
-              <div className="sheetBlock">
-                <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
-                  Stiahnuť všetky ({variants.length})
-                </button>
+                <div className="sheetBlock">
+                  <button type="button" className="ter-btn" onClick={onDownloadAllClick} disabled={variants.length === 0}>
+                    Stiahnuť všetky ({variants.length})
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
         </div>
       </div>
 
@@ -2024,7 +2056,6 @@ export default function Page() {
                   </div>
                 </div>
 
-                {/* ✅ NOVÉ: poznámka zákazníka */}
                 <div className="span2">
                   <div className="sectionTitle">Poznámka zákazníka (voliteľné)</div>
                   <textarea
