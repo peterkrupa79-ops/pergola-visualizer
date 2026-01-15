@@ -1731,46 +1731,95 @@ export default function Page() {
                   {leadErr.selectedVariant ? <div style={errTextStyle}>{leadErr.selectedVariant}</div> : null}
                 </div>
 
-                <Field label="Meno *" error={leadErr.name}>
-                  <input value={lead.name} onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))} placeholder="Meno a priezvisko" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Meno a priezvisko *</div>
+                  <input
+                    value={lead.name}
+                    onChange={(e) => setLead((p) => ({ ...p, name: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. Ján Novák"
+                  />
+                  {leadErr.name ? <div style={errTextStyle}>{leadErr.name}</div> : null}
+                </div>
 
-                <Field label="Mesto *" error={leadErr.city}>
-                  <input value={lead.city} onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))} placeholder="Mesto" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Mesto *</div>
+                  <input
+                    value={lead.city}
+                    onChange={(e) => setLead((p) => ({ ...p, city: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. Prešov"
+                  />
+                  {leadErr.city ? <div style={errTextStyle}>{leadErr.city}</div> : null}
+                </div>
 
-                <Field label="Telefón *" error={leadErr.phone}>
-                  <input value={lead.phone} onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))} placeholder="+421 9xx xxx xxx" inputMode="tel" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Telefón *</div>
+                  <input
+                    value={lead.phone}
+                    onChange={(e) => setLead((p) => ({ ...p, phone: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. +421 9xx xxx xxx"
+                  />
+                  {leadErr.phone ? <div style={errTextStyle}>{leadErr.phone}</div> : null}
+                </div>
 
-                <Field label="Emailová adresa *" error={leadErr.email}>
-                  <input value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Email *</div>
+                  <input
+                    value={lead.email}
+                    onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. jan@novak.sk"
+                  />
+                  {leadErr.email ? <div style={errTextStyle}>{leadErr.email}</div> : null}
+                </div>
 
-                <Field label="Šírka (približne) *" error={leadErr.approxWidth}>
-                  <input value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.2 m" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Šírka (približne) *</div>
+                  <input
+                    value={lead.approxWidth}
+                    onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. 4.2 m"
+                  />
+                  {leadErr.approxWidth ? <div style={errTextStyle}>{leadErr.approxWidth}</div> : null}
+                </div>
 
-                <Field label="Hĺbka (približne) *" error={leadErr.approxDepth}>
-                  <input value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.0 m" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Hĺbka (približne) *</div>
+                  <input
+                    value={lead.approxDepth}
+                    onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. 3.0 m"
+                  />
+                  {leadErr.approxDepth ? <div style={errTextStyle}>{leadErr.approxDepth}</div> : null}
+                </div>
 
-                <Field label="Výška (približne) *" error={leadErr.approxHeight}>
-                  <input value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.6 m" style={inputStyle} />
-                </Field>
+                <div>
+                  <div style={labelStyle}>Výška (približne) *</div>
+                  <input
+                    value={lead.approxHeight}
+                    onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="napr. 2.6 m"
+                  />
+                  {leadErr.approxHeight ? <div style={errTextStyle}>{leadErr.approxHeight}</div> : null}
+                </div>
 
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
                   <div style={labelStyle}>Poznámka (voliteľné)</div>
                   <textarea
                     value={lead.customerNote}
                     onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
-                    placeholder="Napr. farba konštrukcie, typ strechy, orientačné požiadavky..."
-                    style={{ ...inputStyle, minHeight: 90, resize: "vertical" as const }}
+                    style={{ ...inputStyle, minHeight: 92, resize: "vertical" }}
+                    placeholder="napr. chcem antracit, kotvenie do zateplenia, atď."
                   />
                 </div>
 
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
-                  <button type="button" onClick={closeLeadForm} style={btnStyle}>
+                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", alignItems: "center", paddingTop: 6, flexWrap: "wrap" }}>
+                  <button type="button" onClick={closeLeadForm} disabled={leadSubmitting} style={{ ...btnStyle, opacity: leadSubmitting ? 0.6 : 1 }}>
                     Zrušiť
                   </button>
                   <button
@@ -1781,11 +1830,11 @@ export default function Page() {
                       background: "#111",
                       color: "#fff",
                       borderColor: "#111",
+                      opacity: leadSubmitting ? 0.7 : 1,
                       cursor: leadSubmitting ? "not-allowed" : "pointer",
-                      opacity: leadSubmitting ? 0.75 : 1,
                     }}
                   >
-                    {leadSubmitting ? "Odosielam..." : "Odoslať"}
+                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
                   </button>
                 </div>
               </form>
@@ -1795,7 +1844,7 @@ export default function Page() {
       ) : null}
 
       {/* Preview modal */}
-      {previewOpen && variants[previewIndex]?.b64 ? (
+      {previewOpen ? (
         <div
           role="dialog"
           aria-modal="true"
@@ -1805,49 +1854,56 @@ export default function Page() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.75)",
-            zIndex: 10000,
+            background: "rgba(0,0,0,0.70)",
             display: "grid",
             placeItems: "center",
-            padding: 14,
+            padding: 16,
+            zIndex: 9998,
           }}
         >
-          <div style={{ position: "relative", width: "min(1100px, 100%)" }}>
-            <button
-              type="button"
-              onClick={closePreview}
+          <div
+            style={{
+              width: "min(980px, 100%)",
+              borderRadius: 18,
+              background: "#111",
+              border: "1px solid rgba(255,255,255,0.14)",
+              boxShadow: "0 30px 90px rgba(0,0,0,0.35)",
+              overflow: "hidden",
+              maxHeight: "calc(100dvh - 32px)",
+              display: "grid",
+              gridTemplateRows: "auto 1fr",
+            }}
+          >
+            <div
               style={{
-                position: "absolute",
-                top: -10,
-                right: -10,
-                width: 42,
-                height: 42,
-                borderRadius: 999,
-                border: "1px solid rgba(255,255,255,0.25)",
-                background: "rgba(0,0,0,0.55)",
-                color: "#fff",
-                fontWeight: 900,
-                cursor: "pointer",
+                padding: "14px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.10)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
               }}
-              aria-label="Zavrieť"
             >
-              ✕
-            </button>
+              <div style={{ color: "rgba(255,255,255,0.9)", fontWeight: 950 }}>
+                Variant {previewIndex + 1} • {variants[previewIndex] ? typeLabel(variants[previewIndex].type) : ""}
+              </div>
+              <button type="button" onClick={closePreview} style={{ ...btnStyle, background: "rgba(255,255,255,0.10)", color: "#fff", borderColor: "rgba(255,255,255,0.12)" }}>
+                ✕
+              </button>
+            </div>
 
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`data:image/png;base64,${variants[previewIndex].b64}`}
-              alt={`Variant ${previewIndex + 1}`}
-              style={{
-                width: "100%",
-                maxHeight: "90vh",
-                objectFit: "contain",
-                display: "block",
-                borderRadius: 14,
-                background: "rgba(255,255,255,0.05)",
-                boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
-              }}
-            />
+            <div style={{ padding: 14, overflow: "auto", WebkitOverflowScrolling: "touch" }}>
+              {variants[previewIndex]?.b64 ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`data:image/png;base64,${variants[previewIndex].b64}`}
+                  alt={`Preview variant ${previewIndex + 1}`}
+                  style={{ width: "100%", height: "auto", display: "block", borderRadius: 14 }}
+                />
+              ) : (
+                <div style={{ color: "rgba(255,255,255,0.75)", padding: 18 }}>Nie je čo zobraziť.</div>
+              )}
+            </div>
           </div>
         </div>
       ) : null}
@@ -1856,39 +1912,54 @@ export default function Page() {
 }
 
 function Stepper({ current }: { current: number }) {
-  const steps = [
-    { n: 1, t: "Nahraj fotku" },
-    { n: 2, t: "Uprav polohu" },
-    { n: 3, t: "Vygeneruj varianty" },
-    { n: 4, t: "Vyplň formulár" },
-    { n: 5, t: "Stiahni PNG" },
+  const items = [
+    { id: 1, label: "Nahraj fotku" },
+    { id: 2, label: "Umiestni pergolu" },
+    { id: 3, label: "Vygeneruj varianty" },
+    { id: 4, label: "Vyplň formulár" },
+    { id: 5, label: "Stiahni PNG" },
   ];
 
   return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-      {steps.map((s, idx) => {
-        const done = current > s.n;
-        const active = current === s.n;
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      {items.map((it) => {
+        const done = it.id < current;
+        const active = it.id === current;
+
         return (
-          <div key={s.n} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <div
+          <div
+            key={it.id}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: "1px solid rgba(0,0,0,0.10)",
+              background: active ? "#fff" : done ? "rgba(0,0,0,0.05)" : "transparent",
+              boxShadow: active ? "0 12px 28px rgba(0,0,0,0.10)" : "none",
+              fontWeight: 900,
+              color: active ? "#111" : done ? "rgba(0,0,0,0.70)" : "rgba(0,0,0,0.45)",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
+          >
+            <span
               style={{
-                width: 26,
-                height: 26,
+                width: 18,
+                height: 18,
                 borderRadius: 999,
                 display: "grid",
                 placeItems: "center",
-                fontWeight: 950,
+                background: active ? "#111" : done ? "rgba(0,0,0,0.30)" : "rgba(0,0,0,0.12)",
+                color: active ? "#fff" : done ? "#111" : "rgba(0,0,0,0.55)",
                 fontSize: 12,
-                background: done ? "#111" : active ? "#fff" : "rgba(0,0,0,0.06)",
-                color: done ? "#fff" : "#111",
-                border: active ? "2px solid rgba(0,0,0,0.75)" : "1px solid rgba(0,0,0,0.10)",
+                fontWeight: 950,
               }}
             >
-              {done ? "✓" : s.n}
-            </div>
-            <div style={{ fontSize: 12, fontWeight: 900, color: active ? "#111" : "rgba(0,0,0,0.60)" }}>{s.t}</div>
-            {idx < steps.length - 1 ? <div style={{ width: 18, height: 2, background: "rgba(0,0,0,0.10)", borderRadius: 999 }} /> : null}
+              {it.id}
+            </span>
+            <span style={{ fontSize: 12, letterSpacing: "0.02em" }}>{it.label}</span>
           </div>
         );
       })}
@@ -1896,58 +1967,37 @@ function Stepper({ current }: { current: number }) {
   );
 }
 
-function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-        <div style={labelStyle}>{label}</div>
-        {error ? <div style={errTextStyle}>{error}</div> : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 const btnStyle: React.CSSProperties = {
-  height: 42,
+  padding: "10px 14px",
   borderRadius: 12,
-  padding: "0 14px",
   border: "1px solid rgba(0,0,0,0.14)",
   background: "#fff",
-  fontWeight: 950,
-  fontSize: 14,
   color: "#111",
+  fontWeight: 900,
   cursor: "pointer",
   userSelect: "none",
   WebkitUserSelect: "none",
 };
 
 const smallBtnStyle: React.CSSProperties = {
-  height: 36,
-  padding: "0 12px",
+  flex: 1,
+  padding: "10px 12px",
   borderRadius: 12,
   border: "1px solid rgba(0,0,0,0.14)",
   background: "#fff",
-  fontWeight: 950,
-  fontSize: 13,
   color: "#111",
+  fontWeight: 900,
   cursor: "pointer",
-  userSelect: "none",
-  WebkitUserSelect: "none",
 };
 
 const chipStyle: React.CSSProperties = {
-  height: 38,
-  padding: "0 12px",
+  padding: "10px 14px",
   borderRadius: 999,
-  border: "1px solid rgba(0,0,0,0.14)",
+  border: "1px solid rgba(0,0,0,0.12)",
   background: "#fff",
-  fontWeight: 950,
-  fontSize: 13,
   color: "#111",
+  fontWeight: 900,
   cursor: "pointer",
-  userSelect: "none",
-  WebkitUserSelect: "none",
 };
 
 const labelStyle: React.CSSProperties = {
@@ -1960,27 +2010,26 @@ const labelStyle: React.CSSProperties = {
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  height: 42,
+  padding: "12px 12px",
   borderRadius: 12,
   border: "1px solid rgba(0,0,0,0.14)",
-  padding: "0 12px",
-  fontSize: 14,
-  fontWeight: 800,
   outline: "none",
-};
-
-const errTextStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 900,
-  color: "rgba(210,0,0,0.85)",
+  fontWeight: 800,
+  fontSize: 14,
 };
 
 const errorBoxStyle: React.CSSProperties = {
-  marginTop: 10,
-  padding: 12,
+  background: "rgba(150,0,0,0.06)",
+  border: "1px solid rgba(150,0,0,0.18)",
+  color: "rgba(150,0,0,0.9)",
   borderRadius: 14,
-  border: "1px solid rgba(210,0,0,0.25)",
-  background: "rgba(210,0,0,0.06)",
+  padding: "12px 12px",
+  fontWeight: 850,
+};
+
+const errTextStyle: React.CSSProperties = {
+  marginTop: 8,
+  fontSize: 12,
   color: "rgba(150,0,0,0.9)",
   fontWeight: 850,
 };
