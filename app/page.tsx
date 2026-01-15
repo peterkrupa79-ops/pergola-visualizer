@@ -1214,7 +1214,14 @@ export default function Page() {
 
           <div style={{ padding: 14, display: "grid", gap: 12 }}>
             {/* Mode controls like screenshot */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div
+              style={
+                isMobile
+                  ? { display: "grid", gap: 10 }
+                  : { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }
+              }
+            >
+              <div style={isMobile ? { width: "100%" } : undefined}>
               <Segmented
                 value={mode}
                 onChange={(v) => setMode(v as Mode)}
@@ -1225,8 +1232,9 @@ export default function Page() {
                   { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
                 ]}
               />
+              </div>
 
-              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: isMobile ? "100%" : undefined }}>
                 <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                     <Icon name="upload" size={16} />
@@ -1254,6 +1262,9 @@ export default function Page() {
                     background: "#fff",
                     color: "#111",
                     fontWeight: 800,
+                    minWidth: isMobile ? 0 : undefined,
+                    flex: isMobile ? "1 1 220px" : undefined,
+                    maxWidth: "100%",
                   }}
                 >
                   <option value="bioklim">Bioklimatická pergola</option>
