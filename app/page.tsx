@@ -1511,12 +1511,14 @@ export default function Page() {
                 Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
               </div>
             </div>
+            {!isMobile ? (
             <button type="button" onClick={onDownloadAllClick} disabled={variants.length === 0} style={{ ...btnStyle, opacity: variants.length === 0 ? 0.55 : 1, cursor: variants.length === 0 ? "not-allowed" : "pointer" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <Icon name="download" size={16} />
                 Stiahnuť všetky ({variants.length})
               </span>
             </button>
+            ) : null}
           </div>
 
           <div style={{ padding: 14 }}>
@@ -2024,6 +2026,8 @@ const inputStyle: React.CSSProperties = {
   padding: "12px 12px",
   borderRadius: 12,
   border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  color: "#111",
   outline: "none",
   fontWeight: 800,
   fontSize: 14,
