@@ -19,9 +19,6 @@ export const metadata: Metadata = {
   },
   description: "Aplikácia na vizualizáciu pergol",
   applicationName: "Teranea vizualizátor",
-  icons: {
-    icon: "/favicon.ico",
-  },
 };
 
 export default function RootLayout({
