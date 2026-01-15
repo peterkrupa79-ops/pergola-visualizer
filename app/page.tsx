@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
+type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -913,7 +914,8 @@ export default function Page() {
     handle: HandleId | null;
     modeAtDown: Mode;
     rollMode: boolean;
-    tiltAxis: "x" | "y" | null;
+    tiltAxis: "lr" | "fb" | null;
+    tiltSign: number;
   }>({
     active: false,
     start: { x: 0, y: 0 },
@@ -925,6 +927,7 @@ export default function Page() {
     modeAtDown: "move",
     rollMode: false,
     tiltAxis: null,
+    tiltSign: 1,
   });
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -946,8 +949,10 @@ export default function Page() {
           startScalePct: scalePct,
           handle: h,
           modeAtDown: "resize" as Mode,
+          modeAtDown: "resize" as Mode,
           rollMode: false,
           tiltAxis: null,
+          tiltSign: 1,
         };
         return;
       }
@@ -960,6 +965,22 @@ export default function Page() {
       rollMode = Math.abs(p.x - cx) > edgeThreshold;
     }
 
+    let tiltAxis: "lr" | "fb" | null = null;
+    let tiltSign = 1;
+    if (mode === "roll" && bboxRect) {
+      const cx = bboxRect.x + bboxRect.w / 2;
+      const cy = bboxRect.y + bboxRect.h / 2;
+      const dxC = p.x - cx;
+      const dyC = p.y - cy;
+      if (Math.abs(dxC) >= Math.abs(dyC)) {
+        tiltAxis = "lr";
+        tiltSign = dxC < 0 ? -1 : 1;
+      } else {
+        tiltAxis = "fb";
+        tiltSign = dyC > 0 ? 1 : -1;
+      }
+    }
+
     dragRef.current = {
       active: true,
       start: p,
@@ -970,7 +991,8 @@ export default function Page() {
       handle: null,
       modeAtDown: mode as Mode,
       rollMode,
-      tiltAxis: null,
+      tiltAxis,
+      tiltSign,
     };
   }
 
@@ -994,7 +1016,7 @@ export default function Page() {
 
     if (currentMode === "rotate3d") {
       if (dragRef.current.rollMode) {
-        const roll = dragRef.current.startRot2D + dy * 0.01;
+        const roll = dragRef.current.startRot2D + dx * 0.01;
         setRot2D(roll);
       } else {
         const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
@@ -1005,18 +1027,15 @@ export default function Page() {
     }
 
     if (currentMode === "roll") {
-      if (!dragRef.current.tiltAxis) {
-        const threshold = 6;
-        if (Math.abs(dx) + Math.abs(dy) < threshold) return;
-        dragRef.current.tiltAxis = Math.abs(dx) > Math.abs(dy) ? "y" : "x";
-      }
-
-      if (dragRef.current.tiltAxis === "x") {
-        const pitch = dragRef.current.startRot3D.pitch - dy * 0.01;
+      // Teeter-totter tilt: drag up lifts the grabbed side, the opposite side goes down.
+      // Left/Right edge -> roll (rot2D). Front/Back edge -> pitch (rot3D.pitch).
+      const speed = 0.01;
+      if (dragRef.current.tiltAxis === "fb") {
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * speed * dragRef.current.tiltSign;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       } else {
-        const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
-        setRot3D((prev) => ({ ...prev, yaw }));
+        const roll = dragRef.current.startRot2D + (-dy) * speed * dragRef.current.tiltSign;
+        setRot2D(roll);
       }
       return;
     }
@@ -1059,55 +1078,42 @@ export default function Page() {
     } catch {}
   }
 
-  // ===== Generate (real API) =====
   async function generate() {
-    if (!bgImg) return;
-    if (variants.length >= MAX_VARIANTS) return;
+    if (!bgImg) {
+      setError("Najprv nahraj fotku.");
+      return;
+    }
+    if (loading) return;
 
     setLoading(true);
     setError("");
 
     try {
-      // downscale export
-      const MAX_DIM = 2048;
-      const bgW = bgImg.width;
-      const bgH = bgImg.height;
+      const exportCanvas = document.createElement("canvas");
+      exportCanvas.width = bgImg.width;
+      exportCanvas.height = bgImg.height;
+      const ctx = exportCanvas.getContext("2d");
+      if (!ctx) throw new Error("Nepodarilo sa vytvoriť export canvas.");
 
-      const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
-      const outW = Math.max(1, Math.round(bgW * scale));
-      const outH = Math.max(1, Math.round(bgH * scale));
+      ctx.drawImage(bgImg, 0, 0);
 
-      const out = document.createElement("canvas");
-      out.width = outW;
-      out.height = outH;
-
-      const octx = out.getContext("2d")!;
-      octx.drawImage(bgImg, 0, 0, outW, outH);
-
-      if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
-        throw new Error("3D renderer nie je pripravený.");
+      if (threeReadyRef.current && rendererRef.current && sceneRef.current && cameraRef.current && rootRef.current) {
+        const renderer = rendererRef.current;
+        applyTransformsForCurrentState(exportCanvas.width, exportCanvas.height);
+        renderer.setSize(exportCanvas.width, exportCanvas.height, false);
+        renderer.render(sceneRef.current, cameraRef.current);
+        ctx.drawImage(renderer.domElement, 0, 0);
       }
 
-      const renderer = rendererRef.current;
-      const scene = sceneRef.current;
-
-      applyTransformsForCurrentState(outW, outH);
-      renderer.setSize(outW, outH, false);
-      renderer.render(scene, cameraRef.current);
-
-      const glTemp = renderer.domElement;
-      octx.drawImage(glTemp, 0, 0);
-
-      const blob: Blob = await new Promise((res, rej) =>
-        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+      const jpegBlob: Blob = await new Promise((res, rej) =>
+        exportCanvas.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
 
       const form = new FormData();
-      form.append("image", blob, "collage.jpg");
+      form.append("image", jpegBlob, "photo.jpg");
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
-
       const j = await r.json().catch(async () => {
         const t = await r.text().catch(() => "");
         return { error: t || `HTTP ${r.status}` };
@@ -1118,11 +1124,9 @@ export default function Page() {
 
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
-        return next;
+        const next: VariantItem = { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() };
+        return [...prev, next];
       });
-
-      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (err: any) {
       console.error(err);
       setError(String(err?.message || err));
@@ -1147,9 +1151,46 @@ export default function Page() {
     }
   }
 
+  function onDownloadOne(idx: number) {
+    if (!variants[idx]?.b64) return;
+    setSelectedVariantIndex(idx);
+
+    if (leadSubmitted) {
+      downloadVariantPNG(idx);
+      return;
+    }
+
+    setLeadErr({});
+    setPendingAction({ kind: "single", index: idx });
+    setLeadOpen(true);
+  }
+
+  function onDownloadAllClick() {
+    if (variants.length === 0) return;
+
+    if (leadSubmitted) {
+      downloadAllPNGs();
+      return;
+    }
+
+    setLeadErr({});
+    setPendingAction({ kind: "all" });
+    setLeadOpen(true);
+  }
+
   const sliderBox = useMemo(() => {
     if (panel === "zoom") {
-      return <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />;
+      return (
+        <CustomSlider
+          min={50}
+          max={160}
+          step={5}
+          value={editorZoom}
+          onChange={(v) => setEditorZoom(Math.round(v))}
+          label="Zoom"
+          suffix="%"
+        />
+      );
     }
     if (panel === "x") {
       return (
@@ -1189,6 +1230,8 @@ export default function Page() {
       />
     );
   }, [panel, editorZoom, scalePct]);
+
+  const canGenerateBtn = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
   const stepCurrent = useMemo(() => {
     const hasAnyVariant = variants.length > 0;
@@ -1381,7 +1424,12 @@ export default function Page() {
                     <option value="zimna">Zimná záhrada</option>
                   </select>
 
-                  <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
+                  <button
+                    type="button"
+                    onClick={resetAll}
+                    disabled={loading}
+                    style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}
+                  >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                       <Icon name="reset" size={16} />
                       Reset
@@ -1391,36 +1439,56 @@ export default function Page() {
                   <button
                     type="button"
                     onClick={generate}
-                    disabled={!canGenerate}
+                    disabled={!canGenerateBtn}
                     style={{
                       ...btnStyle,
-                      background: !canGenerate ? "rgba(0,0,0,0.10)" : "#111",
-                      color: !canGenerate ? "rgba(0,0,0,0.45)" : "#fff",
-                      borderColor: !canGenerate ? "rgba(0,0,0,0.12)" : "#111",
-                      cursor: !canGenerate ? "not-allowed" : "pointer",
+                      background: !canGenerateBtn ? "rgba(0,0,0,0.10)" : "#111",
+                      color: !canGenerateBtn ? "rgba(0,0,0,0.45)" : "#fff",
+                      borderColor: !canGenerateBtn ? "rgba(0,0,0,0.12)" : "#111",
+                      cursor: !canGenerateBtn ? "not-allowed" : "pointer",
                     }}
                   >
-                    {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                    {loading
+                      ? "Generujem..."
+                      : variants.length >= MAX_VARIANTS
+                        ? `Limit ${MAX_VARIANTS}`
+                        : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* 4. riadok na mobile: Zoom / Hĺbka / Výška / Šírka (a na desktope ostáva ako bolo) */}
+            {/* chips */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" onClick={() => togglePanel("zoom")} style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+              <button
+                type="button"
+                onClick={() => togglePanel("zoom")}
+                style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}
+              >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <Icon name="zoom" size={16} />
                   Zoom
                 </span>
               </button>
-              <button type="button" onClick={() => togglePanel("x")} style={{ ...chipStyle, background: panelOpen && panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+              <button
+                type="button"
+                onClick={() => togglePanel("x")}
+                style={{ ...chipStyle, background: panelOpen && panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}
+              >
                 Hĺbka
               </button>
-              <button type="button" onClick={() => togglePanel("y")} style={{ ...chipStyle, background: panelOpen && panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+              <button
+                type="button"
+                onClick={() => togglePanel("y")}
+                style={{ ...chipStyle, background: panelOpen && panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}
+              >
                 Výška
               </button>
-              <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+              <button
+                type="button"
+                onClick={() => togglePanel("z")}
+                style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}
+              >
                 Šírka
               </button>
             </div>
@@ -1466,17 +1534,52 @@ export default function Page() {
         </div>
 
         {/* Variants card */}
-        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
-          <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid rgba(0,0,0,0.08)",
+            borderRadius: 18,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "14px 16px",
+              borderBottom: "1px solid rgba(0,0,0,0.06)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
             <div style={{ display: "grid", gap: 4 }}>
-              <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)" }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 950,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  color: "rgba(0,0,0,0.55)",
+                }}
+              >
                 Varianty (max {MAX_VARIANTS})
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.60)" }}>
                 Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
               </div>
             </div>
-            <button type="button" onClick={onDownloadAllClick} disabled={variants.length === 0} style={{ ...btnStyle, opacity: variants.length === 0 ? 0.55 : 1, cursor: variants.length === 0 ? "not-allowed" : "pointer" }}>
+            <button
+              type="button"
+              onClick={onDownloadAllClick}
+              disabled={variants.length === 0}
+              style={{
+                ...btnStyle,
+                opacity: variants.length === 0 ? 0.55 : 1,
+                cursor: variants.length === 0 ? "not-allowed" : "pointer",
+              }}
+            >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <Icon name="download" size={16} />
                 Stiahnuť všetky ({variants.length})
@@ -1512,7 +1615,16 @@ export default function Page() {
                       }}
                       aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "10px 10px 8px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.02)" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          padding: "10px 10px 8px",
+                          borderBottom: "1px solid rgba(0,0,0,0.06)",
+                          background: "rgba(0,0,0,0.02)",
+                        }}
+                      >
                         <div>
                           <div style={{ fontWeight: 950, fontSize: 12, color: "rgba(0,0,0,0.75)" }}>Variant {i + 1}</div>
                           {v ? <div style={{ fontWeight: 900, fontSize: 12, color: "rgba(0,0,0,0.60)" }}>{typeLabel(v.type)}</div> : null}
@@ -1522,7 +1634,11 @@ export default function Page() {
 
                       {v ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }} />
+                        <img
+                          src={`data:image/png;base64,${v.b64}`}
+                          alt={`Variant ${i + 1}`}
+                          style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
+                        />
                       ) : (
                         <div style={{ padding: "14px 10px", fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.45)" }}>Zatiaľ nevygenerované</div>
                       )}
@@ -1561,7 +1677,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Mobile fixed bottom actions like screenshot */}
+      {/* Mobile fixed bottom actions */}
       {isMobile ? (
         <div
           style={{
@@ -1580,19 +1696,23 @@ export default function Page() {
             <button
               type="button"
               onClick={generate}
-              disabled={!canGenerate}
+              disabled={!canGenerateBtn}
               style={{
                 height: 48,
                 borderRadius: 999,
                 border: "1px solid rgba(0,0,0,0.14)",
-                background: !canGenerate ? "rgba(0,0,0,0.10)" : "#111",
-                color: !canGenerate ? "rgba(0,0,0,0.45)" : "#fff",
+                background: !canGenerateBtn ? "rgba(0,0,0,0.10)" : "#111",
+                color: !canGenerateBtn ? "rgba(0,0,0,0.45)" : "#fff",
                 fontWeight: 950,
                 fontSize: 15,
-                cursor: !canGenerate ? "not-allowed" : "pointer",
+                cursor: !canGenerateBtn ? "not-allowed" : "pointer",
               }}
             >
-              {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+              {loading
+                ? "Generujem..."
+                : variants.length >= MAX_VARIANTS
+                  ? `Limit ${MAX_VARIANTS}`
+                  : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
             </button>
 
             <button
