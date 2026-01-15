@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mode = "move" | "rotate3d" | "resize";
+type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
@@ -969,6 +969,18 @@ export default function Page() {
       return;
     }
 
+    if (currentMode === "roll") {
+      const roll = dragRef.current.startRot2D + dx * 0.01;
+      setRot2D(roll);
+      return;
+    }
+
+    if (currentMode === "roll") {
+      const roll = dragRef.current.startRot2D + dx * 0.01;
+      setRot2D(roll);
+      return;
+    }
+
     if (currentMode === "resize") {
       const rect = bboxRect;
       if (!rect || !dragRef.current.handle) return;
@@ -1166,7 +1178,10 @@ export default function Page() {
           <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
             <div style={{ fontSize: 18, fontWeight: 950 }}>Editor</div>
             <div style={{ fontSize: 14, fontWeight: 850, color: "rgba(0,0,0,0.55)" }}>
-              Režim: <span style={{ color: "rgba(0,0,0,0.9)" }}>{mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : "RESIZE"}</span>
+              Režim:{" "}
+              <span style={{ color: "rgba(0,0,0,0.9)" }}>
+                {mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode === "roll" ? "NAKLOŇ" : "RESIZE"}
+              </span>
             </div>
           </div>
 
@@ -1179,6 +1194,7 @@ export default function Page() {
                 items={[
                   { value: "move", label: "Posun", icon: <Icon name="move" size={16} /> },
                   { value: "rotate3d", label: "Otoč 3D", icon: <Icon name="rotate" size={16} /> },
+                  { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
                   { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
                 ]}
               />
