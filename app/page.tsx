@@ -912,7 +912,7 @@ export default function Page() {
           startRot2D: rot2D,
           startScalePct: scalePct,
           handle: h,
-          modeAtDown: "resize",
+          modeAtDown: "resize" as Mode,
           rollMode: false,
         };
         return;
@@ -934,7 +934,7 @@ export default function Page() {
       startRot2D: rot2D,
       startScalePct: scalePct,
       handle: null,
-      modeAtDown: mode,
+      modeAtDown: mode as Mode,
       rollMode,
     };
   }
@@ -966,12 +966,6 @@ export default function Page() {
         const pitch = dragRef.current.startRot3D.pitch + dy * 0.01;
         setRot3D({ yaw, pitch: clamp(pitch, -1.25, 1.25) });
       }
-      return;
-    }
-
-    if (currentMode === "roll") {
-      const roll = dragRef.current.startRot2D + dx * 0.01;
-      setRot2D(roll);
       return;
     }
 
@@ -1519,7 +1513,7 @@ export default function Page() {
               <div>
                 <div style={{ fontWeight: 950, fontSize: 16 }}>Vyplň kontaktné údaje, poznámku a vyber vizualizáciu</div>
                 <div style={{ marginTop: 6, color: "rgba(0,0,0,0.65)", fontWeight: 650, fontSize: 13 }}>
-                  Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám odošleš.
+                  Pre odomknutie sťahovania je potrebné vyplniť formulár a vybrať <b>1 vizualizáciu</b>, ktorú nám pošleš.
                 </div>
               </div>
               <button type="button" onClick={closeLeadForm} style={btnStyle}>
