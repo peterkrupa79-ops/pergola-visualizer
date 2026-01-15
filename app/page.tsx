@@ -420,10 +420,8 @@ export default function Page() {
   // ===== Hero (rozbaľovací návod v mobile) =====
   const [heroHintOpen, setHeroHintOpen] = useState(false);
 
-  // ===== Guide (jemné tipy bez overlay) =====
-  const [hasMoved, setHasMoved] = useState(false);
-  const [hasResized, setHasResized] = useState(false);
-  const [hasRolled, setHasRolled] = useState(false);
+  // jemné guide správanie (bez overlayov)
+  const [guideSeen, setGuideSeen] = useState({ move: false, roll: false, resize: false });
 
   // ===== Background upload =====
   const [bgFile, setBgFile] = useState<File | null>(null);
@@ -690,9 +688,6 @@ export default function Page() {
     setPanel("zoom");
     setPanelOpen(false);
     setSelectedVariantIndex(0);
-    setHasMoved(false);
-    setHasResized(false);
-    setHasRolled(false);
   }
 
   function togglePanel(p: "zoom" | "x" | "y" | "z") {
@@ -981,7 +976,7 @@ export default function Page() {
       const h = hitHandle(p, bboxRect);
       if (h) {
         setActiveHandle(h);
-        setHasResized(true);
+        setGuideSeen((g) => (g.resize ? g : { ...g, resize: true }));
         dragRef.current = {
           active: true,
           start: p,
@@ -1022,10 +1017,6 @@ export default function Page() {
       tiltAxis = "x";
       tiltSign = 1;
     }
-
-
-    if (mode === "move") setHasMoved(true);
-    if (mode === "roll") setHasRolled(true);
 
     dragRef.current = {
       active: true,
@@ -1068,6 +1059,7 @@ export default function Page() {
     }
 
     if (currentMode === "roll") {
+      setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
       // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
       // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
       // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
@@ -1307,8 +1299,8 @@ export default function Page() {
             >
               <span
                 style={{
-                  width: 22,
                   height: 22,
+                  padding: "0 8px",
                   borderRadius: 999,
                   display: "grid",
                   placeItems: "center",
@@ -1318,10 +1310,11 @@ export default function Page() {
                   fontWeight: 950,
                 }}
               >
-                {heroStep.id}
+                {heroStep.id}/5
               </span>
               <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
                 {heroStep.title}
+                {isMobile ? " • klikni pre informácie" : ""}
               </span>
               {isMobile ? <span style={{ marginLeft: 2, color: "rgba(0,0,0,0.55)", fontWeight: 950 }}>{heroHintOpen ? "▴" : "▾"}</span> : null}
             </button>
@@ -1333,7 +1326,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          <Stepper current={stepCurrent} />
+          {/* Stepper skrytý – zobrazujeme iba aktuálny krok vedľa titulku */}
         </div>
 
         {/* Editor card */}
@@ -1598,22 +1591,22 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Jemné guide tipy (bez overlay) */}
-            {stepCurrent === 2 && !hasMoved ? (
-              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.65)" }}>
-                Tip: Chyť pergolu a potiahni ju na správne miesto. Potom skús režimy „Otoč“ alebo „Nakloň“.
-              </div>
-            ) : null}
-
-            {mode === "resize" && !hasResized ? (
-              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.65)" }}>
-                Tip: Chyť roh ohraničenia a potiahni pre zmenu veľkosti.
-              </div>
-            ) : null}
-
-            {mode === "roll" && !hasRolled ? (
-              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.65)" }}>
-                Tip: Chyť hranu ohraničenia a potiahni hore/dole – nakloníš pergolu ako páku.
+            
+            {stepCurrent === 2 && (!guideSeen.move || !guideSeen.roll || !guideSeen.resize) ? (
+              <div style={{
+                marginTop: 10,
+                padding: "10px 12px",
+                borderRadius: 14,
+                border: "1px solid rgba(0,0,0,0.08)",
+                background: "rgba(0,0,0,0.02)",
+                fontSize: 13,
+                fontWeight: 800,
+                color: "rgba(0,0,0,0.7)",
+              }}>
+                <div style={{ fontWeight: 950, marginBottom: 4 }}>Tip:</div>
+                {!guideSeen.move && <div>• Chyť pergolu a potiahni ju na správne miesto.</div>}
+                {!guideSeen.roll && <div>• Skús režim Nakloň pre prirodzenejšie osadenie.</div>}
+                {!guideSeen.resize && <div>• V režime Resize potiahni roh rámčeka.</div>}
               </div>
             ) : null}
 
