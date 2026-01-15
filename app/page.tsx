@@ -1,3 +1,4 @@
+// ===== page.tsx (časť 1/5) =====
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -23,6 +24,35 @@ Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or 
 Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
 
 const MAX_VARIANTS = 6;
+
+// ===== Hero krokový návod (rozbaľ v mobile) =====
+const HERO_STEPS: { id: number; title: string; hint: string }[] = [
+  {
+    id: 1,
+    title: "Nahraj fotku",
+    hint: "Nahraj fotografiu domu alebo terasy (JPG/PNG). Fotka sa zobrazí ako pozadie v editore. Fotka by mala s dostatočným presahom zachytávať priestor, kam chceš umiestniť pergolu. Pre dosiahnutie čo najlepšieho výsledku by mala byť fotka z predného pohľadu na želaný priestor vo výške očí alebo z mierne bočného pohľadu",
+  },
+  {
+    id: 2,
+    title: "Umiestni pergolu",
+    hint: "Vyber typ pergoly, posuň ju na správne miesto, otoč alebo nakloň. Pomocou sliderov uprav rozmery.",
+  },
+  {
+    id: 3,
+    title: "Vygeneruj varianty",
+    hint: "Klikni na Vygenerovať a vytvor si až 6 AI variantov. Môžeš si vymeniť fotku pozadia alebo vyskúšať rôzne varianty pergoly alebo zimnej záhrady. Potom si otvor náhľad a vyber najlepší.",
+  },
+  {
+    id: 4,
+    title: "Vyplň formulár",
+    hint: "Pre odomknutie sťahovania vyplň formulár a vyber 1 vizualizáciu, ktorú nám odošleš (môžeš pridať poznámku kde vieš uviesť doplňujúce informácie).",
+  },
+  {
+    id: 5,
+    title: "Stiahni PNG",
+    hint: "Po úspešnom odoslaní formulára sa odomkne sťahovanie PNG jednej alebo všetkých vizualizácií.",
+  },
+];
 
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
@@ -387,6 +417,9 @@ export default function Page() {
     isMobileRef.current = isMobile;
   }, [isMobile]);
 
+  // ===== Hero (rozbaľovací návod v mobile) =====
+  const [heroHintOpen, setHeroHintOpen] = useState(false);
+
   // ===== Background upload =====
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
@@ -487,6 +520,10 @@ export default function Page() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [previewOpen]);
+
+// (pokračuje v časti 2/5)
+
+// ===== page.tsx (časť 2/5) =====
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
@@ -1006,6 +1043,9 @@ export default function Page() {
 
     const currentMode = dragRef.current.modeAtDown;
 
+// (pokračuje v časti 3/5)
+
+// ===== page.tsx (časť 3/5) =====
     if (currentMode === "move") {
       const nx = dragRef.current.startPos.x + dx / canvasW;
       const ny = dragRef.current.startPos.y + dy / canvasH;
@@ -1209,9 +1249,18 @@ export default function Page() {
     const hasAnyVariant = variants.length > 0;
     if (!bgImg) return 1;
     if (!hasAnyVariant) return 2;
-    if (!leadSubmitted) return 4;
+    if (!leadSubmitted) return leadOpen ? 4 : 3;
     return 5;
-  }, [bgImg, variants.length, leadSubmitted]);
+  }, [bgImg, variants.length, leadSubmitted, leadOpen]);
+
+  const heroStep = useMemo(() => {
+    return HERO_STEPS.find((s) => s.id === stepCurrent) || HERO_STEPS[0];
+  }, [stepCurrent]);
+
+  // keď sa zmení krok, v mobile necháme hint zatvorený (user si ho rozbalí)
+  useEffect(() => {
+    if (isMobileRef.current) setHeroHintOpen(false);
+  }, [stepCurrent]);
 
   return (
     <section
@@ -1225,15 +1274,64 @@ export default function Page() {
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         {/* Hero */}
         <div style={{ display: "grid", gap: 10 }}>
-          <h2 style={{ margin: 0, fontSize: 34, lineHeight: 1.15, letterSpacing: "-0.02em" }}>Vizualizácia pergoly na vašom dome</h2>
-          <p style={{ margin: 0, color: "rgba(0,0,0,0.70)", fontSize: 16, maxWidth: "110ch" }}>
-            Nahrajte fotku, umiestnite pergolu a vytvorte si až <b>6 variantov</b>. <br />
-            Sťahovanie PNG je dostupné až po vyplnení formulára a výbere jednej vizualizácie, ktorú nám odošlete (plus môžete dopísať poznámku).
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, fontSize: 34, lineHeight: 1.15, letterSpacing: "-0.02em" }}>Vizualizácia pergoly</h2>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (isMobile) setHeroHintOpen((v) => !v);
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 12px",
+                borderRadius: 999,
+                border: "1px solid rgba(0,0,0,0.10)",
+                background: "#fff",
+                boxShadow: "0 12px 28px rgba(0,0,0,0.08)",
+                cursor: isMobile ? "pointer" : "default",
+                userSelect: "none",
+                WebkitUserSelect: "none",
+              }}
+              aria-expanded={isMobile ? heroHintOpen : true}
+              aria-controls="hero-step-hint"
+            >
+              <span
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 999,
+                  display: "grid",
+                  placeItems: "center",
+                  background: "#111",
+                  color: "#fff",
+                  fontSize: 12,
+                  fontWeight: 950,
+                }}
+              >
+                {heroStep.id}
+              </span>
+              <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
+                {heroStep.title}
+              </span>
+              {isMobile ? <span style={{ marginLeft: 2, color: "rgba(0,0,0,0.55)", fontWeight: 950 }}>{heroHintOpen ? "▴" : "▾"}</span> : null}
+            </button>
+          </div>
+
+          {!isMobile || heroHintOpen ? (
+            <div id="hero-step-hint" style={{ margin: 0, color: "rgba(0,0,0,0.70)", fontSize: 16, maxWidth: "110ch" }}>
+              {heroStep.hint}
+            </div>
+          ) : null}
 
           <Stepper current={stepCurrent} />
         </div>
 
+// (pokračuje v časti 4/5)
+
+// ===== page.tsx (časť 4/5) =====
         {/* Editor card */}
         <div
           style={{
@@ -1500,6 +1598,9 @@ export default function Page() {
           </div>
         </div>
 
+// (pokračuje v časti 5/5)
+
+// ===== page.tsx (časť 5/5) =====
         {/* Variants card */}
         <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
           <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
@@ -1512,12 +1613,12 @@ export default function Page() {
               </div>
             </div>
             {!isMobile ? (
-            <button type="button" onClick={onDownloadAllClick} disabled={variants.length === 0} style={{ ...btnStyle, opacity: variants.length === 0 ? 0.55 : 1, cursor: variants.length === 0 ? "not-allowed" : "pointer" }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <Icon name="download" size={16} />
-                Stiahnuť všetky ({variants.length})
-              </span>
-            </button>
+              <button type="button" onClick={onDownloadAllClick} disabled={variants.length === 0} style={{ ...btnStyle, opacity: variants.length === 0 ? 0.55 : 1, cursor: variants.length === 0 ? "not-allowed" : "pointer" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <Icon name="download" size={16} />
+                  Stiahnuť všetky ({variants.length})
+                </span>
+              </button>
             ) : null}
           </div>
 
