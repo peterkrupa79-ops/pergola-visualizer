@@ -957,11 +957,7 @@ export default function Page() {
     }
 
     let rollMode = false;
-    if (mode === "rotate3d" && bboxRect) {
-      const cx = bboxRect.x + bboxRect.w / 2;
-      const edgeThreshold = Math.max(24, bboxRect.w * 0.35);
-      rollMode = Math.abs(p.x - cx) > edgeThreshold;
-    }
+    // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
@@ -1018,14 +1014,9 @@ export default function Page() {
     }
 
     if (currentMode === "rotate3d") {
-      if (dragRef.current.rollMode) {
-        const roll = dragRef.current.startRot2D + dy * 0.01;
-        setRot2D(roll);
-      } else {
-        const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
-        const pitch = dragRef.current.startRot3D.pitch + dy * 0.01;
-        setRot3D({ yaw, pitch: clamp(pitch, -1.25, 1.25) });
-      }
+      // Otoč 3D: otáčaj iba dookola okolo osi Y (yaw)
+      const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
+      setRot3D((prev) => ({ ...prev, yaw }));
       return;
     }
 
