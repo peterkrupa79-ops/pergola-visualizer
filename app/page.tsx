@@ -948,7 +948,6 @@ export default function Page() {
           startScalePct: scalePct,
           handle: h,
           modeAtDown: "resize" as Mode,
-          modeAtDown: "resize" as Mode,
           rollMode: false,
           tiltAxis: null,
           tiltSign: 1,
@@ -1069,7 +1068,6 @@ export default function Page() {
   function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
-    dragRef.current.tiltAxis = null;
     setActiveHandle(null);
 
     try {
