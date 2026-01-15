@@ -467,6 +467,26 @@ export default function Page() {
   // ===== Variants =====
   const [variants, setVariants] = useState<VariantItem[]>([]);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
+
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+
+  function openPreview(i: number) {
+    setPreviewIndex(i);
+    setPreviewOpen(true);
+  }
+  function closePreview() {
+    setPreviewOpen(false);
+  }
+
+  useEffect(() => {
+    if (!previewOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setPreviewOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewOpen]);
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
@@ -1461,6 +1481,7 @@ export default function Page() {
                       onClick={() => {
                         if (!v) return;
                         setSelectedVariantIndex(i);
+                        openPreview(i);
                       }}
                       disabled={!v}
                       style={{
@@ -1739,6 +1760,64 @@ export default function Page() {
                 </div>
               </form>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Preview modal */}
+      {previewOpen && variants[previewIndex]?.b64 ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={(ev) => {
+            if (ev.target === ev.currentTarget) closePreview();
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            zIndex: 10000,
+            display: "grid",
+            placeItems: "center",
+            padding: 14,
+          }}
+        >
+          <div style={{ position: "relative", width: "min(1100px, 100%)" }}>
+            <button
+              type="button"
+              onClick={closePreview}
+              style={{
+                position: "absolute",
+                top: -10,
+                right: -10,
+                width: 42,
+                height: 42,
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.25)",
+                background: "rgba(0,0,0,0.55)",
+                color: "#fff",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+              aria-label="Zavrieť"
+            >
+              ✕
+            </button>
+
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`data:image/png;base64,${variants[previewIndex].b64}`}
+              alt={`Variant ${previewIndex + 1}`}
+              style={{
+                width: "100%",
+                maxHeight: "90vh",
+                objectFit: "contain",
+                display: "block",
+                borderRadius: 14,
+                background: "rgba(255,255,255,0.05)",
+                boxShadow: "0 24px 80px rgba(0,0,0,0.35)",
+              }}
+            />
           </div>
         </div>
       ) : null}
