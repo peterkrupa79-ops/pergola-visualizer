@@ -913,6 +913,7 @@ export default function Page() {
     handle: HandleId | null;
     modeAtDown: Mode;
     rollMode: boolean;
+    tiltAxis: "x" | "y" | null;
   }>({
     active: false,
     start: { x: 0, y: 0 },
@@ -923,6 +924,7 @@ export default function Page() {
     handle: null,
     modeAtDown: "move",
     rollMode: false,
+    tiltAxis: null,
   });
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -945,6 +947,7 @@ export default function Page() {
           handle: h,
           modeAtDown: "resize" as Mode,
           rollMode: false,
+          tiltAxis: null,
         };
         return;
       }
@@ -967,6 +970,7 @@ export default function Page() {
       handle: null,
       modeAtDown: mode as Mode,
       rollMode,
+      tiltAxis: null,
     };
   }
 
@@ -1001,8 +1005,19 @@ export default function Page() {
     }
 
     if (currentMode === "roll") {
-      const roll = dragRef.current.startRot2D + dx * 0.01;
-      setRot2D(roll);
+      if (!dragRef.current.tiltAxis) {
+        const threshold = 6;
+        if (Math.abs(dx) + Math.abs(dy) < threshold) return;
+        dragRef.current.tiltAxis = Math.abs(dx) > Math.abs(dy) ? "y" : "x";
+      }
+
+      if (dragRef.current.tiltAxis === "x") {
+        const pitch = dragRef.current.startRot3D.pitch - dy * 0.01;
+        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
+      } else {
+        const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
+        setRot3D((prev) => ({ ...prev, yaw }));
+      }
       return;
     }
 
@@ -1036,6 +1051,7 @@ export default function Page() {
   function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
+    dragRef.current.tiltAxis = null;
     setActiveHandle(null);
 
     try {
