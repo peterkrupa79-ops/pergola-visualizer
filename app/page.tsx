@@ -1258,7 +1258,7 @@ export default function Page() {
             <div style={{ fontSize: 14, fontWeight: 850, color: "rgba(0,0,0,0.55)" }}>
               Režim:{" "}
               <span style={{ color: "rgba(0,0,0,0.9)" }}>
-                {mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ 3D" : mode === "roll" ? "NAKLOŇ" : "RESIZE"}
+                {mode === "move" ? "POSUN" : mode === "rotate3d" ? "OTOČ" : mode === "roll" ? "NAKLOŇ" : "RESIZE"}
               </span>
             </div>
           </div>
@@ -1267,41 +1267,51 @@ export default function Page() {
             {/* Mode controls like screenshot */}
             {isMobile ? (
               <div style={{ display: "grid", gap: 10 }}>
-                {/* 1. riadok: Posuň / Otoč / Nakloň */}
-                <div style={{ width: "100%" }}>
-                  <Segmented
-                    value={mode}
-                    onChange={(v) => setMode(v as Mode)}
-                    items={[
-                      { value: "move", label: "Posuň", icon: <Icon name="move" size={16} /> },
-                      { value: "rotate3d", label: "Otoč", icon: <Icon name="rotate" size={16} /> },
-                      { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
-                    ]}
-                  />
+                {/* 1. riadok: Výber pergoly / Reset */}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
+                  <select
+                    value={pergolaType}
+                    onChange={(e) => setPergolaType(e.target.value as PergolaType)}
+                    style={{
+                      padding: "10px 12px",
+                      height: 42,
+                      borderRadius: 12,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      background: "#fff",
+                      color: "#111",
+                      fontWeight: 800,
+                      width: "100%",
+                      maxWidth: "100%",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    <option value="bioklim">Bioklimatická pergola</option>
+                    <option value="pevna">Pergola s pevnou strechou</option>
+                    <option value="zimna">Zimná záhrada</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={resetAll}
+                    disabled={loading}
+                    style={{
+                      ...btnStyle,
+                      cursor: loading ? "not-allowed" : "pointer",
+                      opacity: loading ? 0.6 : 1,
+                      flex: "0 0 auto",
+                      minWidth: 0,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="reset" size={16} />
+                      Reset
+                    </span>
+                  </button>
                 </div>
 
-                {/* 2. riadok: Výber pergoly */}
-                <select
-                  value={pergolaType}
-                  onChange={(e) => setPergolaType(e.target.value as PergolaType)}
-                  style={{
-                    padding: "10px 12px",
-                    height: 42,
-                    borderRadius: 12,
-                    border: "1px solid rgba(0,0,0,0.12)",
-                    background: "#fff",
-                    color: "#111",
-                    fontWeight: 800,
-                    width: "100%",
-                    maxWidth: "100%",
-                  }}
-                >
-                  <option value="bioklim">Bioklimatická pergola</option>
-                  <option value="pevna">Pergola s pevnou strechou</option>
-                  <option value="zimna">Zimná záhrada</option>
-                </select>
-
-                {/* 3. riadok: Nahraj fotku / Reset */}
+                {/* 2. riadok: Nahraj fotku / Resize */}
                 <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
                   <label
                     style={{
@@ -1331,21 +1341,31 @@ export default function Page() {
 
                   <button
                     type="button"
-                    onClick={resetAll}
-                    disabled={loading}
+                    onClick={() => setMode("resize")}
                     style={{
                       ...btnStyle,
-                      cursor: loading ? "not-allowed" : "pointer",
-                      opacity: loading ? 0.6 : 1,
                       flex: 1,
                       minWidth: 0,
                     }}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <Icon name="reset" size={16} />
-                      Reset
+                      <Icon name="resize" size={16} />
+                      Resize
                     </span>
                   </button>
+                </div>
+
+                {/* 3. riadok: Posuň / Otoč / Nakloň */}
+                <div style={{ width: "100%" }}>
+                  <Segmented
+                    value={mode}
+                    onChange={(v) => setMode(v as Mode)}
+                    items={[
+                      { value: "move", label: "Posuň", icon: <Icon name="move" size={16} /> },
+                      { value: "rotate3d", label: "Otoč", icon: <Icon name="rotate" size={16} /> },
+                      { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
+                    ]}
+                  />
                 </div>
               </div>
             ) : (
@@ -1355,7 +1375,7 @@ export default function Page() {
                   onChange={(v) => setMode(v as Mode)}
                   items={[
                     { value: "move", label: "Posun", icon: <Icon name="move" size={16} /> },
-                    { value: "rotate3d", label: "Otoč 3D", icon: <Icon name="rotate" size={16} /> },
+                    { value: "rotate3d", label: "Otoč", icon: <Icon name="rotate" size={16} /> },
                     { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
                     { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
                   ]}
