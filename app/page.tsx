@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
-type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
 
 type HandleId = "nw" | "ne" | "se" | "sw";
