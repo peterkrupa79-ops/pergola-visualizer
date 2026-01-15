@@ -913,7 +913,7 @@ export default function Page() {
     handle: HandleId | null;
     modeAtDown: Mode;
     rollMode: boolean;
-    tiltAxis: "lr" | "fb" | null;
+    tiltAxis: "x" | "z" | null;
     tiltSign: number;
   }>({
     active: false,
@@ -963,20 +963,25 @@ export default function Page() {
       rollMode = Math.abs(p.x - cx) > edgeThreshold;
     }
 
-    let tiltAxis: "lr" | "fb" | null = null;
+    let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
     if (mode === "roll" && bboxRect) {
-      const cx = bboxRect.x + bboxRect.w / 2;
-      const cy = bboxRect.y + bboxRect.h / 2;
-      const dxC = p.x - cx;
-      const dyC = p.y - cy;
-      if (Math.abs(dxC) >= Math.abs(dyC)) {
-        tiltAxis = "lr";
-        tiltSign = dxC < 0 ? -1 : 1;
+      const l = Math.abs(p.x - bboxRect.x);
+      const r = Math.abs(p.x - (bboxRect.x + bboxRect.w));
+      const t = Math.abs(p.y - bboxRect.y);
+      const b = Math.abs(p.y - (bboxRect.y + bboxRect.h));
+      const min = Math.min(l, r, t, b);
+
+      if (min === l || min === r) {
+        tiltAxis = "z";
+        tiltSign = min === r ? 1 : -1; // pravý okraj hore = rot2D +, ľavý okraj hore = rot2D -
       } else {
-        tiltAxis = "fb";
-        tiltSign = dyC > 0 ? 1 : -1;
+        tiltAxis = "x";
+        tiltSign = min === b ? 1 : -1; // spodná hrana hore = pitch +, horná hrana hore = pitch -
       }
+    } else if (mode === "roll") {
+      tiltAxis = "x";
+      tiltSign = 1;
     }
 
     dragRef.current = {
@@ -1014,7 +1019,7 @@ export default function Page() {
 
     if (currentMode === "rotate3d") {
       if (dragRef.current.rollMode) {
-        const roll = dragRef.current.startRot2D + dx * 0.01;
+        const roll = dragRef.current.startRot2D + dy * 0.01;
         setRot2D(roll);
       } else {
         const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
@@ -1025,15 +1030,17 @@ export default function Page() {
     }
 
     if (currentMode === "roll") {
-      // Teeter-totter tilt: drag up lifts the grabbed side, the opposite side goes down.
-      // Left/Right edge -> roll (rot2D). Front/Back edge -> pitch (rot3D.pitch).
-      const speed = 0.01;
-      if (dragRef.current.tiltAxis === "fb") {
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * speed * dragRef.current.tiltSign;
-        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
-      } else {
-        const roll = dragRef.current.startRot2D + (-dy) * speed * dragRef.current.tiltSign;
+      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
+      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
+      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
+      const k = 0.01;
+
+      if (dragRef.current.tiltAxis === "z") {
+        const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
+      } else {
+        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
+        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
     }
@@ -1068,6 +1075,7 @@ export default function Page() {
   function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
+    dragRef.current.tiltAxis = null;
     setActiveHandle(null);
 
     try {
@@ -1075,42 +1083,55 @@ export default function Page() {
     } catch {}
   }
 
+  // ===== Generate (real API) =====
   async function generate() {
-    if (!bgImg) {
-      setError("Najprv nahraj fotku.");
-      return;
-    }
-    if (loading) return;
+    if (!bgImg) return;
+    if (variants.length >= MAX_VARIANTS) return;
 
     setLoading(true);
     setError("");
 
     try {
-      const exportCanvas = document.createElement("canvas");
-      exportCanvas.width = bgImg.width;
-      exportCanvas.height = bgImg.height;
-      const ctx = exportCanvas.getContext("2d");
-      if (!ctx) throw new Error("Nepodarilo sa vytvoriť export canvas.");
+      // downscale export
+      const MAX_DIM = 2048;
+      const bgW = bgImg.width;
+      const bgH = bgImg.height;
 
-      ctx.drawImage(bgImg, 0, 0);
+      const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
+      const outW = Math.max(1, Math.round(bgW * scale));
+      const outH = Math.max(1, Math.round(bgH * scale));
 
-      if (threeReadyRef.current && rendererRef.current && sceneRef.current && cameraRef.current && rootRef.current) {
-        const renderer = rendererRef.current;
-        applyTransformsForCurrentState(exportCanvas.width, exportCanvas.height);
-        renderer.setSize(exportCanvas.width, exportCanvas.height, false);
-        renderer.render(sceneRef.current, cameraRef.current);
-        ctx.drawImage(renderer.domElement, 0, 0);
+      const out = document.createElement("canvas");
+      out.width = outW;
+      out.height = outH;
+
+      const octx = out.getContext("2d")!;
+      octx.drawImage(bgImg, 0, 0, outW, outH);
+
+      if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
+        throw new Error("3D renderer nie je pripravený.");
       }
 
-      const jpegBlob: Blob = await new Promise((res, rej) =>
-        exportCanvas.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+      const renderer = rendererRef.current;
+      const scene = sceneRef.current;
+
+      applyTransformsForCurrentState(outW, outH);
+      renderer.setSize(outW, outH, false);
+      renderer.render(scene, cameraRef.current);
+
+      const glTemp = renderer.domElement;
+      octx.drawImage(glTemp, 0, 0);
+
+      const blob: Blob = await new Promise((res, rej) =>
+        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
 
       const form = new FormData();
-      form.append("image", jpegBlob, "photo.jpg");
+      form.append("image", blob, "collage.jpg");
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
+
       const j = await r.json().catch(async () => {
         const t = await r.text().catch(() => "");
         return { error: t || `HTTP ${r.status}` };
@@ -1121,9 +1142,11 @@ export default function Page() {
 
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next: VariantItem = { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() };
-        return [...prev, next];
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        return next;
       });
+
+      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (err: any) {
       console.error(err);
       setError(String(err?.message || err));
@@ -1148,46 +1171,9 @@ export default function Page() {
     }
   }
 
-  function onDownloadOne(idx: number) {
-    if (!variants[idx]?.b64) return;
-    setSelectedVariantIndex(idx);
-
-    if (leadSubmitted) {
-      downloadVariantPNG(idx);
-      return;
-    }
-
-    setLeadErr({});
-    setPendingAction({ kind: "single", index: idx });
-    setLeadOpen(true);
-  }
-
-  function onDownloadAllClick() {
-    if (variants.length === 0) return;
-
-    if (leadSubmitted) {
-      downloadAllPNGs();
-      return;
-    }
-
-    setLeadErr({});
-    setPendingAction({ kind: "all" });
-    setLeadOpen(true);
-  }
-
   const sliderBox = useMemo(() => {
     if (panel === "zoom") {
-      return (
-        <CustomSlider
-          min={50}
-          max={160}
-          step={5}
-          value={editorZoom}
-          onChange={(v) => setEditorZoom(Math.round(v))}
-          label="Zoom"
-          suffix="%"
-        />
-      );
+      return <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />;
     }
     if (panel === "x") {
       return (
@@ -1227,8 +1213,6 @@ export default function Page() {
       />
     );
   }, [panel, editorZoom, scalePct]);
-
-  const canGenerateBtn = !!bgImg && !loading && variants.length < MAX_VARIANTS;
 
   const stepCurrent = useMemo(() => {
     const hasAnyVariant = variants.length > 0;
@@ -1421,12 +1405,7 @@ export default function Page() {
                     <option value="zimna">Zimná záhrada</option>
                   </select>
 
-                  <button
-                    type="button"
-                    onClick={resetAll}
-                    disabled={loading}
-                    style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}
-                  >
+                  <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                       <Icon name="reset" size={16} />
                       Reset
@@ -1436,56 +1415,36 @@ export default function Page() {
                   <button
                     type="button"
                     onClick={generate}
-                    disabled={!canGenerateBtn}
+                    disabled={!canGenerate}
                     style={{
                       ...btnStyle,
-                      background: !canGenerateBtn ? "rgba(0,0,0,0.10)" : "#111",
-                      color: !canGenerateBtn ? "rgba(0,0,0,0.45)" : "#fff",
-                      borderColor: !canGenerateBtn ? "rgba(0,0,0,0.12)" : "#111",
-                      cursor: !canGenerateBtn ? "not-allowed" : "pointer",
+                      background: !canGenerate ? "rgba(0,0,0,0.10)" : "#111",
+                      color: !canGenerate ? "rgba(0,0,0,0.45)" : "#fff",
+                      borderColor: !canGenerate ? "rgba(0,0,0,0.12)" : "#111",
+                      cursor: !canGenerate ? "not-allowed" : "pointer",
                     }}
                   >
-                    {loading
-                      ? "Generujem..."
-                      : variants.length >= MAX_VARIANTS
-                        ? `Limit ${MAX_VARIANTS}`
-                        : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                    {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* chips */}
+            {/* 4. riadok na mobile: Zoom / Hĺbka / Výška / Šírka (a na desktope ostáva ako bolo) */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                onClick={() => togglePanel("zoom")}
-                style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}
-              >
+              <button type="button" onClick={() => togglePanel("zoom")} style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                   <Icon name="zoom" size={16} />
                   Zoom
                 </span>
               </button>
-              <button
-                type="button"
-                onClick={() => togglePanel("x")}
-                style={{ ...chipStyle, background: panelOpen && panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}
-              >
+              <button type="button" onClick={() => togglePanel("x")} style={{ ...chipStyle, background: panelOpen && panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Hĺbka
               </button>
-              <button
-                type="button"
-                onClick={() => togglePanel("y")}
-                style={{ ...chipStyle, background: panelOpen && panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}
-              >
+              <button type="button" onClick={() => togglePanel("y")} style={{ ...chipStyle, background: panelOpen && panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Výška
               </button>
-              <button
-                type="button"
-                onClick={() => togglePanel("z")}
-                style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}
-              >
+              <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Šírka
               </button>
             </div>
@@ -1531,52 +1490,17 @@ export default function Page() {
         </div>
 
         {/* Variants card */}
-        <div
-          style={{
-            background: "#fff",
-            border: "1px solid rgba(0,0,0,0.08)",
-            borderRadius: 18,
-            boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              padding: "14px 16px",
-              borderBottom: "1px solid rgba(0,0,0,0.06)",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: 12,
-              flexWrap: "wrap",
-            }}
-          >
+        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
             <div style={{ display: "grid", gap: 4 }}>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 950,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  color: "rgba(0,0,0,0.55)",
-                }}
-              >
+              <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)" }}>
                 Varianty (max {MAX_VARIANTS})
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.60)" }}>
                 Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={onDownloadAllClick}
-              disabled={variants.length === 0}
-              style={{
-                ...btnStyle,
-                opacity: variants.length === 0 ? 0.55 : 1,
-                cursor: variants.length === 0 ? "not-allowed" : "pointer",
-              }}
-            >
+            <button type="button" onClick={onDownloadAllClick} disabled={variants.length === 0} style={{ ...btnStyle, opacity: variants.length === 0 ? 0.55 : 1, cursor: variants.length === 0 ? "not-allowed" : "pointer" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <Icon name="download" size={16} />
                 Stiahnuť všetky ({variants.length})
@@ -1612,16 +1536,7 @@ export default function Page() {
                       }}
                       aria-label={v ? `Vybrať variant ${i + 1}` : `Variant ${i + 1} (prázdny)`}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 10,
-                          padding: "10px 10px 8px",
-                          borderBottom: "1px solid rgba(0,0,0,0.06)",
-                          background: "rgba(0,0,0,0.02)",
-                        }}
-                      >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "10px 10px 8px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "rgba(0,0,0,0.02)" }}>
                         <div>
                           <div style={{ fontWeight: 950, fontSize: 12, color: "rgba(0,0,0,0.75)" }}>Variant {i + 1}</div>
                           {v ? <div style={{ fontWeight: 900, fontSize: 12, color: "rgba(0,0,0,0.60)" }}>{typeLabel(v.type)}</div> : null}
@@ -1631,11 +1546,7 @@ export default function Page() {
 
                       {v ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={`data:image/png;base64,${v.b64}`}
-                          alt={`Variant ${i + 1}`}
-                          style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
-                        />
+                        <img src={`data:image/png;base64,${v.b64}`} alt={`Variant ${i + 1}`} style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }} />
                       ) : (
                         <div style={{ padding: "14px 10px", fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.45)" }}>Zatiaľ nevygenerované</div>
                       )}
@@ -1674,7 +1585,7 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Mobile fixed bottom actions */}
+      {/* Mobile fixed bottom actions like screenshot */}
       {isMobile ? (
         <div
           style={{
@@ -1693,23 +1604,19 @@ export default function Page() {
             <button
               type="button"
               onClick={generate}
-              disabled={!canGenerateBtn}
+              disabled={!canGenerate}
               style={{
                 height: 48,
                 borderRadius: 999,
                 border: "1px solid rgba(0,0,0,0.14)",
-                background: !canGenerateBtn ? "rgba(0,0,0,0.10)" : "#111",
-                color: !canGenerateBtn ? "rgba(0,0,0,0.45)" : "#fff",
+                background: !canGenerate ? "rgba(0,0,0,0.10)" : "#111",
+                color: !canGenerate ? "rgba(0,0,0,0.45)" : "#fff",
                 fontWeight: 950,
                 fontSize: 15,
-                cursor: !canGenerateBtn ? "not-allowed" : "pointer",
+                cursor: !canGenerate ? "not-allowed" : "pointer",
               }}
             >
-              {loading
-                ? "Generujem..."
-                : variants.length >= MAX_VARIANTS
-                  ? `Limit ${MAX_VARIANTS}`
-                  : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+              {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
             </button>
 
             <button
@@ -1840,40 +1747,30 @@ export default function Page() {
                   <input value={lead.email} onChange={(e) => setLead((p) => ({ ...p, email: e.target.value }))} placeholder="meno@domena.sk" inputMode="email" style={inputStyle} />
                 </Field>
 
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
-                  <div style={labelStyle}>Približné rozmery pergoly *</div>
-                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 12, marginTop: 10 }}>
-                    <Field label="Šírka" error={leadErr.approxWidth}>
-                      <input value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.0 m" style={inputStyle} />
-                    </Field>
-                    <Field label="Hĺbka" error={leadErr.approxDepth}>
-                      <input value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.5 m" style={inputStyle} />
-                    </Field>
-                    <Field label="Výška" error={leadErr.approxHeight}>
-                      <input value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.6 m" style={inputStyle} />
-                    </Field>
-                  </div>
-                  {leadErr.approxWidth || leadErr.approxDepth || leadErr.approxHeight ? (
-                    <div style={{ display: "grid", gap: 2, marginTop: 8 }}>
-                      {leadErr.approxWidth ? <div style={errTextStyle}>{leadErr.approxWidth}</div> : null}
-                      {leadErr.approxDepth ? <div style={errTextStyle}>{leadErr.approxDepth}</div> : null}
-                      {leadErr.approxHeight ? <div style={errTextStyle}>{leadErr.approxHeight}</div> : null}
-                    </div>
-                  ) : null}
-                </div>
+                <Field label="Šírka (približne) *" error={leadErr.approxWidth}>
+                  <input value={lead.approxWidth} onChange={(e) => setLead((p) => ({ ...p, approxWidth: e.target.value }))} placeholder="napr. 4.2 m" style={inputStyle} />
+                </Field>
+
+                <Field label="Hĺbka (približne) *" error={leadErr.approxDepth}>
+                  <input value={lead.approxDepth} onChange={(e) => setLead((p) => ({ ...p, approxDepth: e.target.value }))} placeholder="napr. 3.0 m" style={inputStyle} />
+                </Field>
+
+                <Field label="Výška (približne) *" error={leadErr.approxHeight}>
+                  <input value={lead.approxHeight} onChange={(e) => setLead((p) => ({ ...p, approxHeight: e.target.value }))} placeholder="napr. 2.6 m" style={inputStyle} />
+                </Field>
 
                 <div style={{ gridColumn: isMobile ? "auto" : "1 / -1" }}>
                   <div style={labelStyle}>Poznámka (voliteľné)</div>
                   <textarea
                     value={lead.customerNote}
                     onChange={(e) => setLead((p) => ({ ...p, customerNote: e.target.value }))}
-                    placeholder="Napr. farba, umiestnenie, poznámka k realizácii..."
-                    style={{ ...inputStyle, minHeight: 96, resize: "vertical", paddingTop: 10 }}
+                    placeholder="Napr. farba konštrukcie, typ strechy, orientačné požiadavky..."
+                    style={{ ...inputStyle, minHeight: 90, resize: "vertical" as const }}
                   />
                 </div>
 
-                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6, flexWrap: "wrap" }}>
-                  <button type="button" onClick={closeLeadForm} style={{ ...btnStyle, background: "#fff" }}>
+                <div style={{ gridColumn: isMobile ? "auto" : "1 / -1", display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                  <button type="button" onClick={closeLeadForm} style={btnStyle}>
                     Zrušiť
                   </button>
                   <button
@@ -1885,10 +1782,10 @@ export default function Page() {
                       color: "#fff",
                       borderColor: "#111",
                       cursor: leadSubmitting ? "not-allowed" : "pointer",
-                      opacity: leadSubmitting ? 0.7 : 1,
+                      opacity: leadSubmitting ? 0.75 : 1,
                     }}
                   >
-                    {leadSubmitting ? "Odosielam..." : "Odoslať a odomknúť sťahovanie"}
+                    {leadSubmitting ? "Odosielam..." : "Odoslať"}
                   </button>
                 </div>
               </form>
@@ -1961,46 +1858,37 @@ export default function Page() {
 function Stepper({ current }: { current: number }) {
   const steps = [
     { n: 1, t: "Nahraj fotku" },
-    { n: 2, t: "Umiestni pergolu" },
+    { n: 2, t: "Uprav polohu" },
     { n: 3, t: "Vygeneruj varianty" },
     { n: 4, t: "Vyplň formulár" },
     { n: 5, t: "Stiahni PNG" },
   ];
+
   return (
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-      {steps.map((s) => {
-        const done = s.n < current;
-        const active = s.n === current;
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      {steps.map((s, idx) => {
+        const done = current > s.n;
+        const active = current === s.n;
         return (
-          <div
-            key={s.n}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 10px",
-              borderRadius: 999,
-              border: "1px solid rgba(0,0,0,0.10)",
-              background: active ? "#fff" : "rgba(0,0,0,0.03)",
-              boxShadow: active ? "0 10px 22px rgba(0,0,0,0.08)" : "none",
-            }}
-          >
+          <div key={s.n} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
             <div
               style={{
-                width: 18,
-                height: 18,
+                width: 26,
+                height: 26,
                 borderRadius: 999,
                 display: "grid",
                 placeItems: "center",
-                fontSize: 11,
                 fontWeight: 950,
-                background: done ? "#111" : "rgba(0,0,0,0.08)",
-                color: done ? "#fff" : "rgba(0,0,0,0.70)",
+                fontSize: 12,
+                background: done ? "#111" : active ? "#fff" : "rgba(0,0,0,0.06)",
+                color: done ? "#fff" : "#111",
+                border: active ? "2px solid rgba(0,0,0,0.75)" : "1px solid rgba(0,0,0,0.10)",
               }}
             >
               {done ? "✓" : s.n}
             </div>
-            <div style={{ fontSize: 12, fontWeight: 900, color: active ? "rgba(0,0,0,0.85)" : "rgba(0,0,0,0.60)" }}>{s.t}</div>
+            <div style={{ fontSize: 12, fontWeight: 900, color: active ? "#111" : "rgba(0,0,0,0.60)" }}>{s.t}</div>
+            {idx < steps.length - 1 ? <div style={{ width: 18, height: 2, background: "rgba(0,0,0,0.10)", borderRadius: 999 }} /> : null}
           </div>
         );
       })}
@@ -2011,21 +1899,38 @@ function Stepper({ current }: { current: number }) {
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: "grid", gap: 6 }}>
-      <div style={labelStyle}>{label}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+        <div style={labelStyle}>{label}</div>
+        {error ? <div style={errTextStyle}>{error}</div> : null}
+      </div>
       {children}
-      {error ? <div style={errTextStyle}>{error}</div> : null}
     </div>
   );
 }
 
 const btnStyle: React.CSSProperties = {
   height: 42,
-  padding: "0 14px",
   borderRadius: 12,
-  border: "1px solid rgba(0,0,0,0.12)",
+  padding: "0 14px",
+  border: "1px solid rgba(0,0,0,0.14)",
   background: "#fff",
+  fontWeight: 950,
+  fontSize: 14,
   color: "#111",
-  fontWeight: 900,
+  cursor: "pointer",
+  userSelect: "none",
+  WebkitUserSelect: "none",
+};
+
+const smallBtnStyle: React.CSSProperties = {
+  height: 36,
+  padding: "0 12px",
+  borderRadius: 12,
+  border: "1px solid rgba(0,0,0,0.14)",
+  background: "#fff",
+  fontWeight: 950,
+  fontSize: 13,
+  color: "#111",
   cursor: "pointer",
   userSelect: "none",
   WebkitUserSelect: "none",
@@ -2035,36 +1940,14 @@ const chipStyle: React.CSSProperties = {
   height: 38,
   padding: "0 12px",
   borderRadius: 999,
-  border: "1px solid rgba(0,0,0,0.12)",
+  border: "1px solid rgba(0,0,0,0.14)",
   background: "#fff",
+  fontWeight: 950,
+  fontSize: 13,
   color: "#111",
-  fontWeight: 900,
   cursor: "pointer",
   userSelect: "none",
   WebkitUserSelect: "none",
-};
-
-const smallBtnStyle: React.CSSProperties = {
-  height: 34,
-  padding: "0 12px",
-  borderRadius: 999,
-  border: "1px solid rgba(0,0,0,0.14)",
-  background: "#fff",
-  color: "#111",
-  fontWeight: 900,
-  cursor: "pointer",
-  userSelect: "none",
-  WebkitUserSelect: "none",
-};
-
-const inputStyle: React.CSSProperties = {
-  height: 42,
-  padding: "0 12px",
-  borderRadius: 12,
-  border: "1px solid rgba(0,0,0,0.14)",
-  background: "#fff",
-  fontWeight: 800,
-  outline: "none",
 };
 
 const labelStyle: React.CSSProperties = {
@@ -2072,21 +1955,32 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 950,
   textTransform: "uppercase",
   letterSpacing: "0.08em",
-  color: "rgba(0,0,0,0.55)",
+  color: "rgba(0,0,0,0.60)",
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  height: 42,
+  borderRadius: 12,
+  border: "1px solid rgba(0,0,0,0.14)",
+  padding: "0 12px",
+  fontSize: 14,
+  fontWeight: 800,
+  outline: "none",
 };
 
 const errTextStyle: React.CSSProperties = {
   fontSize: 12,
-  fontWeight: 800,
-  color: "#b00020",
+  fontWeight: 900,
+  color: "rgba(210,0,0,0.85)",
 };
 
 const errorBoxStyle: React.CSSProperties = {
+  marginTop: 10,
   padding: 12,
   borderRadius: 14,
-  border: "1px solid rgba(176,0,32,0.25)",
-  background: "rgba(176,0,32,0.06)",
-  color: "rgba(176,0,32,0.95)",
+  border: "1px solid rgba(210,0,0,0.25)",
+  background: "rgba(210,0,0,0.06)",
+  color: "rgba(150,0,0,0.9)",
   fontWeight: 850,
-  fontSize: 13,
 };
