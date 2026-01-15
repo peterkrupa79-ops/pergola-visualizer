@@ -1252,6 +1252,7 @@ export default function Page() {
                     borderRadius: 12,
                     border: "1px solid rgba(0,0,0,0.12)",
                     background: "#fff",
+                    color: "#111",
                     fontWeight: 800,
                   }}
                 >
