@@ -420,6 +420,11 @@ export default function Page() {
   // ===== Hero (rozbaľovací návod v mobile) =====
   const [heroHintOpen, setHeroHintOpen] = useState(false);
 
+  // ===== Guide (jemné tipy bez overlay) =====
+  const [hasMoved, setHasMoved] = useState(false);
+  const [hasResized, setHasResized] = useState(false);
+  const [hasRolled, setHasRolled] = useState(false);
+
   // ===== Background upload =====
   const [bgFile, setBgFile] = useState<File | null>(null);
   const bgUrl = useMemo(() => (bgFile ? URL.createObjectURL(bgFile) : ""), [bgFile]);
@@ -685,6 +690,9 @@ export default function Page() {
     setPanel("zoom");
     setPanelOpen(false);
     setSelectedVariantIndex(0);
+    setHasMoved(false);
+    setHasResized(false);
+    setHasRolled(false);
   }
 
   function togglePanel(p: "zoom" | "x" | "y" | "z") {
@@ -973,6 +981,7 @@ export default function Page() {
       const h = hitHandle(p, bboxRect);
       if (h) {
         setActiveHandle(h);
+        setHasResized(true);
         dragRef.current = {
           active: true,
           start: p,
@@ -1013,6 +1022,10 @@ export default function Page() {
       tiltAxis = "x";
       tiltSign = 1;
     }
+
+
+    if (mode === "move") setHasMoved(true);
+    if (mode === "roll") setHasRolled(true);
 
     dragRef.current = {
       active: true,
@@ -1294,8 +1307,8 @@ export default function Page() {
             >
               <span
                 style={{
+                  width: 22,
                   height: 22,
-                  padding: "0 8px",
                   borderRadius: 999,
                   display: "grid",
                   placeItems: "center",
@@ -1305,11 +1318,10 @@ export default function Page() {
                   fontWeight: 950,
                 }}
               >
-                {heroStep.id}/5
+                {heroStep.id}
               </span>
               <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
                 {heroStep.title}
-                {isMobile ? " • klikni pre informácie" : ""}
               </span>
               {isMobile ? <span style={{ marginLeft: 2, color: "rgba(0,0,0,0.55)", fontWeight: 950 }}>{heroHintOpen ? "▴" : "▾"}</span> : null}
             </button>
@@ -1321,7 +1333,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          {/* Stepper skrytý – zobrazujeme iba aktuálny krok vedľa titulku */}
+          <Stepper current={stepCurrent} />
         </div>
 
         {/* Editor card */}
@@ -1585,6 +1597,25 @@ export default function Page() {
                 />
               </div>
             </div>
+
+            {/* Jemné guide tipy (bez overlay) */}
+            {stepCurrent === 2 && !hasMoved ? (
+              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.65)" }}>
+                Tip: Chyť pergolu a potiahni ju na správne miesto. Potom skús režimy „Otoč“ alebo „Nakloň“.
+              </div>
+            ) : null}
+
+            {mode === "resize" && !hasResized ? (
+              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.65)" }}>
+                Tip: Chyť roh ohraničenia a potiahni pre zmenu veľkosti.
+              </div>
+            ) : null}
+
+            {mode === "roll" && !hasRolled ? (
+              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.65)" }}>
+                Tip: Chyť hranu ohraničenia a potiahni hore/dole – nakloníš pergolu ako páku.
+              </div>
+            ) : null}
 
             {error ? <div style={errorBoxStyle}>Chyba: {error}</div> : null}
           </div>
