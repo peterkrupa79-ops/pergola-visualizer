@@ -521,9 +521,6 @@ export default function Page() {
     return () => window.removeEventListener("keydown", onKey);
   }, [previewOpen]);
 
-// (pokračuje v časti 2/5)
-
-// ===== page.tsx (časť 2/5) =====
   const remaining = Math.max(0, MAX_VARIANTS - variants.length);
 
   const canGenerate = !!bgImg && !loading && variants.length < MAX_VARIANTS;
@@ -1043,9 +1040,6 @@ export default function Page() {
 
     const currentMode = dragRef.current.modeAtDown;
 
-// (pokračuje v časti 3/5)
-
-// ===== page.tsx (časť 3/5) =====
     if (currentMode === "move") {
       const nx = dragRef.current.startPos.x + dx / canvasW;
       const ny = dragRef.current.startPos.y + dy / canvasH;
@@ -1329,9 +1323,6 @@ export default function Page() {
           <Stepper current={stepCurrent} />
         </div>
 
-// (pokračuje v časti 4/5)
-
-// ===== page.tsx (časť 4/5) =====
         {/* Editor card */}
         <div
           style={{
@@ -1598,9 +1589,6 @@ export default function Page() {
           </div>
         </div>
 
-// (pokračuje v časti 5/5)
-
-// ===== page.tsx (časť 5/5) =====
         {/* Variants card */}
         <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
           <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
