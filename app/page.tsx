@@ -1294,8 +1294,8 @@ export default function Page() {
             >
               <span
                 style={{
-                  width: 22,
                   height: 22,
+                  padding: "0 8px",
                   borderRadius: 999,
                   display: "grid",
                   placeItems: "center",
@@ -1305,10 +1305,11 @@ export default function Page() {
                   fontWeight: 950,
                 }}
               >
-                {heroStep.id}
+                {heroStep.id}/5
               </span>
               <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
                 {heroStep.title}
+                {isMobile ? " • klikni pre informácie" : ""}
               </span>
               {isMobile ? <span style={{ marginLeft: 2, color: "rgba(0,0,0,0.55)", fontWeight: 950 }}>{heroHintOpen ? "▴" : "▾"}</span> : null}
             </button>
@@ -1320,7 +1321,7 @@ export default function Page() {
             </div>
           ) : null}
 
-          <Stepper current={stepCurrent} />
+          {/* Stepper skrytý – zobrazujeme iba aktuálny krok vedľa titulku */}
         </div>
 
         {/* Editor card */}
