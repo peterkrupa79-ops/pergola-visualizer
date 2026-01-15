@@ -1214,56 +1214,34 @@ export default function Page() {
 
           <div style={{ padding: 14, display: "grid", gap: 12 }}>
             {/* Mode controls like screenshot */}
-            <div
-              style={
-                isMobile
-                  ? { display: "grid", gap: 10 }
-                  : { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }
-              }
-            >
-              <div style={isMobile ? { width: "100%" } : undefined}>
-              <Segmented
-                value={mode}
-                onChange={(v) => setMode(v as Mode)}
-                items={[
-                  { value: "move", label: "Posun", icon: <Icon name="move" size={16} /> },
-                  { value: "rotate3d", label: "Otoč 3D", icon: <Icon name="rotate" size={16} /> },
-                  { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
-                  { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
-                ]}
-              />
-              </div>
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: isMobile ? "100%" : undefined }}>
-                <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <Icon name="upload" size={16} />
-                    Nahraj fotku
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    style={{ display: "none" }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      setBgFile(f);
-                      setError("");
-                    }}
+            {isMobile ? (
+              <div style={{ display: "grid", gap: 10 }}>
+                {/* 1. riadok: Posuň / Otoč / Nakloň */}
+                <div style={{ width: "100%" }}>
+                  <Segmented
+                    value={mode}
+                    onChange={(v) => setMode(v as Mode)}
+                    items={[
+                      { value: "move", label: "Posuň", icon: <Icon name="move" size={16} /> },
+                      { value: "rotate3d", label: "Otoč", icon: <Icon name="rotate" size={16} /> },
+                      { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
+                    ]}
                   />
-                </label>
+                </div>
 
+                {/* 2. riadok: Výber pergoly */}
                 <select
                   value={pergolaType}
                   onChange={(e) => setPergolaType(e.target.value as PergolaType)}
                   style={{
                     padding: "10px 12px",
+                    height: 42,
                     borderRadius: 12,
                     border: "1px solid rgba(0,0,0,0.12)",
                     background: "#fff",
                     color: "#111",
                     fontWeight: 800,
-                    minWidth: isMobile ? 0 : undefined,
-                    flex: isMobile ? "1 1 220px" : undefined,
+                    width: "100%",
                     maxWidth: "100%",
                   }}
                 >
@@ -1272,14 +1250,108 @@ export default function Page() {
                   <option value="zimna">Zimná záhrada</option>
                 </select>
 
-                <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <Icon name="reset" size={16} />
-                    Reset
-                  </span>
-                </button>
+                {/* 3. riadok: Nahraj fotku / Reset */}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
+                  <label
+                    style={{
+                      ...btnStyle,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="upload" size={16} />
+                      Nahraj fotku
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setBgFile(f);
+                        setError("");
+                      }}
+                    />
+                  </label>
 
-                {!isMobile ? (
+                  <button
+                    type="button"
+                    onClick={resetAll}
+                    disabled={loading}
+                    style={{
+                      ...btnStyle,
+                      cursor: loading ? "not-allowed" : "pointer",
+                      opacity: loading ? 0.6 : 1,
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="reset" size={16} />
+                      Reset
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <Segmented
+                  value={mode}
+                  onChange={(v) => setMode(v as Mode)}
+                  items={[
+                    { value: "move", label: "Posun", icon: <Icon name="move" size={16} /> },
+                    { value: "rotate3d", label: "Otoč 3D", icon: <Icon name="rotate" size={16} /> },
+                    { value: "roll", label: "Nakloň", icon: <Icon name="rotate" size={16} /> },
+                    { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
+                  ]}
+                />
+
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="upload" size={16} />
+                      Nahraj fotku
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        setBgFile(f);
+                        setError("");
+                      }}
+                    />
+                  </label>
+
+                  <select
+                    value={pergolaType}
+                    onChange={(e) => setPergolaType(e.target.value as PergolaType)}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      background: "#fff",
+                      color: "#111",
+                      fontWeight: 800,
+                    }}
+                  >
+                    <option value="bioklim">Bioklimatická pergola</option>
+                    <option value="pevna">Pergola s pevnou strechou</option>
+                    <option value="zimna">Zimná záhrada</option>
+                  </select>
+
+                  <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="reset" size={16} />
+                      Reset
+                    </span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={generate}
@@ -1294,10 +1366,11 @@ export default function Page() {
                   >
                     {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                   </button>
-                ) : null}
+                </div>
               </div>
-            </div>
+            )}
 
+            {/* 4. riadok na mobile: Zoom / Hĺbka / Výška / Šírka (a na desktope ostáva ako bolo) */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button type="button" onClick={() => togglePanel("zoom")} style={{ ...chipStyle, background: panelOpen && panel === "zoom" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
