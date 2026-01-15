@@ -197,7 +197,15 @@ function CustomSlider({
   return (
     <div style={{ display: "grid", gap: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-        <div style={{ fontSize: 12, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(0,0,0,0.65)" }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 900,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            color: "rgba(0,0,0,0.65)",
+          }}
+        >
           {label ?? "Hodnota"}
         </div>
         <div style={{ fontSize: 13, fontWeight: 950, color: "rgba(0,0,0,0.8)", fontVariantNumeric: "tabular-nums" }}>
@@ -327,6 +335,9 @@ function Segmented({
         borderRadius: 999,
         border: "1px solid rgba(0,0,0,0.10)",
         background: "rgba(0,0,0,0.03)",
+        maxWidth: "100%",
+        overflowX: "auto",
+        WebkitOverflowScrolling: "touch",
       }}
     >
       {items.map((it) => {
@@ -1102,9 +1113,7 @@ export default function Page() {
 
   const sliderBox = useMemo(() => {
     if (panel === "zoom") {
-      return (
-        <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />
-      );
+      return <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />;
     }
     if (panel === "x") {
       return (
@@ -1154,7 +1163,14 @@ export default function Page() {
   }, [bgImg, variants.length, leadSubmitted]);
 
   return (
-    <section style={{ background: "#f6f6f6", color: "#111", padding: "28px 16px 90px", fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" }}>
+    <section
+      style={{
+        background: "#f6f6f6",
+        color: "#111",
+        padding: "28px 16px 90px",
+        fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
+      }}
+    >
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         {/* Hero */}
         <div style={{ display: "grid", gap: 10 }}>
@@ -1168,8 +1184,25 @@ export default function Page() {
         </div>
 
         {/* Editor card */}
-        <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 18, boxShadow: "0 10px 30px rgba(0,0,0,0.06)", overflow: "hidden" }}>
-          <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            background: "#fff",
+            border: "1px solid rgba(0,0,0,0.08)",
+            borderRadius: 18,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "14px 16px",
+              borderBottom: "1px solid rgba(0,0,0,0.06)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
             <div style={{ fontSize: 18, fontWeight: 950 }}>Editor</div>
             <div style={{ fontSize: 14, fontWeight: 850, color: "rgba(0,0,0,0.55)" }}>
               Režim:{" "}
@@ -1261,13 +1294,13 @@ export default function Page() {
                 </span>
               </button>
               <button type="button" onClick={() => togglePanel("x")} style={{ ...chipStyle, background: panelOpen && panel === "x" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                Šírka
+                Hĺbka
               </button>
               <button type="button" onClick={() => togglePanel("y")} style={{ ...chipStyle, background: panelOpen && panel === "y" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Výška
               </button>
               <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                Hĺbka
+                Šírka
               </button>
             </div>
 
@@ -1331,15 +1364,7 @@ export default function Page() {
           </div>
 
           <div style={{ padding: 14 }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)",
-                gap: 10,
-              }}
-              role="list"
-              aria-label="Varianty vizualizácie"
-            >
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 10 }} role="list" aria-label="Varianty vizualizácie">
               {Array.from({ length: MAX_VARIANTS }).map((_, i) => {
                 const v = variants[i] || null;
                 const selected = selectedVariantIndex === i;
@@ -1702,6 +1727,7 @@ const btnStyle: React.CSSProperties = {
   borderRadius: 12,
   border: "1px solid rgba(0,0,0,0.12)",
   background: "#fff",
+  color: "#111",
   fontWeight: 900,
   cursor: "pointer",
   userSelect: "none",
@@ -1714,6 +1740,7 @@ const chipStyle: React.CSSProperties = {
   borderRadius: 999,
   border: "1px solid rgba(0,0,0,0.12)",
   background: "#fff",
+  color: "#111",
   fontWeight: 900,
   cursor: "pointer",
   userSelect: "none",
@@ -1726,6 +1753,7 @@ const smallBtnStyle: React.CSSProperties = {
   borderRadius: 999,
   border: "1px solid rgba(0,0,0,0.14)",
   background: "#fff",
+  color: "#111",
   fontWeight: 900,
   cursor: "pointer",
   userSelect: "none",
