@@ -66,8 +66,6 @@ export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const image = formData.get("image");
-
-    // prompt je voliteľný (ale odporúčam posielať vždy)
     const prompt = (formData.get("prompt") as string | null) || "";
 
     if (!(image instanceof File)) {
@@ -82,23 +80,20 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(await image.arrayBuffer());
     const sizeInfo = detectImageSize(buffer, image.type || "");
 
-    // Pozn.: GPT image modely akceptujú png/webp/jpg < 50MB (edits endpoint). :contentReference[oaicite:2]{index=2}
-    const imgFile = await toFile(buffer, image.name || "patch.jpg", {
-      type: image.type || "image/jpeg",
+    const imgFile = await toFile(buffer, image.name || "input.png", {
+      type: image.type || "image/png",
     });
 
     const openai = new OpenAI({ apiKey });
 
+    // GPT Image edits: podporuje size:"auto", output_format, quality
     const res = await openai.images.edit({
-      // modely podporované na /images/edits: gpt-image-1, gpt-image-1-mini, gpt-image-1.5 :contentReference[oaicite:3]{index=3}
       model: "gpt-image-1.5",
       image: imgFile,
       prompt,
-      size: "auto",          // CRITICAL: zachová pomer strán vstupu :contentReference[oaicite:4]{index=4}
-      output_format: "png",   // bezpečné pre ďalší compositing
-      quality: "high",        // podporované pre GPT image modely :contentReference[oaicite:5]{index=5}
-      // background: "auto",  // voliteľné
-      // n: 1,               // voliteľné, default je 1
+      size: "auto",
+      output_format: "png",
+      quality: "high",
     });
 
     const b64 = res.data?.[0]?.b64_json;
@@ -118,7 +113,6 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error: err?.message || "Unknown error",
-        // pre debug je často užitočné vidieť aj kód/typ, ak existuje
         code: err?.code || null,
         type: err?.type || null,
       },

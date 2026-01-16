@@ -536,6 +536,8 @@ export default function Page() {
   const cameraRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
   const baseScaleRef = useRef<number>(1);
+  const modelRef = useRef<any>(null);
+  const groundYRef = useRef<number>(0);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -885,11 +887,25 @@ export default function Page() {
         renderer.setSize(canvasW, canvasH, false);
         renderer.setPixelRatio(1);
 
+        // Enable shadows (needed for shadow pass export)
+        renderer.shadowMap.enabled = true;
+        // @ts-ignore
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
         const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.95);
         scene.add(hemi);
 
         const dir = new THREE.DirectionalLight(0xffffff, 1.15);
         dir.position.set(1, 2, 1.2);
+        dir.castShadow = true;
+        // reasonable shadow map defaults
+        dir.shadow.mapSize.set(1024, 1024);
+        dir.shadow.camera.near = 0.1;
+        dir.shadow.camera.far = 10;
+        dir.shadow.camera.left = -3;
+        dir.shadow.camera.right = 3;
+        dir.shadow.camera.top = 3;
+        dir.shadow.camera.bottom = -3;
         scene.add(dir);
 
         const loader = new GLTFLoader();
@@ -912,12 +928,26 @@ export default function Page() {
         const center = bbox.getCenter(new THREE.Vector3());
         model.position.sub(center);
 
+        // After centering, compute ground Y so the shadow plane can sit on the "feet"
+        const bbox2 = new THREE.Box3().setFromObject(model);
+        groundYRef.current = -bbox2.min.y;
+
         const maxDim = Math.max(size.x, size.y, size.z);
         const safeMaxDim = maxDim > 1e-6 ? maxDim : 1;
         baseScaleRef.current = TARGET_MODEL_MAX_DIM_AT_100 / safeMaxDim;
 
         model.scale.set(1, 1, 1);
         root.add(model);
+
+        // Make meshes cast shadows (for exported shadow pass)
+        model.traverse((obj: any) => {
+          if (obj?.isMesh) {
+            obj.castShadow = true;
+            obj.receiveShadow = false;
+          }
+        });
+
+        modelRef.current = model;
 
         sceneRef.current = scene;
         cameraRef.current = camera;
@@ -1263,290 +1293,235 @@ export default function Page() {
     } catch {}
   }
 
-  // ===== Generate (AI) =====
-  // Posielame kompozit (foto + pergola) do AI len na „harmonizáciu“.
-  // POTOM však pergolu natvrdo preložíme z Three.js RGBA renderu, aby AI nikdy nemohla zmeniť geometriu (chýbajúca noha, posun, zmena mierky...).
-  async function generate() {
-    if (!bgImg) return;
-    if (variants.length >= MAX_VARIANTS) return;
+  
+// ===== Generate (AI) =====
+// PRO pipeline:
+// - AI vylepší LEN vzhľad pergoly (materiál/shading), nie scénu
+// - tieň generujeme stabilne cez Three.js shadow pass (shadow catcher)
+// - geometria pergoly sa uzamkne originálnou alpha maskou (AI nemôže zmeniť tvar/nohy/proporcie)
+async function generate() {
+  if (!bgImg) return;
+  if (variants.length >= MAX_VARIANTS) return;
 
-    setLoading(true);
-    setError("");
+  setLoading(true);
+  setError("");
 
-    const loadImgFromBlob = async (blob: Blob) => {
-      const url = URL.createObjectURL(blob);
-      try {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        await new Promise<void>((res, rej) => {
-          img.onload = () => res();
-          img.onerror = () => rej(new Error("Nepodarilo sa načítať obraz."));
-          img.src = url;
-        });
-        return img;
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    };
-
-    const b64ToImg = async (b64: string) => {
+  const loadImgFromBlob = async (blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    try {
       const img = new Image();
       img.crossOrigin = "anonymous";
       await new Promise<void>((res, rej) => {
         img.onload = () => res();
-        img.onerror = () => rej(new Error("Nepodarilo sa načítať AI výstup."));
-        img.src = `data:image/png;base64,${b64}`;
+        img.onerror = () => rej(new Error("Nepodarilo sa načítať obraz."));
+        img.src = url;
       });
       return img;
-    };
-
-    const canvasToB64Png = async (c: HTMLCanvasElement) => {
-      const blob: Blob = await new Promise((res, rej) =>
-        c.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
-      );
-      const ab = await blob.arrayBuffer();
-      const bytes = new Uint8Array(ab);
-      let bin = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      }
-      return btoa(bin);
-    };
-
-    try {
-      // downscale export (AI stabilita + rýchlosť)
-      // Pozn.: Vercel/Serverless ma prakticke limity na velkost requestu.
-      // Pre AI posielame downscale + JPEG, aby sme sa vyhli HTTP 413.
-      const MAX_DIM = 1280;
-      const bgW = bgImg.width;
-      const bgH = bgImg.height;
-
-      const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
-      const outW = Math.max(1, Math.round(bgW * scale));
-      const outH = Math.max(1, Math.round(bgH * scale));
-
-
-      // Pozadie pre AI/PRO pipeline musí byť v rovnakom rozlíšení (outW/outH),
-      // aby crop súradnice sedeli 1:1 (inak vzniknú posuny/„rozseknutie“ obrazu).
-      const bgScaled = document.createElement("canvas");
-      bgScaled.width = outW;
-      bgScaled.height = outH;
-      const bgScaledCtx = bgScaled.getContext("2d")!;
-      bgScaledCtx.drawImage(bgImg, 0, 0, outW, outH);
-
-      if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
-        throw new Error("3D renderer nie je pripravený.");
-      }
-
-      const renderer = rendererRef.current;
-      const scene = sceneRef.current;
-      const camera = cameraRef.current;
-
-      // 1) Render pergoly do transparentného RGBA (rovnaké W/H ako posielame do AI)
-      applyTransformsForCurrentState(outW, outH);
-      renderer.setSize(outW, outH, false);
-
-      // Uisti sa, že renderer čistí transparentne
-      // (ak už máte nastavené inde, toto je bezpečné)
-      // @ts-ignore
-      renderer.setClearColor?.(0x000000, 0);
-      // @ts-ignore
-      renderer.clear?.();
-      renderer.render(scene, camera);
-
-      const pergolaCanvas = renderer.domElement;
-
-      const pergolaBlob: Blob = await new Promise((res, rej) =>
-        pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
-      );
-
-      // 2) PRO pipeline: AI patch len v úzkom prstenci okolo pergoly (bez šance „vymyslieť“ novú pergolu)
-      // - AI dostane iba crop z pozadia (bez pergoly)
-      // - AI výstup aplikujeme iba do "ring" masky okolo okrajov (blending/shadows)
-      // - pergola sa nakoniec vždy prekreslí z Three.js RGBA
-
-      // Helper: z alpha pergoly vyrobíme bbox (v export rozlíšení)
-      const computeAlphaBBox = (canvas: HTMLCanvasElement) => {
-        const w = canvas.width;
-        const h = canvas.height;
-        const tmp = document.createElement("canvas");
-        tmp.width = w;
-        tmp.height = h;
-        const tctx = tmp.getContext("2d")!;
-        tctx.drawImage(canvas, 0, 0);
-        const img = tctx.getImageData(0, 0, w, h);
-        const data = img.data;
-        let minX = w,
-          minY = h,
-          maxX = 0,
-          maxY = 0;
-        let any = false;
-        const step = 2;
-        for (let y = 0; y < h; y += step) {
-          for (let x = 0; x < w; x += step) {
-            const i = (y * w + x) * 4;
-            const a = data[i + 3];
-            if (a > 12) {
-              any = true;
-              if (x < minX) minX = x;
-              if (y < minY) minY = y;
-              if (x > maxX) maxX = x;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
-        if (!any) return null;
-        return { minX, minY, maxX, maxY };
-      };
-
-      const bbox = computeAlphaBBox(pergolaCanvas);
-      if (!bbox) throw new Error("Nepodarilo sa zistiť obrys pergoly (bbox). Skús ju mierne posunúť alebo zväčšiť.");
-
-      // Crop okolo pergoly + okolie (kontakt/tieň/blending)
-      const CROP_PAD = Math.round(Math.max(outW, outH) * 0.035); // ~3.5% z rozmeru (typicky 35-60px)
-      let cropX = Math.max(0, bbox.minX - CROP_PAD);
-      let cropY = Math.max(0, bbox.minY - CROP_PAD);
-      let cropX2 = Math.min(outW, bbox.maxX + CROP_PAD);
-      let cropY2 = Math.min(outH, bbox.maxY + CROP_PAD);
-
-      // Bezpečnostné minimum – príliš malý crop je náchylný na artefakty
-      const MIN_CROP = 320;
-      if (cropX2 - cropX < MIN_CROP) {
-        const cx = Math.round((cropX + cropX2) / 2);
-        cropX = Math.max(0, cx - Math.round(MIN_CROP / 2));
-        cropX2 = Math.min(outW, cropX + MIN_CROP);
-      }
-      if (cropY2 - cropY < MIN_CROP) {
-        const cy = Math.round((cropY + cropY2) / 2);
-        cropY = Math.max(0, cy - Math.round(MIN_CROP / 2));
-        cropY2 = Math.min(outH, cropY + MIN_CROP);
-      }
-
-      const cropW = Math.max(1, cropX2 - cropX);
-      const cropH = Math.max(1, cropY2 - cropY);
-
-      // 2a) Crop z pozadia (AI vstup) – BEZ pergoly
-      // Dôležité: crop musí byť z bgScaled (outW/outH), aby súradnice sedeli 1:1.
-      const cropBg = document.createElement("canvas");
-      cropBg.width = cropW;
-      cropBg.height = cropH;
-      const cropBgCtx = cropBg.getContext("2d")!;
-      cropBgCtx.drawImage(bgScaled, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-      const cropBgBlob: Blob = await new Promise((res, rej) =>
-        cropBg.toBlob(
-          (b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
-          "image/jpeg",
-          0.9
-        )
-      );
-
-      // 2b) Ring maska okolo okrajov pergoly (iba úpravy pri hranách, nie celá scéna)
-      const ring = document.createElement("canvas");
-      ring.width = cropW;
-      ring.height = cropH;
-      const rctx = ring.getContext("2d")!;
-
-      // outer dilate (prstenec smerom von)
-      const OUTER_R = Math.max(10, Math.round(Math.max(outW, outH) * 0.012)); // typicky 12-20px
-      const innerR = Math.max(2, Math.round(OUTER_R * 0.35));
-
-      rctx.clearRect(0, 0, cropW, cropH);
-      for (let dy = -OUTER_R; dy <= OUTER_R; dy += 4) {
-        for (let dx = -OUTER_R; dx <= OUTER_R; dx += 4) {
-          rctx.drawImage(pergolaCanvas, dx - cropX, dy - cropY);
-        }
-      }
-
-      // subtract inner (aby vznikol prstenec)
-      rctx.globalCompositeOperation = "destination-out";
-      for (let dy = -innerR; dy <= innerR; dy += 2) {
-        for (let dx = -innerR; dx <= innerR; dx += 2) {
-          rctx.drawImage(pergolaCanvas, dx - cropX, dy - cropY);
-        }
-      }
-      rctx.globalCompositeOperation = "source-over";
-
-      // 2c) Zavolaj AI (iba crop z pozadia)
-      const form = new FormData();
-      form.append("image", cropBgBlob, "bg_crop.jpg");
-
-      // Prompt nesmie nabádať na generovanie konštrukcie
-      const safePrompt = `HARMONIZE ONLY. Do NOT add any new objects or structures. Do NOT change the camera or perspective. Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and edge blending to make the inserted object look photo-realistic.`;
-      form.append("prompt", safePrompt);
-
-      const r = await fetch("/api/render/openai", { method: "POST", body: form });
-      const j = await r.json().catch(async () => {
-        const t = await r.text().catch(() => "");
-        return { error: t || `HTTP ${r.status}` };
-      });
-
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      if (!j?.b64) throw new Error("API nevrátilo b64.");
-
-      // 2d) AI patch aplikujeme IBA v ring maske
-      const aiPatchImg = await b64ToImg(j.b64);
-
-      const patchedCrop = document.createElement("canvas");
-      patchedCrop.width = cropW;
-      patchedCrop.height = cropH;
-      const pctx = patchedCrop.getContext("2d")!;
-
-      // base = pôvodný crop
-      pctx.drawImage(cropBg, 0, 0);
-
-      // aiLayer = AI výstup (crop)
-      const aiLayer = document.createElement("canvas");
-      aiLayer.width = cropW;
-      aiLayer.height = cropH;
-      const actx = aiLayer.getContext("2d")!;
-      actx.drawImage(aiPatchImg, 0, 0, cropW, cropH);
-
-      // maskni aiLayer ringom
-      actx.globalCompositeOperation = "destination-in";
-      actx.drawImage(ring, 0, 0);
-      actx.globalCompositeOperation = "source-over";
-
-      // prilož len ring úpravy na pôvodný crop
-      pctx.drawImage(aiLayer, 0, 0);
-
-      // 3) Finál: pôvodné pozadie + patch + pergola overlay (1:1)
-      const pergolaImg = await loadImgFromBlob(pergolaBlob);
-
-      const final = document.createElement("canvas");
-      final.width = outW;
-      final.height = outH;
-      const fctx = final.getContext("2d")!;
-
-      // base = pôvodné pozadie (správne outW/outH)
-      fctx.drawImage(bgScaled, 0, 0, outW, outH);
-
-      // vlož patch crop späť PRESNE na súradnice (cropX/cropY v outW/outH priestore)
-      fctx.drawImage(patchedCrop, cropX, cropY, cropW, cropH);
-
-      // overlay = presná pergola z Three.js (geometria sa nikdy nemení)
-      fctx.drawImage(pergolaImg, 0, 0, outW, outH);
-
-      const finalB64 = await canvasToB64Png(final);
-
-
-      setVariants((prev) => {
-        if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
-        return next;
-      });
-
-      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
-    } catch (err: any) {
-      console.error(err);
-      setError(String(err?.message || err));
     } finally {
-      setLoading(false);
+      URL.revokeObjectURL(url);
     }
-  }
+  };
 
-  function downloadVariantPNG(idx: number) {
+  const b64ToImg = async (b64: string) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = () => rej(new Error("Nepodarilo sa načítať AI výstup."));
+      img.src = `data:image/png;base64,${b64}`;
+    });
+    return img;
+  };
+
+  const canvasToB64Png = async (canvas: HTMLCanvasElement) => {
+    const blob: Blob = await new Promise((res, rej) =>
+      canvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
+    );
+    const ab = await blob.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    let bin = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  };
+
+  try {
+    // downscale export (vyššia kvalita = väčší MAX_DIM, ale pozor na veľkosť uploadu)
+    const MAX_DIM = 2048;
+    const bgW = bgImg.width;
+    const bgH = bgImg.height;
+
+    const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
+    const outW = Math.max(1, Math.round(bgW * scale));
+    const outH = Math.max(1, Math.round(bgH * scale));
+
+    if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current || !modelRef.current) {
+      throw new Error("3D renderer nie je pripravený.");
+    }
+
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const model = modelRef.current;
+
+    // --- PASS 1: Pergola RGBA (transparent) ---
+    applyTransformsForCurrentState(outW, outH);
+    renderer.setSize(outW, outH, false);
+
+    // clear transparent
+    // @ts-ignore
+    renderer.setClearColor?.(0x000000, 0);
+    // @ts-ignore
+    renderer.clear?.();
+    renderer.render(scene, camera);
+
+    const pergolaCanvas = renderer.domElement;
+
+    const pergolaBlob: Blob = await new Promise((res, rej) =>
+      pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+    );
+
+    // --- PASS 2: Shadow pass (shadow catcher) ---
+    // Vytvoríme dočasný shadow plane, model "zneviditeľníme" (len colorWrite=false), ale necháme ho castShadow=true.
+    const THREE = await import("three");
+
+    const shadowPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(20, 20),
+      new THREE.ShadowMaterial({ opacity: 0.35 })
+    );
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = (groundYRef.current || 0) - 0.0005; // jemne pod nohy
+    shadowPlane.receiveShadow = true;
+    shadowPlane.renderOrder = -1;
+
+    scene.add(shadowPlane);
+
+    const touched: Array<{ mat: any; colorWrite: boolean; transparent?: boolean; opacity?: number }> = [];
+    model.traverse((obj: any) => {
+      if (obj?.isMesh && obj.material) {
+        const mat = obj.material;
+        touched.push({ mat, colorWrite: !!mat.colorWrite, transparent: mat.transparent, opacity: mat.opacity });
+        mat.colorWrite = false; // neukazuj mesh
+        mat.transparent = true;
+        mat.opacity = 0;
+      }
+    });
+
+    // clear transparent and render scene (shadow only visible on plane)
+    // @ts-ignore
+    renderer.setClearColor?.(0x000000, 0);
+    // @ts-ignore
+    renderer.clear?.();
+    renderer.render(scene, camera);
+
+    const shadowCanvas = renderer.domElement;
+
+    const shadowBlob: Blob = await new Promise((res, rej) =>
+      shadowCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať tieň"))), "image/png")
+    );
+
+    // restore materials + remove plane
+    for (const t of touched) {
+      t.mat.colorWrite = t.colorWrite;
+      if (typeof t.transparent !== "undefined") t.mat.transparent = t.transparent;
+      if (typeof t.opacity !== "undefined") t.mat.opacity = t.opacity;
+    }
+    scene.remove(shadowPlane);
+
+    // --- AI: Enhance pergola ONLY (6 variants) ---
+    // Variant prompt – jemné rozdiely v materiáli/svetle (bez zmeny geometrie)
+    const variantPrompts = [
+      "Photorealistic black aluminium pergola. Enhance material shading, highlights, reflections, micro-texture. Keep exact silhouette and geometry.",
+      "Photorealistic matte black pergola. Slightly softer highlights, realistic ambient occlusion. Keep exact silhouette and geometry.",
+      "Photorealistic semi-gloss black pergola. Stronger sun highlights, crisp reflections. Keep exact silhouette and geometry.",
+      "Photorealistic anthracite metal pergola. Subtle noise match and edge anti-alias. Keep exact silhouette and geometry.",
+      "Photorealistic dark metal pergola. Slightly warmer light, realistic shading. Keep exact silhouette and geometry.",
+      "Photorealistic black pergola. Slightly cooler light, realistic shading and clean edges. Keep exact silhouette and geometry."
+    ];
+
+    const idx = clamp(variants.length, 0, variantPrompts.length - 1);
+
+    const safePrompt =
+      `HARMONIZE ONLY THE PERGOLA OBJECT ON TRANSPARENT BACKGROUND.
+` +
+      `Do NOT add any new structures, beams, legs, roofs, or duplicates.
+` +
+      `Do NOT change geometry, proportions, thickness, spacing, angle, or silhouette.
+` +
+      `Only improve lighting, shadows/AO on the pergola surfaces, reflections, color grading, noise match and edge quality.
+` +
+      variantPrompts[idx];
+
+    const form = new FormData();
+    form.append("image", pergolaBlob, "pergola.png");
+    form.append("prompt", safePrompt);
+
+    const r = await fetch("/api/render/openai", { method: "POST", body: form });
+    const j = await r.json().catch(async () => {
+      const t = await r.text().catch(() => "");
+      return { error: t || `HTTP ${r.status}` };
+    });
+
+    if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+    if (!j?.b64) throw new Error("API nevrátilo b64.");
+
+    const aiPergolaImg = await b64ToImg(j.b64);
+
+    // --- LOCK SILHOUETTE: Apply original alpha mask to AI pergola ---
+    const aiPergolaCanvas = document.createElement("canvas");
+    aiPergolaCanvas.width = outW;
+    aiPergolaCanvas.height = outH;
+    const actx = aiPergolaCanvas.getContext("2d")!;
+    actx.clearRect(0, 0, outW, outH);
+    actx.drawImage(aiPergolaImg, 0, 0, outW, outH);
+
+    // destination-in with original pergola alpha
+    actx.globalCompositeOperation = "destination-in";
+    actx.drawImage(pergolaCanvas, 0, 0, outW, outH);
+    actx.globalCompositeOperation = "source-over";
+
+    const lockedPergolaB64 = await canvasToB64Png(aiPergolaCanvas);
+
+    // --- FINAL COMPOSITE: background + shadow(multiply) + locked AI pergola ---
+    const shadowImg = await loadImgFromBlob(shadowBlob);
+    const lockedPergolaImg = await b64ToImg(lockedPergolaB64);
+
+    const final = document.createElement("canvas");
+    final.width = outW;
+    final.height = outH;
+    const fctx = final.getContext("2d")!;
+
+    // base photo
+    fctx.drawImage(bgImg, 0, 0, outW, outH);
+
+    // shadow pass as multiply (darken)
+    fctx.globalCompositeOperation = "multiply";
+    fctx.drawImage(shadowImg, 0, 0, outW, outH);
+    fctx.globalCompositeOperation = "source-over";
+
+    // enhanced pergola
+    fctx.drawImage(lockedPergolaImg, 0, 0, outW, outH);
+
+    const finalB64 = await canvasToB64Png(final);
+
+    setVariants((prev) => {
+      if (prev.length >= MAX_VARIANTS) return prev;
+      const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
+      return next;
+    });
+
+    setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
+  } catch (err: any) {
+    console.error(err);
+    setError(String(err?.message || err));
+  } finally {
+    setLoading(false);
+  }
+}
+
+function downloadVariantPNG(idx: number) {
     const v = variants[idx];
     if (!v?.b64) return;
     const a = document.createElement("a");
