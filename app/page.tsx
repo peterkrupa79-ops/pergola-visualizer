@@ -1316,7 +1316,9 @@ export default function Page() {
 
     try {
       // downscale export (AI stabilita + rýchlosť)
-      const MAX_DIM = 2048;
+      // Pozn.: Vercel/Serverless ma prakticke limity na velkost requestu.
+      // Pre AI posielame downscale + JPEG, aby sme sa vyhli HTTP 413.
+      const MAX_DIM = 1280;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
 
@@ -1362,11 +1364,15 @@ export default function Page() {
       cctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
 
       const compositeBlob: Blob = await new Promise((res, rej) =>
-        composite.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
+        composite.toBlob(
+          (b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
+          "image/jpeg",
+          0.85
+        )
       );
 
       const form = new FormData();
-      form.append("image", compositeBlob, "collage.png");
+      form.append("image", compositeBlob, "collage.jpg");
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
