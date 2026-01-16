@@ -1352,28 +1352,25 @@ export default function Page() {
         pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
 
-      // 2) Vytvor kompozit (foto + pergola) a pošli do AI
-      const composite = document.createElement("canvas");
-      composite.width = outW;
-      composite.height = outH;
-      const cctx = composite.getContext("2d")!;
+      // 2) Pošli do AI IBA background (bez pergoly)
+      const bgOnly = document.createElement("canvas");
+      bgOnly.width = outW;
+      bgOnly.height = outH;
+      const bctx = bgOnly.getContext("2d")!;
+      bctx.drawImage(bgImg, 0, 0, outW, outH);
 
-      // background
-      cctx.drawImage(bgImg, 0, 0, outW, outH);
-      // pergola
-      cctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
-
-      const compositeBlob: Blob = await new Promise((res, rej) =>
-        composite.toBlob(
+      const bgBlob: Blob = await new Promise((res, rej) =>
+        bgOnly.toBlob(
           (b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
           "image/jpeg",
-          0.85
+          0.9
         )
       );
 
       const form = new FormData();
-      form.append("image", compositeBlob, "collage.jpg");
+      form.append("image", bgBlob, "background.jpg");
       form.append("prompt", prompt);
+
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
