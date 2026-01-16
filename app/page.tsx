@@ -25,6 +25,36 @@ Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and
 
 const MAX_VARIANTS = 6;
 
+
+// ===== Pomocná mriežka (pre presnejšie umiestnenie) =====
+// Používateľ klikne 3 body na zemi:
+// 1) O = origin na zemi
+// 2) D = smer do hĺbky (napr. škára dlažby smerom od kamery)
+// 3) S = smer do strany (kolmo na smer do hĺbky)
+// Z toho vykreslíme jednoduchú perspektívnu mriežku s 1 vanishing pointom.
+
+type GridPoint = { x: number; y: number };
+
+type GridState = {
+  enabled: boolean;
+  setupActive: boolean;
+  points: GridPoint[]; // [O, D, S]
+  opacity: number; // 0..1
+  density: number; // počet čiar do strán (vyššie = hustejšie)
+  falloff: number; // 0..1, ako rýchlo sa čiary zhustia smerom k VP
+  vpScale: number; // ako ďaleko je vanishing point
+};
+
+const GRID_DEFAULT: GridState = {
+  enabled: false,
+  setupActive: false,
+  points: [],
+  opacity: 0.55,
+  density: 10,
+  falloff: 0.86,
+  vpScale: 2500,
+};
+
 // ===== Hero krokový návod (rozbaľ v mobile) =====
 const HERO_STEPS: { id: number; title: string; hint: string }[] = [
   {
@@ -470,6 +500,16 @@ export default function Page() {
 
   const [editorZoom, setEditorZoom] = useState(100);
 
+  const [grid, setGrid] = useState<GridState>(GRID_DEFAULT);
+
+
+  // Redraw pomocnú mriežku pri zmene bodov/parametrov
+  useEffect(() => {
+    drawGridOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grid.enabled, grid.setupActive, grid.points, grid.opacity, grid.density, grid.falloff, grid.vpScale, canvasW, canvasH, editorZoom]);
+
+
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
@@ -488,6 +528,8 @@ export default function Page() {
 
   // ===== Three.js refs =====
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const threeReadyRef = useRef(false);
   const rendererRef = useRef<any>(null);
   const sceneRef = useRef<any>(null);
@@ -707,6 +749,101 @@ export default function Page() {
     const x = ((e.clientX - rect.left) * canvasW) / rect.width;
     const y = ((e.clientY - rect.top) * canvasH) / rect.height;
     return { x, y };
+  }
+
+
+  function drawGridOverlay() {
+    const gcv = gridCanvasRef.current;
+    if (!gcv) return;
+    const ctx = gcv.getContext("2d");
+    if (!ctx) return;
+
+    // clear
+    ctx.clearRect(0, 0, canvasW, canvasH);
+
+    if (!grid.enabled) return;
+
+    const pts = grid.points;
+    if (pts.length < 1) return;
+
+    // render helper points while setting up
+    ctx.save();
+    ctx.globalAlpha = grid.opacity;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+
+    // If we don't have enough points, show simple crosshair markers
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(p.x - 10, p.y);
+      ctx.lineTo(p.x + 10, p.y);
+      ctx.moveTo(p.x, p.y - 10);
+      ctx.lineTo(p.x, p.y + 10);
+      ctx.stroke();
+    }
+
+    if (pts.length < 3) {
+      ctx.restore();
+      return;
+    }
+
+    const O = pts[0];
+    const D = pts[1];
+    const S = pts[2];
+
+    const vdx = D.x - O.x;
+    const vdy = D.y - O.y;
+    const len = Math.max(1, Math.hypot(vdx, vdy));
+    const dirx = vdx / len;
+    const diry = vdy / len;
+
+    // Vanishing point (predĺženie smeru do hĺbky)
+    const VP = { x: O.x + dirx * grid.vpScale, y: O.y + diry * grid.vpScale };
+
+    // Boundary rays (O->VP a S->VP)
+    const A0 = O;
+    const A1 = S;
+
+    // Side rays: points along O->S heading to VP
+    const density = clamp(grid.density, 4, 30);
+
+    // Draw side rays
+    for (let i = 0; i <= density; i++) {
+      const t = i / density;
+      const Q = { x: O.x + (S.x - O.x) * t, y: O.y + (S.y - O.y) * t };
+      ctx.beginPath();
+      ctx.moveTo(Q.x, Q.y);
+      ctx.lineTo(VP.x, VP.y);
+      ctx.stroke();
+    }
+
+    // Draw depth cross-lines between rays
+    const fall = clamp(grid.falloff, 0.7, 0.97);
+    const depthLines = 14;
+    for (let k = 1; k <= depthLines; k++) {
+      // alpha approaches 1 (toward VP)
+      const alpha = 1 - Math.pow(fall, k);
+      const P0 = { x: A0.x + (VP.x - A0.x) * alpha, y: A0.y + (VP.y - A0.y) * alpha };
+      const P1 = { x: A1.x + (VP.x - A1.x) * alpha, y: A1.y + (VP.y - A1.y) * alpha };
+      ctx.beginPath();
+      ctx.moveTo(P0.x, P0.y);
+      ctx.lineTo(P1.x, P1.y);
+      ctx.stroke();
+    }
+
+    // Emphasize the main ground baseline O->S
+    ctx.globalAlpha = Math.min(1, grid.opacity + 0.12);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(O.x, O.y);
+    ctx.lineTo(S.x, S.y);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   function hitHandle(p: Vec2, r: { x: number; y: number; w: number; h: number }) {
@@ -969,6 +1106,19 @@ export default function Page() {
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
+    // Mriežka: počas nastavovania zbierame 3 body kliknutím na zem
+    if (grid.enabled && grid.setupActive) {
+      e.preventDefault();
+      (e.currentTarget as any).setPointerCapture(e.pointerId);
+      setGrid((g) => {
+        const pts = [...g.points, { x: p.x, y: p.y }];
+        // po 3 bodoch ukončíme setup
+        const done = pts.length >= 3;
+        return { ...g, points: pts.slice(0, 3), setupActive: done ? false : true };
+      });
+      return;
+    }
+
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -1197,7 +1347,7 @@ export default function Page() {
       const pergolaCanvas = renderer.domElement;
 
       const pergolaBlob: Blob = await new Promise((res, rej) =>
-        pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+        pergolaCanvas.toBlob((b) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
 
       // 2) Vytvor kompozit (foto + pergola) a pošli do AI
@@ -1630,6 +1780,73 @@ export default function Page() {
               <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Šírka
               </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setGrid((g) => {
+                    const nextEnabled = !g.enabled;
+                    return {
+                      ...g,
+                      enabled: nextEnabled,
+                      setupActive: nextEnabled ? true : false,
+                      points: nextEnabled ? [] : g.points,
+                    };
+                  })
+                }
+                style={{
+                  ...chipStyle,
+                  background: grid.enabled ? "rgba(0,0,0,0.06)" : "#fff",
+                  borderColor: grid.enabled ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.12)",
+                }}
+              >
+                Mriežka
+              </button>
+
+
+
+            {grid.enabled ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => setGrid((g) => ({ ...g, setupActive: true, points: [] }))}
+                  style={{
+                    ...btnStyle,
+                    padding: "8px 10px",
+                    borderRadius: 12,
+                    background: grid.setupActive ? "rgba(0,0,0,0.06)" : "#fff",
+                  }}
+                >
+                  {grid.setupActive ? "Klikni 3 body..." : "Nastaviť mriežku"}
+                </button>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <label style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)" }}>
+                    Sila perspektívy
+                  </label>
+                  <input
+                    type="range"
+                    min={0.75}
+                    max={0.96}
+                    step={0.01}
+                    value={grid.falloff}
+                    onChange={(e) => setGrid((g) => ({ ...g, falloff: Number(e.target.value) }))}
+                    style={{ width: 160 }}
+                  />
+                  <label style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)" }}>
+                    Viditeľnosť
+                  </label>
+                  <input
+                    type="range"
+                    min={0.15}
+                    max={0.9}
+                    step={0.05}
+                    value={grid.opacity}
+                    onChange={(e) => setGrid((g) => ({ ...g, opacity: Number(e.target.value) }))}
+                    style={{ width: 120 }}
+                  />
+                </div>
+              </div>
+            ) : null}
             </div>
 
             {panelOpen ? (
@@ -1647,7 +1864,7 @@ export default function Page() {
 
             {/* Canvas */}
             <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, overflow: "hidden", padding: 10 }}>
-              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100), position: 'relative' }}>
                 <canvas
                   ref={canvasRef}
                   width={canvasW}
@@ -1663,6 +1880,21 @@ export default function Page() {
                     touchAction: "none",
                     background: "#fff",
                     borderRadius: 12,
+                  }}
+                />
+
+                {/* Overlay: pomocná mriežka (nechytá input) */}
+                <canvas
+                  ref={gridCanvasRef}
+                  width={canvasW}
+                  height={canvasH}
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    width: `${(canvasW * editorZoom) / 100}px`,
+                    height: `${(canvasH * editorZoom) / 100}px`,
+                    pointerEvents: 'none',
                   }}
                 />
               </div>
