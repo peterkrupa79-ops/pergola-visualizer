@@ -1326,6 +1326,15 @@ export default function Page() {
       const outW = Math.max(1, Math.round(bgW * scale));
       const outH = Math.max(1, Math.round(bgH * scale));
 
+
+      // Pozadie pre AI/PRO pipeline musí byť v rovnakom rozlíšení (outW/outH),
+      // aby crop súradnice sedeli 1:1 (inak vzniknú posuny/„rozseknutie“ obrazu).
+      const bgScaled = document.createElement("canvas");
+      bgScaled.width = outW;
+      bgScaled.height = outH;
+      const bgScaledCtx = bgScaled.getContext("2d")!;
+      bgScaledCtx.drawImage(bgImg, 0, 0, outW, outH);
+
       if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
         throw new Error("3D renderer nie je pripravený.");
       }
@@ -1418,11 +1427,12 @@ export default function Page() {
       const cropH = Math.max(1, cropY2 - cropY);
 
       // 2a) Crop z pozadia (AI vstup) – BEZ pergoly
+      // Dôležité: crop musí byť z bgScaled (outW/outH), aby súradnice sedeli 1:1.
       const cropBg = document.createElement("canvas");
       cropBg.width = cropW;
       cropBg.height = cropH;
       const cropBgCtx = cropBg.getContext("2d")!;
-      cropBgCtx.drawImage(bgImg, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      cropBgCtx.drawImage(bgScaled, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
       const cropBgBlob: Blob = await new Promise((res, rej) =>
         cropBg.toBlob(
@@ -1432,14 +1442,13 @@ export default function Page() {
         )
       );
 
-      // 2b) Vytvor ring masku okolo okrajov pergoly (aby AI vedela upraviť len blending/tiene pri hranách)
-      // Pozn.: masku nepoužívame ako „inpaint“ (GPT Image masky sú mäkké), ale ako NÁŠ kompozičný limiter.
+      // 2b) Ring maska okolo okrajov pergoly (iba úpravy pri hranách, nie celá scéna)
       const ring = document.createElement("canvas");
       ring.width = cropW;
       ring.height = cropH;
       const rctx = ring.getContext("2d")!;
 
-      // outer dilate
+      // outer dilate (prstenec smerom von)
       const OUTER_R = Math.max(10, Math.round(Math.max(outW, outH) * 0.012)); // typicky 12-20px
       const innerR = Math.max(2, Math.round(OUTER_R * 0.35));
 
@@ -1463,7 +1472,7 @@ export default function Page() {
       const form = new FormData();
       form.append("image", cropBgBlob, "bg_crop.jpg");
 
-      // Dôležité: prompt NESMIE nabádať na generovanie konštrukcie.
+      // Prompt nesmie nabádať na generovanie konštrukcie
       const safePrompt = `HARMONIZE ONLY. Do NOT add any new objects or structures. Do NOT change the camera or perspective. Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and edge blending to make the inserted object look photo-realistic.`;
       form.append("prompt", safePrompt);
 
@@ -1476,7 +1485,7 @@ export default function Page() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
-      // 2d) AI patch aplikujeme IBA v ring maske (zvyšok zostáva originál)
+      // 2d) AI patch aplikujeme IBA v ring maske
       const aiPatchImg = await b64ToImg(j.b64);
 
       const patchedCrop = document.createElement("canvas");
@@ -1510,16 +1519,18 @@ export default function Page() {
       final.height = outH;
       const fctx = final.getContext("2d")!;
 
-      // base = pôvodné pozadie
-      fctx.drawImage(bgImg, 0, 0, outW, outH);
+      // base = pôvodné pozadie (správne outW/outH)
+      fctx.drawImage(bgScaled, 0, 0, outW, outH);
 
-      // vlož patch crop späť
-      fctx.drawImage(patchedCrop, cropX, cropY);
+      // vlož patch crop späť PRESNE na súradnice (cropX/cropY v outW/outH priestore)
+      fctx.drawImage(patchedCrop, cropX, cropY, cropW, cropH);
 
-      // overlay = presná pergola z Three.js
+      // overlay = presná pergola z Three.js (geometria sa nikdy nemení)
       fctx.drawImage(pergolaImg, 0, 0, outW, outH);
 
       const finalB64 = await canvasToB64Png(final);
+
+
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
         const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
