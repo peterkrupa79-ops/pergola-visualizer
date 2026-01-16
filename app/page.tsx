@@ -1302,7 +1302,7 @@ export default function Page() {
 
     const canvasToB64Png = async (c: HTMLCanvasElement) => {
       const blob: Blob = await new Promise((res, rej) =>
-        c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
+        c.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
       );
       const ab = await blob.arrayBuffer();
       const bytes = new Uint8Array(ab);
@@ -1347,7 +1347,7 @@ export default function Page() {
       const pergolaCanvas = renderer.domElement;
 
       const pergolaBlob: Blob = await new Promise((res, rej) =>
-        pergolaCanvas.toBlob((b) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+        pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
 
       // 2) Vytvor kompozit (foto + pergola) a pošli do AI
@@ -1362,7 +1362,7 @@ export default function Page() {
       cctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
 
       const compositeBlob: Blob = await new Promise((res, rej) =>
-        composite.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
+        composite.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
       );
 
       const form = new FormData();
