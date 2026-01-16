@@ -1352,25 +1352,62 @@ export default function Page() {
         pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
 
-      // 2) Pošli do AI IBA background (bez pergoly)
-      const bgOnly = document.createElement("canvas");
-      bgOnly.width = outW;
-      bgOnly.height = outH;
-      const bctx = bgOnly.getContext("2d")!;
-      bctx.drawImage(bgImg, 0, 0, outW, outH);
+      // 2) Vytvor kompozit (foto + pergola) a pošli do AI
+      const composite = document.createElement("canvas");
+      composite.width = outW;
+      composite.height = outH;
+      const cctx = composite.getContext("2d")!;
 
-      const bgBlob: Blob = await new Promise((res, rej) =>
-        bgOnly.toBlob(
+      // background
+      cctx.drawImage(bgImg, 0, 0, outW, outH);
+      // pergola
+      cctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
+
+      const compositeBlob: Blob = await new Promise((res, rej) =>
+        composite.toBlob(
           (b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
           "image/jpeg",
-          0.9
+          0.85
         )
       );
 
-      const form = new FormData();
-      form.append("image", bgBlob, "background.jpg");
-      form.append("prompt", prompt);
+      // 2.5) Vytvor "protect mask" pre AI edit (pergola sa NESMIE meniť)
+      // OpenAI Images edit: TRANSPARENT (alpha=0) = miesto, kde smie AI upravovať.
+      // Preto urobíme masku OPAQUE v miestach pergoly (ochrana), a transparent všade inde.
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = outW;
+      maskCanvas.height = outH;
+      const mctx = maskCanvas.getContext("2d")!;
+      mctx.clearRect(0, 0, outW, outH);
+      // Najprv nakresli pergolu (RGBA) do 2D, aby sme vedeli získať alpha
+      mctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
+      const md = mctx.getImageData(0, 0, outW, outH);
+      const data = md.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3];
+        if (a > 10) {
+          data[i] = 0;
+          data[i + 1] = 0;
+          data[i + 2] = 0;
+          data[i + 3] = 255;
+        } else {
+          data[i + 3] = 0;
+        }
+      }
+      mctx.putImageData(md, 0, 0);
 
+      const maskBlob: Blob = await new Promise((res, rej) =>
+        maskCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Mask toBlob vrátil null"))), "image/png")
+      );
+
+      const aiPrompt = `${prompt}
+
+IMPORTANT: The pergola is protected by a mask. Do NOT change the pergola area and do NOT add any new pergola or structures. Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending on the unmasked background.`;
+
+      const form = new FormData();
+      form.append("image", compositeBlob, "collage.jpg");
+      form.append("mask", maskBlob, "mask.png");
+      form.append("prompt", aiPrompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
@@ -1393,9 +1430,26 @@ export default function Page() {
       final.height = outH;
       const fctx = final.getContext("2d")!;
 
-      // base = AI výsledok
-      fctx.drawImage(aiImg, 0, 0, outW, outH);
-      // overlay = presná pergola z Three.js
+      // base = pôvodná fotka
+      fctx.drawImage(bgImg, 0, 0, outW, outH);
+
+      // AI vrstva, ale NESMIE prepisovať oblasť pergoly (inak si vie "domyslieť" drevenú pergolu / druhú konštrukciu)
+      const aiLayer = document.createElement("canvas");
+      aiLayer.width = outW;
+      aiLayer.height = outH;
+      const actx = aiLayer.getContext("2d")!;
+
+      // 1) nakresli AI výsledok
+      actx.drawImage(aiImg, 0, 0, outW, outH);
+      // 2) vymaž (alpha=0) oblasť, kde je naša pergola
+      actx.globalCompositeOperation = "destination-out";
+      actx.drawImage(pergolaImg, 0, 0, outW, outH);
+      actx.globalCompositeOperation = "source-over";
+
+      // 3) vlož AI úpravy iba mimo pergoly
+      fctx.drawImage(aiLayer, 0, 0, outW, outH);
+
+      // 4) overlay = presná pergola z Three.js (geometria 1:1 podľa editora)
       fctx.drawImage(pergolaImg, 0, 0, outW, outH);
 
       const finalB64 = await canvasToB64Png(final);
