@@ -29,6 +29,7 @@ function readJpegSize(buf: Buffer): { width: number; height: number } | null {
     const marker = buf[offset + 1];
     offset += 2;
 
+    // EOI / SOS
     if (marker === 0xd9 || marker === 0xda) break;
 
     if (offset + 2 > buf.length) break;
@@ -55,45 +56,49 @@ function readJpegSize(buf: Buffer): { width: number; height: number } | null {
 }
 
 function detectImageSize(buf: Buffer, mime: string): { width: number; height: number } | null {
-  if (mime.includes("png")) return readPngSize(buf);
-  if (mime.includes("jpeg") || mime.includes("jpg")) return readJpegSize(buf);
+  const m = (mime || "").toLowerCase();
+  if (m.includes("png")) return readPngSize(buf);
+  if (m.includes("jpeg") || m.includes("jpg")) return readJpegSize(buf);
   return readPngSize(buf) || readJpegSize(buf);
 }
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const image = formData.get("image") as File | null;
+    const image = formData.get("image");
+
+    // prompt je voliteľný (ale odporúčam posielať vždy)
     const prompt = (formData.get("prompt") as string | null) || "";
 
-    if (!image) {
+    if (!(image instanceof File)) {
       return NextResponse.json({ error: "Missing image" }, { status: 400 });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
       return NextResponse.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
     }
 
     const buffer = Buffer.from(await image.arrayBuffer());
     const sizeInfo = detectImageSize(buffer, image.type || "");
 
-    const imgFile = await toFile(buffer, image.name || "collage.jpg", {
+    // Pozn.: GPT image modely akceptujú png/webp/jpg < 50MB (edits endpoint). :contentReference[oaicite:2]{index=2}
+    const imgFile = await toFile(buffer, image.name || "patch.jpg", {
       type: image.type || "image/jpeg",
     });
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey });
 
-    // IMPORTANT:
-    // Pouzivame size: "auto" aby model zachoval pomer stran vstupu.
-    // Fixuje to posuny/croppy sposobene tym, ze sme predtym tlacili obraz do 1024x1024 / 1536x1024 / 1024x1536.
-    // Ref: OpenAI Images API - size supports "auto" for GPT image models.
     const res = await openai.images.edit({
+      // modely podporované na /images/edits: gpt-image-1, gpt-image-1-mini, gpt-image-1.5 :contentReference[oaicite:3]{index=3}
       model: "gpt-image-1.5",
-      quality: "high",
       image: imgFile,
       prompt,
-      size: "auto",
-      output_format: "png",
+      size: "auto",          // CRITICAL: zachová pomer strán vstupu :contentReference[oaicite:4]{index=4}
+      output_format: "png",   // bezpečné pre ďalší compositing
+      quality: "high",        // podporované pre GPT image modely :contentReference[oaicite:5]{index=5}
+      // background: "auto",  // voliteľné
+      // n: 1,               // voliteľné, default je 1
     });
 
     const b64 = res.data?.[0]?.b64_json;
@@ -110,6 +115,14 @@ export async function POST(req: Request) {
     });
   } catch (err: any) {
     console.error("OpenAI render error:", err);
-    return NextResponse.json({ error: err?.message || "Unknown error" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: err?.message || "Unknown error",
+        // pre debug je často užitočné vidieť aj kód/typ, ak existuje
+        code: err?.code || null,
+        type: err?.type || null,
+      },
+      { status: 500 }
+    );
   }
 }

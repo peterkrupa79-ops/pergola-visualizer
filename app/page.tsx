@@ -1352,65 +1352,122 @@ export default function Page() {
         pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
 
-      // 2) Vytvor kompozit (foto + pergola) a pošli do AI
-      const composite = document.createElement("canvas");
-      composite.width = outW;
-      composite.height = outH;
-      const cctx = composite.getContext("2d")!;
+      // 2) PRO pipeline: AI patch len v úzkom prstenci okolo pergoly (bez šance „vymyslieť“ novú pergolu)
+      // - AI dostane iba crop z pozadia (bez pergoly)
+      // - AI výstup aplikujeme iba do "ring" masky okolo okrajov (blending/shadows)
+      // - pergola sa nakoniec vždy prekreslí z Three.js RGBA
 
-      // background
-      cctx.drawImage(bgImg, 0, 0, outW, outH);
-      // pergola
-      cctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
+      // Helper: z alpha pergoly vyrobíme bbox (v export rozlíšení)
+      const computeAlphaBBox = (canvas: HTMLCanvasElement) => {
+        const w = canvas.width;
+        const h = canvas.height;
+        const tmp = document.createElement("canvas");
+        tmp.width = w;
+        tmp.height = h;
+        const tctx = tmp.getContext("2d")!;
+        tctx.drawImage(canvas, 0, 0);
+        const img = tctx.getImageData(0, 0, w, h);
+        const data = img.data;
+        let minX = w,
+          minY = h,
+          maxX = 0,
+          maxY = 0;
+        let any = false;
+        const step = 2;
+        for (let y = 0; y < h; y += step) {
+          for (let x = 0; x < w; x += step) {
+            const i = (y * w + x) * 4;
+            const a = data[i + 3];
+            if (a > 12) {
+              any = true;
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (!any) return null;
+        return { minX, minY, maxX, maxY };
+      };
 
-      const compositeBlob: Blob = await new Promise((res, rej) =>
-        composite.toBlob(
+      const bbox = computeAlphaBBox(pergolaCanvas);
+      if (!bbox) throw new Error("Nepodarilo sa zistiť obrys pergoly (bbox). Skús ju mierne posunúť alebo zväčšiť.");
+
+      // Crop okolo pergoly + okolie (kontakt/tieň/blending)
+      const CROP_PAD = Math.round(Math.max(outW, outH) * 0.035); // ~3.5% z rozmeru (typicky 35-60px)
+      let cropX = Math.max(0, bbox.minX - CROP_PAD);
+      let cropY = Math.max(0, bbox.minY - CROP_PAD);
+      let cropX2 = Math.min(outW, bbox.maxX + CROP_PAD);
+      let cropY2 = Math.min(outH, bbox.maxY + CROP_PAD);
+
+      // Bezpečnostné minimum – príliš malý crop je náchylný na artefakty
+      const MIN_CROP = 320;
+      if (cropX2 - cropX < MIN_CROP) {
+        const cx = Math.round((cropX + cropX2) / 2);
+        cropX = Math.max(0, cx - Math.round(MIN_CROP / 2));
+        cropX2 = Math.min(outW, cropX + MIN_CROP);
+      }
+      if (cropY2 - cropY < MIN_CROP) {
+        const cy = Math.round((cropY + cropY2) / 2);
+        cropY = Math.max(0, cy - Math.round(MIN_CROP / 2));
+        cropY2 = Math.min(outH, cropY + MIN_CROP);
+      }
+
+      const cropW = Math.max(1, cropX2 - cropX);
+      const cropH = Math.max(1, cropY2 - cropY);
+
+      // 2a) Crop z pozadia (AI vstup) – BEZ pergoly
+      const cropBg = document.createElement("canvas");
+      cropBg.width = cropW;
+      cropBg.height = cropH;
+      const cropBgCtx = cropBg.getContext("2d")!;
+      cropBgCtx.drawImage(bgImg, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      const cropBgBlob: Blob = await new Promise((res, rej) =>
+        cropBg.toBlob(
           (b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))),
           "image/jpeg",
-          0.85
+          0.9
         )
       );
 
-      // 2.5) Vytvor "protect mask" pre AI edit (pergola sa NESMIE meniť)
-      // OpenAI Images edit: TRANSPARENT (alpha=0) = miesto, kde smie AI upravovať.
-      // Preto urobíme masku OPAQUE v miestach pergoly (ochrana), a transparent všade inde.
-      const maskCanvas = document.createElement("canvas");
-      maskCanvas.width = outW;
-      maskCanvas.height = outH;
-      const mctx = maskCanvas.getContext("2d")!;
-      mctx.clearRect(0, 0, outW, outH);
-      // Najprv nakresli pergolu (RGBA) do 2D, aby sme vedeli získať alpha
-      mctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
-      const md = mctx.getImageData(0, 0, outW, outH);
-      const data = md.data;
-      for (let i = 0; i < data.length; i += 4) {
-        const a = data[i + 3];
-        if (a > 10) {
-          data[i] = 0;
-          data[i + 1] = 0;
-          data[i + 2] = 0;
-          data[i + 3] = 255;
-        } else {
-          data[i + 3] = 0;
+      // 2b) Vytvor ring masku okolo okrajov pergoly (aby AI vedela upraviť len blending/tiene pri hranách)
+      // Pozn.: masku nepoužívame ako „inpaint“ (GPT Image masky sú mäkké), ale ako NÁŠ kompozičný limiter.
+      const ring = document.createElement("canvas");
+      ring.width = cropW;
+      ring.height = cropH;
+      const rctx = ring.getContext("2d")!;
+
+      // outer dilate
+      const OUTER_R = Math.max(10, Math.round(Math.max(outW, outH) * 0.012)); // typicky 12-20px
+      const innerR = Math.max(2, Math.round(OUTER_R * 0.35));
+
+      rctx.clearRect(0, 0, cropW, cropH);
+      for (let dy = -OUTER_R; dy <= OUTER_R; dy += 4) {
+        for (let dx = -OUTER_R; dx <= OUTER_R; dx += 4) {
+          rctx.drawImage(pergolaCanvas, dx - cropX, dy - cropY);
         }
       }
-      mctx.putImageData(md, 0, 0);
 
-      const maskBlob: Blob = await new Promise((res, rej) =>
-        maskCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Mask toBlob vrátil null"))), "image/png")
-      );
+      // subtract inner (aby vznikol prstenec)
+      rctx.globalCompositeOperation = "destination-out";
+      for (let dy = -innerR; dy <= innerR; dy += 2) {
+        for (let dx = -innerR; dx <= innerR; dx += 2) {
+          rctx.drawImage(pergolaCanvas, dx - cropX, dy - cropY);
+        }
+      }
+      rctx.globalCompositeOperation = "source-over";
 
-      const aiPrompt = `${prompt}
-
-IMPORTANT: The pergola is protected by a mask. Do NOT change the pergola area and do NOT add any new pergola or structures. Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending on the unmasked background.`;
-
+      // 2c) Zavolaj AI (iba crop z pozadia)
       const form = new FormData();
-      form.append("image", compositeBlob, "collage.jpg");
-      form.append("mask", maskBlob, "mask.png");
-      form.append("prompt", aiPrompt);
+      form.append("image", cropBgBlob, "bg_crop.jpg");
+
+      // Dôležité: prompt NESMIE nabádať na generovanie konštrukcie.
+      const safePrompt = `HARMONIZE ONLY. Do NOT add any new objects or structures. Do NOT change the camera or perspective. Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and edge blending to make the inserted object look photo-realistic.`;
+      form.append("prompt", safePrompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
-
       const j = await r.json().catch(async () => {
         const t = await r.text().catch(() => "");
         return { error: t || `HTTP ${r.status}` };
@@ -1419,10 +1476,33 @@ IMPORTANT: The pergola is protected by a mask. Do NOT change the pergola area an
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
-      // 3) AI výstup (harmonizovaný kompozit) použijeme ako pozadie,
-      // ale pergolu natvrdo preložíme z pôvodného RGBA renderu.
-      // => geometria vždy 1:1 podľa editora.
-      const aiImg = await b64ToImg(j.b64);
+      // 2d) AI patch aplikujeme IBA v ring maske (zvyšok zostáva originál)
+      const aiPatchImg = await b64ToImg(j.b64);
+
+      const patchedCrop = document.createElement("canvas");
+      patchedCrop.width = cropW;
+      patchedCrop.height = cropH;
+      const pctx = patchedCrop.getContext("2d")!;
+
+      // base = pôvodný crop
+      pctx.drawImage(cropBg, 0, 0);
+
+      // aiLayer = AI výstup (crop)
+      const aiLayer = document.createElement("canvas");
+      aiLayer.width = cropW;
+      aiLayer.height = cropH;
+      const actx = aiLayer.getContext("2d")!;
+      actx.drawImage(aiPatchImg, 0, 0, cropW, cropH);
+
+      // maskni aiLayer ringom
+      actx.globalCompositeOperation = "destination-in";
+      actx.drawImage(ring, 0, 0);
+      actx.globalCompositeOperation = "source-over";
+
+      // prilož len ring úpravy na pôvodný crop
+      pctx.drawImage(aiLayer, 0, 0);
+
+      // 3) Finál: pôvodné pozadie + patch + pergola overlay (1:1)
       const pergolaImg = await loadImgFromBlob(pergolaBlob);
 
       const final = document.createElement("canvas");
@@ -1430,30 +1510,16 @@ IMPORTANT: The pergola is protected by a mask. Do NOT change the pergola area an
       final.height = outH;
       const fctx = final.getContext("2d")!;
 
-      // base = pôvodná fotka
+      // base = pôvodné pozadie
       fctx.drawImage(bgImg, 0, 0, outW, outH);
 
-      // AI vrstva, ale NESMIE prepisovať oblasť pergoly (inak si vie "domyslieť" drevenú pergolu / druhú konštrukciu)
-      const aiLayer = document.createElement("canvas");
-      aiLayer.width = outW;
-      aiLayer.height = outH;
-      const actx = aiLayer.getContext("2d")!;
+      // vlož patch crop späť
+      fctx.drawImage(patchedCrop, cropX, cropY);
 
-      // 1) nakresli AI výsledok
-      actx.drawImage(aiImg, 0, 0, outW, outH);
-      // 2) vymaž (alpha=0) oblasť, kde je naša pergola
-      actx.globalCompositeOperation = "destination-out";
-      actx.drawImage(pergolaImg, 0, 0, outW, outH);
-      actx.globalCompositeOperation = "source-over";
-
-      // 3) vlož AI úpravy iba mimo pergoly
-      fctx.drawImage(aiLayer, 0, 0, outW, outH);
-
-      // 4) overlay = presná pergola z Three.js (geometria 1:1 podľa editora)
+      // overlay = presná pergola z Three.js
       fctx.drawImage(pergolaImg, 0, 0, outW, outH);
 
       const finalB64 = await canvasToB64Png(final);
-
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
         const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
