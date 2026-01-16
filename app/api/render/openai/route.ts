@@ -9,7 +9,6 @@ function readPngSize(buf: Buffer): { width: number; height: number } | null {
   const sig = buf.subarray(0, 8);
   const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (!sig.equals(pngSig)) return null;
-
   const width = buf.readUInt32BE(16);
   const height = buf.readUInt32BE(20);
   if (!width || !height) return null;
@@ -55,37 +54,10 @@ function readJpegSize(buf: Buffer): { width: number; height: number } | null {
   return null;
 }
 
-function detectImageSize(
-  buf: Buffer,
-  mime: string
-): { width: number; height: number } | null {
+function detectImageSize(buf: Buffer, mime: string): { width: number; height: number } | null {
   if (mime.includes("png")) return readPngSize(buf);
   if (mime.includes("jpeg") || mime.includes("jpg")) return readJpegSize(buf);
   return readPngSize(buf) || readJpegSize(buf);
-}
-
-function pickOpenAiSize(
-  width: number,
-  height: number
-): "1024x1024" | "1024x1536" | "1536x1024" {
-  const r = width / height;
-  const candidates = [
-    { size: "1024x1024" as const, ratio: 1 },
-    { size: "1024x1536" as const, ratio: 1024 / 1536 },
-    { size: "1536x1024" as const, ratio: 1536 / 1024 },
-  ];
-
-  let best = candidates[0];
-  let bestDist = Math.abs(r - best.ratio);
-
-  for (const c of candidates) {
-    const d = Math.abs(r - c.ratio);
-    if (d < bestDist) {
-      bestDist = d;
-      best = c;
-    }
-  }
-  return best.size;
 }
 
 export async function POST(req: Request) {
@@ -99,54 +71,45 @@ export async function POST(req: Request) {
     }
 
     if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: "Missing OPENAI_API_KEY" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
     }
 
     const buffer = Buffer.from(await image.arrayBuffer());
     const sizeInfo = detectImageSize(buffer, image.type || "");
-    const chosenSize = sizeInfo
-      ? pickOpenAiSize(sizeInfo.width, sizeInfo.height)
-      : "1024x1024";
 
-    const imgFile = await toFile(buffer, image.name || "collage.png", {
-      type: image.type || "image/png",
+    const imgFile = await toFile(buffer, image.name || "collage.jpg", {
+      type: image.type || "image/jpeg",
     });
 
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+    // IMPORTANT:
+    // Pouzivame size: "auto" aby model zachoval pomer stran vstupu.
+    // Fixuje to posuny/croppy sposobene tym, ze sme predtym tlacili obraz do 1024x1024 / 1536x1024 / 1024x1536.
+    // Ref: OpenAI Images API - size supports "auto" for GPT image models.
     const res = await openai.images.edit({
       model: "gpt-image-1.5",
       quality: "high",
       image: imgFile,
       prompt,
-      size: chosenSize,
+      size: "auto",
+      output_format: "png",
     });
 
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) {
-      return NextResponse.json(
-        { error: "No image returned from OpenAI" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "No image returned from OpenAI" }, { status: 500 });
     }
 
     return NextResponse.json({
       b64,
       meta: {
         input: sizeInfo || null,
-        chosenSize,
+        size: "auto",
       },
     });
   } catch (err: any) {
     console.error("OpenAI render error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "Unknown error" }, { status: 500 });
   }
 }
