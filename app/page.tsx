@@ -1197,7 +1197,7 @@ export default function Page() {
       const pergolaCanvas = renderer.domElement;
 
       const pergolaBlob: Blob = await new Promise((res, rej) =>
-        pergolaCanvas.toBlob((b) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+        pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
 
       // 2) Vytvor kompozit (foto + pergola) a pošli do AI
