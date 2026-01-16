@@ -1113,7 +1113,9 @@ export default function Page() {
     } catch {}
   }
 
-  // ===== Generate (real API) =====
+  // ===== Generate (AI) =====
+  // Posielame kompozit (foto + pergola) do AI len na „harmonizáciu“.
+  // POTOM však pergolu natvrdo preložíme z Three.js RGBA renderu, aby AI nikdy nemohla zmeniť geometriu (chýbajúca noha, posun, zmena mierky...).
   async function generate() {
     if (!bgImg) return;
     if (variants.length >= MAX_VARIANTS) return;
@@ -1121,8 +1123,49 @@ export default function Page() {
     setLoading(true);
     setError("");
 
+    const loadImgFromBlob = async (blob: Blob) => {
+      const url = URL.createObjectURL(blob);
+      try {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        await new Promise<void>((res, rej) => {
+          img.onload = () => res();
+          img.onerror = () => rej(new Error("Nepodarilo sa načítať obraz."));
+          img.src = url;
+        });
+        return img;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+
+    const b64ToImg = async (b64: string) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res();
+        img.onerror = () => rej(new Error("Nepodarilo sa načítať AI výstup."));
+        img.src = `data:image/png;base64,${b64}`;
+      });
+      return img;
+    };
+
+    const canvasToB64Png = async (c: HTMLCanvasElement) => {
+      const blob: Blob = await new Promise((res, rej) =>
+        c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
+      );
+      const ab = await blob.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let bin = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return btoa(bin);
+    };
+
     try {
-      // downscale export
+      // downscale export (AI stabilita + rýchlosť)
       const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
@@ -1131,33 +1174,49 @@ export default function Page() {
       const outW = Math.max(1, Math.round(bgW * scale));
       const outH = Math.max(1, Math.round(bgH * scale));
 
-      const out = document.createElement("canvas");
-      out.width = outW;
-      out.height = outH;
-
-      const octx = out.getContext("2d")!;
-      octx.drawImage(bgImg, 0, 0, outW, outH);
-
       if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
         throw new Error("3D renderer nie je pripravený.");
       }
 
       const renderer = rendererRef.current;
       const scene = sceneRef.current;
+      const camera = cameraRef.current;
 
+      // 1) Render pergoly do transparentného RGBA (rovnaké W/H ako posielame do AI)
       applyTransformsForCurrentState(outW, outH);
       renderer.setSize(outW, outH, false);
-      renderer.render(scene, cameraRef.current);
 
-      const glTemp = renderer.domElement;
-      octx.drawImage(glTemp, 0, 0);
+      // Uisti sa, že renderer čistí transparentne
+      // (ak už máte nastavené inde, toto je bezpečné)
+      // @ts-ignore
+      renderer.setClearColor?.(0x000000, 0);
+      // @ts-ignore
+      renderer.clear?.();
+      renderer.render(scene, camera);
 
-      const blob: Blob = await new Promise((res, rej) =>
-        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+      const pergolaCanvas = renderer.domElement;
+
+      const pergolaBlob: Blob = await new Promise((res, rej) =>
+        pergolaCanvas.toBlob((b) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+      );
+
+      // 2) Vytvor kompozit (foto + pergola) a pošli do AI
+      const composite = document.createElement("canvas");
+      composite.width = outW;
+      composite.height = outH;
+      const cctx = composite.getContext("2d")!;
+
+      // background
+      cctx.drawImage(bgImg, 0, 0, outW, outH);
+      // pergola
+      cctx.drawImage(pergolaCanvas, 0, 0, outW, outH);
+
+      const compositeBlob: Blob = await new Promise((res, rej) =>
+        composite.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
       );
 
       const form = new FormData();
-      form.append("image", blob, "collage.jpg");
+      form.append("image", compositeBlob, "collage.png");
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
@@ -1170,9 +1229,27 @@ export default function Page() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
+      // 3) AI výstup (harmonizovaný kompozit) použijeme ako pozadie,
+      // ale pergolu natvrdo preložíme z pôvodného RGBA renderu.
+      // => geometria vždy 1:1 podľa editora.
+      const aiImg = await b64ToImg(j.b64);
+      const pergolaImg = await loadImgFromBlob(pergolaBlob);
+
+      const final = document.createElement("canvas");
+      final.width = outW;
+      final.height = outH;
+      const fctx = final.getContext("2d")!;
+
+      // base = AI výsledok
+      fctx.drawImage(aiImg, 0, 0, outW, outH);
+      // overlay = presná pergola z Three.js
+      fctx.drawImage(pergolaImg, 0, 0, outW, outH);
+
+      const finalB64 = await canvasToB64Png(final);
+
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
         return next;
       });
 

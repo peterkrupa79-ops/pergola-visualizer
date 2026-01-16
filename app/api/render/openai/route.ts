@@ -120,7 +120,8 @@ export async function POST(req: Request) {
     });
 
     const res = await openai.images.edit({
-      model: "gpt-image-1",
+      model: "gpt-image-1.5",
+      quality: "high",
       image: imgFile,
       prompt,
       size: chosenSize,
