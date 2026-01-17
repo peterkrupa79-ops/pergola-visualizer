@@ -7,6 +7,30 @@ type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
 
+
+type CalibPointId =
+  | "wallA"
+  | "wallB"
+  | "frontA"
+  | "frontB"
+  | "hLeftBottom"
+  | "hLeftTop"
+  | "hRightBottom"
+  | "hRightTop";
+
+type CalibState = {
+  wallA: Vec2 | null;
+  wallB: Vec2 | null;
+  frontA: Vec2 | null;
+  frontB: Vec2 | null;
+  hLeftBottom: Vec2 | null;
+  hLeftTop: Vec2 | null;
+  hRightBottom: Vec2 | null;
+  hRightTop: Vec2 | null;
+};
+
+type CalibPhase = "off" | "edit" | "preview" | "applied";
+
 type HandleId = "nw" | "ne" | "se" | "sw";
 const HANDLE_R = 9;
 const HANDLE_HIT = 18;
@@ -463,6 +487,35 @@ export default function Page() {
   const canvasW = canvasSize.w;
   const canvasH = canvasSize.h;
 
+  // ===== Auto-place defaults (guide points) =====
+  useEffect(() => {
+    if (!bgImg) return;
+
+    // inicializuj iba ak ešte nie sú nastavené základné body
+    if (calib.wallA && calib.wallB && calib.frontA && calib.frontB && calib.hLeftTop && calib.hRightTop) return;
+
+    const w = canvasW;
+    const h = canvasH;
+
+    const wallY = h * 0.68;
+    const frontY = h * 0.80;
+    const leftX = w * 0.30;
+    const rightX = w * 0.70;
+
+    const wallA = { x: leftX, y: wallY };
+    const wallB = { x: rightX, y: wallY };
+    const frontA = { x: leftX + w * 0.02, y: frontY };
+    const frontB = { x: rightX - w * 0.02, y: frontY };
+
+    const hLeftBottom = { x: wallA.x, y: wallA.y };
+    const hLeftTop = { x: wallA.x, y: wallA.y - h * 0.25 };
+    const hRightBottom = { x: wallB.x, y: wallB.y };
+    const hRightTop = { x: wallB.x, y: wallB.y - h * 0.25 };
+
+    setCalib({ wallA, wallB, frontA, frontB, hLeftBottom, hLeftTop, hRightBottom, hRightTop });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgImg, canvasW, canvasH]);
+
   // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
   const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
@@ -474,6 +527,33 @@ export default function Page() {
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
+
+
+  // ===== Auto-place (beta) =====
+  const [calibOpen, setCalibOpen] = useState(false);
+  const [calibPhase, setCalibPhase] = useState<CalibPhase>("off");
+
+  const [calib, setCalib] = useState<CalibState>({
+    wallA: null,
+    wallB: null,
+    frontA: null,
+    frontB: null,
+    hLeftBottom: null,
+    hLeftTop: null,
+    hRightBottom: null,
+    hRightTop: null,
+  });
+
+  // pri "náhľade" si zapamätáme pôvodné transformy, aby sme vedeli vrátiť
+  const prevTransformRef = useRef<{
+    pos: Vec2;
+    rot2D: number;
+    rot3D: { yaw: number; pitch: number };
+    scalePct: { x: number; y: number; z: number };
+  } | null>(null);
+
+  const calibDragRef = useRef<{ active: boolean; id: CalibPointId | null } | null>(null);
+  const CALIB_HIT = 18;
 
   // mobile defaults
   useEffect(() => {
@@ -805,7 +885,63 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode]);
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode, calibOpen, calibPhase, calib]);
+
+  function vsub(a: Vec2, b: Vec2) {
+    return { x: a.x - b.x, y: a.y - b.y };
+  }
+  function vlen(a: Vec2) {
+    return Math.sqrt(a.x * a.x + a.y * a.y);
+  }
+  function vnorm(a: Vec2) {
+    const l = vlen(a);
+    return l > 1e-6 ? { x: a.x / l, y: a.y / l } : { x: 1, y: 0 };
+  }
+  function vdot(a: Vec2, b: Vec2) {
+    return a.x * b.x + a.y * b.y;
+  }
+  function mid(a: Vec2, b: Vec2) {
+    return { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 };
+  }
+
+  function computeAutoTransform() {
+    const c = calib;
+    if (!c.wallA || !c.wallB || !c.frontA || !c.frontB || !c.hLeftBottom || !c.hLeftTop || !c.hRightBottom || !c.hRightTop) return null;
+
+    const wallMid = mid(c.wallA, c.wallB);
+    const frontMid = mid(c.frontA, c.frontB);
+
+    const wallVec = vsub(c.wallB, c.wallA);
+    const wallLen = Math.max(1, vlen(wallVec));
+    const wallDir = vnorm(wallVec);
+
+    // kolmica na wallDir (smer "hĺbky" v obraze)
+    const n = vnorm({ x: -wallDir.y, y: wallDir.x });
+
+    const depthPx = Math.abs(vdot(vsub(frontMid, wallMid), n));
+
+    const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
+    const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
+    const hAvg = (hL + hR) * 0.5;
+
+    const posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
+
+    // yaw z uhla línie (screen-space heuristika)
+    const angle = Math.atan2(wallVec.y, wallVec.x);
+    const yaw = clamp(-angle * 0.85, -2.2, 2.2);
+
+    // pitch podľa toho, či je predná línia vyššie/nižšie než kontakt
+    const pitch = clamp(((frontMid.y - wallMid.y) / canvasH) * 1.2, -0.75, 0.75);
+
+    // roll podľa rozdielu viditeľnej výšky v rohoch
+    const roll = clamp(((hR - hL) / canvasH) * 1.4, -0.55, 0.55);
+
+    const sx = clampPct((wallLen / canvasW) * 220);
+    const sz = clampPct((depthPx / canvasH) * 260);
+    const sy = clampPct((hAvg / canvasH) * 260);
+
+    return { posN, yaw, pitch, roll, scale: { x: sx, y: sy, z: sz } };
+  }
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -933,6 +1069,78 @@ export default function Page() {
         } else {
           setBboxRect(null);
         }
+      // ===== calibration overlay (auto-place) =====
+      if (calibOpen && calibPhase !== "applied") {
+        const c = calib;
+
+        const drawLine = (a: Vec2 | null, b: Vec2 | null, label: string) => {
+          if (!a || !b) return;
+          ctx.save();
+          ctx.strokeStyle = "rgba(0,0,0,0.85)";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([10, 7]);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+          const pad = 6;
+          ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
+          const tw = ctx.measureText(label).width;
+          const w = tw + pad * 2;
+          const h = 20;
+
+          ctx.fillStyle = "rgba(255,255,255,0.92)";
+          ctx.strokeStyle = "rgba(0,0,0,0.25)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          // @ts-ignore
+          if ((ctx as any).roundRect) {
+            // @ts-ignore
+            (ctx as any).roundRect(m.x - w / 2, m.y - h / 2, w, h, 10);
+          } else {
+            // fallback
+            const x = m.x - w / 2;
+            const y = m.y - h / 2;
+            const r = 10;
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+          }
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = "rgba(0,0,0,0.82)";
+          ctx.fillText(label, m.x - w / 2 + pad, m.y + 4);
+          ctx.restore();
+        };
+
+        const drawPt = (p: Vec2 | null) => {
+          if (!p) return;
+          ctx.save();
+          ctx.beginPath();
+          ctx.fillStyle = "rgba(255,255,255,0.95)";
+          ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.fillStyle = "rgba(0,0,0,0.85)";
+          ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        };
+
+        drawLine(c.wallA, c.wallB, "Kontakt pri dome");
+        drawLine(c.frontA, c.frontB, "Predná línia");
+        drawLine(c.hLeftBottom, c.hLeftTop, "Výška L");
+        drawLine(c.hRightBottom, c.hRightTop, "Výška P");
+
+        [c.wallA, c.wallB, c.frontA, c.frontB, c.hLeftBottom, c.hLeftTop, c.hRightBottom, c.hRightTop].forEach(drawPt);
+      }
+
       } catch {
         // ignore
       }
@@ -968,6 +1176,36 @@ export default function Page() {
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
+
+    // ===== Auto-place: drag guide points =====
+    if (calibOpen && calibPhase === "edit") {
+      const points: [CalibPointId, Vec2 | null][] = [
+        ["wallA", calib.wallA],
+        ["wallB", calib.wallB],
+        ["frontA", calib.frontA],
+        ["frontB", calib.frontB],
+        ["hLeftBottom", calib.hLeftBottom],
+        ["hLeftTop", calib.hLeftTop],
+        ["hRightBottom", calib.hRightBottom],
+        ["hRightTop", calib.hRightTop],
+      ];
+
+      let hit: CalibPointId | null = null;
+      for (const [id, pt] of points) {
+        if (!pt) continue;
+        if (dist(p, pt) <= CALIB_HIT) {
+          hit = id;
+          break;
+        }
+      }
+
+      if (hit) {
+        e.preventDefault();
+        (e.currentTarget as any).setPointerCapture(e.pointerId);
+        calibDragRef.current = { active: true, id: hit };
+        return;
+      }
+    }
 
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
@@ -1036,6 +1274,18 @@ export default function Page() {
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!dragRef.current.active) return;
 
+    // ===== Auto-place: move guide point =====
+    if (calibOpen && calibPhase === "edit" && calibDragRef.current?.active && calibDragRef.current.id) {
+      e.preventDefault();
+      const p = toCanvasXY(e);
+      const id = calibDragRef.current.id;
+      setCalib((prev) => ({
+        ...prev,
+        [id]: { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) },
+      }) as CalibState);
+      return;
+    }
+
     e.preventDefault();
 
     const p = toCanvasXY(e);
@@ -1103,6 +1353,14 @@ export default function Page() {
   }
 
   function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+    // ===== Auto-place: end guide drag =====
+    if (calibOpen && calibPhase === "edit" && calibDragRef.current?.active) {
+      calibDragRef.current = null;
+      try {
+        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
+      } catch {}
+      return;
+    }
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     dragRef.current.tiltAxis = null;
@@ -1535,6 +1793,109 @@ export default function Page() {
                 </div>
               </div>
             )}
+
+            {/* Auto-place (beta) */}
+            {bgImg ? (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!calibOpen) {
+                      setCalibOpen(true);
+                      setCalibPhase("edit");
+                      prevTransformRef.current = null;
+                    } else {
+                      setCalibOpen(false);
+                      setCalibPhase("off");
+                      // ak bol náhľad, vráť transformy
+                      if (prevTransformRef.current) {
+                        const t = prevTransformRef.current;
+                        setPos(t.pos);
+                        setRot2D(t.rot2D);
+                        setRot3D(t.rot3D);
+                        setScalePct(t.scalePct);
+                        prevTransformRef.current = null;
+                      }
+                    }
+                  }}
+                  style={{
+                    ...btnStyle,
+                    background: calibOpen ? "#111" : "#fff",
+                    color: calibOpen ? "#fff" : "#111",
+                    borderColor: calibOpen ? "#111" : "rgba(0,0,0,0.14)",
+                  }}
+                >
+                  Auto osadenie (beta)
+                </button>
+
+                {calibOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tr = computeAutoTransform();
+                        if (!tr) return;
+
+                        if (!prevTransformRef.current) {
+                          prevTransformRef.current = { pos, rot2D, rot3D, scalePct };
+                        }
+
+                        setPos(tr.posN);
+                        setRot3D({ yaw: tr.yaw, pitch: tr.pitch });
+                        setRot2D(tr.roll);
+                        setScalePct(tr.scale);
+                        setCalibPhase("preview");
+                      }}
+                      style={{ ...btnStyle }}
+                    >
+                      Náhľad osadenia
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (prevTransformRef.current) {
+                          const t = prevTransformRef.current;
+                          setPos(t.pos);
+                          setRot2D(t.rot2D);
+                          setRot3D(t.rot3D);
+                          setScalePct(t.scalePct);
+                          prevTransformRef.current = null;
+                        }
+                        setCalibPhase("edit");
+                      }}
+                      style={{ ...btnStyle }}
+                    >
+                      Upraviť čiary
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const tr = computeAutoTransform();
+                        if (!tr) return;
+
+                        setPos(tr.posN);
+                        setRot3D({ yaw: tr.yaw, pitch: tr.pitch });
+                        setRot2D(tr.roll);
+                        setScalePct(tr.scale);
+
+                        prevTransformRef.current = null;
+                        setCalibPhase("applied");
+                        setCalibOpen(false);
+                      }}
+                      style={{ ...btnStyle, background: "#111", color: "#fff", borderColor: "#111" }}
+                    >
+                      Osadiť pergolu
+                    </button>
+
+                    <div style={{ fontSize: 12, fontWeight: 850, color: "rgba(0,0,0,0.62)", width: "100%" }}>
+                      Tip: potiahni bodky na čiarach. Najprv „Kontakt pri dome“, potom „Predná línia“, potom výšky.
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* 4. riadok na mobile: Zoom / Hĺbka / Výška / Šírka (a na desktope ostáva ako bolo) */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
