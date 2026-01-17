@@ -974,7 +974,7 @@ export default function Page() {
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
 
-    const saoPass = new SAOPass(scene, camera, false);
+    const saoPass = new SAOPass(scene, camera);
     // Jemné AO – nech nespôsobuje "špinu", len kontakt/detail
     saoPass.params.saoIntensity = 0.18;
     saoPass.params.saoScale = 30;
