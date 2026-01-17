@@ -925,13 +925,13 @@ export default function Page() {
 
     // yaw z uhla línie (screen-space heuristika)
     const angle = Math.atan2(wallVec.y, wallVec.x);
-    const yaw = clamp(-angle * 0.85, -2.2, 2.2);
+    const yaw = clamp(-angle, -2.6, 2.6);
 
     // pitch podľa toho, či je predná línia vyššie/nižšie než kontakt
-    const pitch = clamp(((frontMid.y - wallMid.y) / canvasH) * 1.2, -0.75, 0.75);
+    const pitch = 0; // necháme 0, aby model nepadal (user vie doladiť v editore)
 
     // roll podľa rozdielu viditeľnej výšky v rohoch
-    const roll = clamp(((hR - hL) / canvasH) * 1.4, -0.55, 0.55);
+    const roll = 0; // necháme 0, aby sa model nepretáčal (user vie doladiť v editore)
 
     // ---- SCALE: kalibruj podľa aktuálne vyrátaného bbox v pixeloch ----
     // keď máme bboxRect, použijeme pomer "chcem mať X px" / "aktuálne mám X px".
@@ -945,7 +945,7 @@ export default function Page() {
       sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
       // hĺbka je v 2D len približná; viažeme ju na šírku bbox-u (aby to nepadalo na 20%)
       const base = Math.max(1, bboxRect.w);
-      sz = clampPct(scalePct.z * (depthPx / base) * 1.15);
+      sz = clampPct(scalePct.z * (depthPx / base) * 2.0); // viac hĺbky, aby sa ne"zlepila" pri stene
     } else {
       sx = clampPct((wallLen / canvasW) * 220);
       sy = clampPct((hAvg / canvasH) * 260);
@@ -959,10 +959,10 @@ export default function Page() {
       // chceme, aby spodný stred bbox-u sedel na wallMid
       const bboxBottomMid = { x: bboxRect.x + bboxRect.w * 0.5, y: bboxRect.y + bboxRect.h };
       const dx = wallMid.x - bboxBottomMid.x;
-      const dy = wallMid.y - bboxBottomMid.y;
+      // y necháme z wallMid (bbox sa mení so scale/rotáciou a vie to robiť skoky)
       posN = {
         x: clamp(posN.x + dx / canvasW, 0.02, 0.98),
-        y: clamp(posN.y + dy / canvasH, 0.02, 0.98),
+        y: clamp(posN.y, 0.02, 0.98),
       };
     }
 
