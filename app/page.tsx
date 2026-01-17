@@ -3,6 +3,12 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader.js";
+import { SAOPass } from "three/examples/jsm/postprocessing/SAOPass.js";
+
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
@@ -596,6 +602,12 @@ export default function Page() {
 
   const threeReadyRef = useRef(false);
   const rendererRef = useRef<any>(null);
+
+  // Postprocessing (FXAA + AO)
+  const composerRef = useRef<EffectComposer | null>(null);
+  const fxaaPassRef = useRef<ShaderPass | null>(null);
+  const saoPassRef = useRef<SAOPass | null>(null);
+
   const sceneRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
@@ -953,8 +965,50 @@ export default function Page() {
           antialias: true,
           preserveDrawingBuffer: true,
         });
-        renderer.setSize(canvasW, canvasH, false);
-        renderer.setPixelRatio(1);
+        
+
+    // Postprocessing pipeline: RenderPass -> SAO (AO) -> FXAA
+    const composer = new EffectComposer(renderer);
+    composerRef.current = composer;
+
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    const saoPass = new SAOPass(scene, camera, false, true);
+    // Jemné AO – nech nespôsobuje "špinu", len kontakt/detail
+    saoPass.params.saoIntensity = 0.18;
+    saoPass.params.saoScale = 30;
+    saoPass.params.saoKernelRadius = 18;
+    saoPass.params.saoMinResolution = 0;
+    saoPass.params.saoBlur = true;
+    saoPass.params.saoBlurRadius = 4;
+    saoPass.params.saoBlurStdDev = 2;
+    saoPass.params.saoBlurDepthCutoff = 0.01;
+    saoPassRef.current = saoPass;
+    composer.addPass(saoPass);
+
+    const fxaaPass = new ShaderPass(FXAAShader);
+    fxaaPassRef.current = fxaaPass;
+    composer.addPass(fxaaPass);
+renderer.setSize(canvasW, canvasH, false);
+        
+
+    const updatePostprocess = (w: number, h: number) => {
+      const composer = composerRef.current;
+      if (composer) composer.setSize(w, h);
+
+      const fxaaPass = fxaaPassRef.current;
+      // FXAA needs resolution = 1/width, 1/height
+      if (fxaaPass) {
+        const u = (fxaaPass.material as any).uniforms;
+        if (u?.resolution?.value) {
+          u.resolution.value.set(1 / Math.max(1, w), 1 / Math.max(1, h));
+        }
+      }
+    };
+
+    updatePostprocess(canvasW, canvasH);
+renderer.setPixelRatio(1);
 
 // Realizmus renderu
 // Realizmus renderu (Three.js verzie sa líšia – TS typy nemusia mať physicallyCorrectLights)
@@ -1561,8 +1615,13 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
       // 2) Render pergoly (color pass) do RGBA
       applyTransformsForCurrentState(outW, outH);
       renderer.setSize(outW, outH, false);
-
-      // pomocná shadow plane (shadow catcher) – vytvor raz
+      // keep postprocess in sync
+      if (composerRef.current) composerRef.current.setSize(outW, outH);
+      if (fxaaPassRef.current) {
+        const u = (fxaaPassRef.current.material as any).uniforms;
+        if (u?.resolution?.value) u.resolution.value.set(1 / Math.max(1, outW), 1 / Math.max(1, outH));
+      }
+// pomocná shadow plane (shadow catcher) – vytvor raz
       const ensureShadowPlane = () => {
         // @ts-ignore
         if ((scene as any).__shadowPlane) return (scene as any).__shadowPlane as any;
@@ -1588,8 +1647,8 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
       renderer.setClearColor?.(0x000000, 0);
       // @ts-ignore
       renderer.clear?.();
-      renderer.render(scene, camera);
-      const pergolaCanvas = renderer.domElement;
+      if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
+const pergolaCanvas = renderer.domElement;
       const pergolaBlob: Blob = await new Promise((res, rej) =>
         pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
       );
@@ -1617,9 +1676,8 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
         renderer.setClearColor?.(0x000000, 0);
         // @ts-ignore
         renderer.clear?.();
-        renderer.render(scene, camera);
-
-        shadowBlob = await new Promise((res, rej) =>
+        if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
+shadowBlob = await new Promise((res, rej) =>
           renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať tieň"))), "image/png")
         );
 
@@ -1746,15 +1804,19 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
         // === render pergola pass ===
         applyTransformsForCurrentState(outW, outH);
         renderer.setSize(outW, outH, false);
-
-        if (shadowPlane) shadowPlane.visible = false;
+      // keep postprocess in sync
+      if (composerRef.current) composerRef.current.setSize(outW, outH);
+      if (fxaaPassRef.current) {
+        const u = (fxaaPassRef.current.material as any).uniforms;
+        if (u?.resolution?.value) u.resolution.value.set(1 / Math.max(1, outW), 1 / Math.max(1, outH));
+      }
+if (shadowPlane) shadowPlane.visible = false;
         // @ts-ignore
         renderer.setClearColor?.(0x000000, 0);
         // @ts-ignore
         renderer.clear?.();
-        renderer.render(scene, camera);
-
-        const pergolaBlob2: Blob = await new Promise((res, rej) =>
+        if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
+const pergolaBlob2: Blob = await new Promise((res, rej) =>
           renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
         );
 
@@ -1774,9 +1836,8 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
           renderer.setClearColor?.(0x000000, 0);
           // @ts-ignore
           renderer.clear?.();
-          renderer.render(scene, camera);
-
-          shadowBlob2 = await new Promise((res, rej) =>
+          if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
+shadowBlob2 = await new Promise((res, rej) =>
             renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať tieň"))), "image/png")
           );
 
