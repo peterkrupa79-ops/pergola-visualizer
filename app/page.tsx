@@ -905,69 +905,101 @@ export default function Page() {
   }
 
   function computeAutoTransform() {
-    const c = calib;
-    if (!c.wallA || !c.wallB || !c.frontA || !c.frontB || !c.hLeftBottom || !c.hLeftTop || !c.hRightBottom || !c.hRightTop) return null;
+  const c = calib;
+  if (
+    !c.wallA ||
+    !c.wallB ||
+    !c.frontA ||
+    !c.frontB ||
+    !c.hLeftBottom ||
+    !c.hLeftTop ||
+    !c.hRightBottom ||
+    !c.hRightTop
+  )
+    return null;
 
-    const wallMid = mid(c.wallA, c.wallB);
-    const frontMid = mid(c.frontA, c.frontB);
+  const wallMid = mid(c.wallA, c.wallB);
+  const frontMid = mid(c.frontA, c.frontB);
 
-    const wallVec = vsub(c.wallB, c.wallA);
-    const wallLen = Math.max(1, vlen(wallVec));
-    const wallDir = vnorm(wallVec);
+  const wallVec = vsub(c.wallB, c.wallA);
+  const wallLen = Math.max(1, vlen(wallVec));
+  const wallDir = vnorm(wallVec);
 
-    // kolmica na wallDir (smer "hĺbky" v obraze)
-    const n = vnorm({ x: -wallDir.y, y: wallDir.x });
-    const depthPx = Math.abs(vdot(vsub(frontMid, wallMid), n));
+  // kolmica na wallDir (smer "hĺbky" v obraze)
+  const nRaw = vnorm({ x: -wallDir.y, y: wallDir.x });
 
-    const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
-    const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
-    const hAvg = (hL + hR) * 0.5;
+  // vyber smer "dopredu" podľa toho, na ktorej strane je predná línia
+  const depthSigned = vdot(vsub(frontMid, wallMid), nRaw);
+  const forward = depthSigned >= 0 ? nRaw : { x: -nRaw.x, y: -nRaw.y };
 
-    // yaw z uhla línie (screen-space heuristika)
-    const angle = Math.atan2(wallVec.y, wallVec.x);
-    const yaw = clamp(-angle, -2.6, 2.6);
+  const depthTargetPx = Math.abs(depthSigned);
 
-    // pitch podľa toho, či je predná línia vyššie/nižšie než kontakt
-    const pitch = 0; // necháme 0, aby model nepadal (user vie doladiť v editore)
+  const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
+  const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
+  const hAvg = (hL + hR) * 0.5;
 
-    // roll podľa rozdielu viditeľnej výšky v rohoch
-    const roll = 0; // necháme 0, aby sa model nepretáčal (user vie doladiť v editore)
+  // yaw z uhla kontaktnej línie
+  const angle = Math.atan2(wallVec.y, wallVec.x);
+  const yaw = clamp(-angle, -2.6, 2.6);
 
-    // ---- SCALE: kalibruj podľa aktuálne vyrátaného bbox v pixeloch ----
-    // keď máme bboxRect, použijeme pomer "chcem mať X px" / "aktuálne mám X px".
-    // keď bboxRect nie je dostupný, spadneme na jednoduchú heuristiku.
-    let sx: number;
-    let sy: number;
-    let sz: number;
+  // pitch/roll zámerne nechávame 0 (stabilné osadenie bez "padania")
+  const pitch = 0;
+  const roll = 0;
 
-    if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
-      sx = clampPct(scalePct.x * (wallLen / bboxRect.w));
-      sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
-      // hĺbka je v 2D len približná; viažeme ju na šírku bbox-u (aby to nepadalo na 20%)
-      const base = Math.max(1, bboxRect.w);
-      sz = clampPct(scalePct.z * (depthPx / base) * 2.0); // viac hĺbky, aby sa ne"zlepila" pri stene
-    } else {
-      sx = clampPct((wallLen / canvasW) * 220);
-      sy = clampPct((hAvg / canvasH) * 260);
-      sz = clampPct((depthPx / canvasH) * 260);
-    }
+  // ---- SCALE + POSITION z 2D bbox-u (projekcia) ----
+  // používame projekčné dĺžky bboxRect na smery wallDir/forward,
+  // aby sme vedeli kotviť ZADNÚ HRANU (kontakt pri dome), nie stred objektu.
+  let sx: number;
+  let sy: number;
+  let sz: number;
 
-    // ---- POSITION: najprv podľa wallMid, potom jedným krokom dorovnaj podľa bbox-u ----
-    let posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
+  // pozícia je v normalized 0..1 (ako máte v editore)
+  let posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
 
-    if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
-      // chceme, aby spodný stred bbox-u sedel na wallMid
-      const bboxBottomMid = { x: bboxRect.x + bboxRect.w * 0.5, y: bboxRect.y + bboxRect.h };
-      const dx = wallMid.x - bboxBottomMid.x;
-      // y necháme z wallMid (bbox sa mení so scale/rotáciou a vie to robiť skoky)
-      posN = {
-        x: clamp(posN.x + dx / canvasW, 0.02, 0.98),
-        y: clamp(posN.y, 0.02, 0.98),
-      };
-    }
+  if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
+    const bboxCenter = { x: bboxRect.x + bboxRect.w * 0.5, y: bboxRect.y + bboxRect.h * 0.5 };
 
-    return { posN, yaw, pitch, roll, scale: { x: sx, y: sy, z: sz } };
+    // projekčná šírka bboxu v smere kontaktnej línie
+    const projWidth = Math.max(1, Math.abs(wallDir.x) * bboxRect.w + Math.abs(wallDir.y) * bboxRect.h);
+
+    // projekčná "hĺbka" bboxu v smere dopredu
+    const projDepth = Math.max(1, Math.abs(forward.x) * bboxRect.w + Math.abs(forward.y) * bboxRect.h);
+
+    // škála: nastav aby zadná hrana sedela na kontakt + aby hĺbka sedela na prednú líniu
+    sx = clampPct(scalePct.x * (wallLen / projWidth));
+    sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
+    sz = clampPct(scalePct.z * (depthTargetPx / projDepth));
+
+    // POSITION:
+    // chceme, aby "zadná hrana" (kontakt pri dome) sedela na wallMid.
+    // Zadná hrana v projekcii je bboxCenter - forward*(projDepth/2).
+    // Preto bboxCenter musí byť wallMid + forward*(projDepth/2).
+    const desiredCenter = {
+      x: wallMid.x + forward.x * (projDepth * 0.5),
+      y: wallMid.y + forward.y * (projDepth * 0.5),
+    };
+
+    const dx = desiredCenter.x - bboxCenter.x;
+    const dy = desiredCenter.y - bboxCenter.y;
+
+    // navyše chceme, aby spodok bboxu sedel na y kontaktnej línie (terasa)
+    const desiredBottomY = wallMid.y;
+    const currentBottomY = bboxRect.y + bboxRect.h;
+    const dyBottom = desiredBottomY - currentBottomY;
+
+    posN = {
+      x: clamp(posN.x + dx / canvasW, 0.02, 0.98),
+      y: clamp(posN.y + (dy + dyBottom) / canvasH, 0.02, 0.98),
+    };
+  } else {
+    // fallback heuristika (bez bboxRect)
+    sx = clampPct((wallLen / canvasW) * 220);
+    sy = clampPct((hAvg / canvasH) * 260);
+    sz = clampPct((depthTargetPx / canvasH) * 260);
   }
+
+  return { posN, yaw, pitch, roll, scale: { x: sx, y: sy, z: sz } };
+}
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
