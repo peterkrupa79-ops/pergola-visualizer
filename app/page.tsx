@@ -801,7 +801,7 @@ export default function Page() {
     setSelectedVariantIndex(0);
   }
 
-  function togglePanel(p: "zoom" | "x" | "y" | "z") {
+  function togglePanel(p: "zoom" | "x" | "y" | "z" | "sun" | "shadow" | "grid") {
     setPanel((prev) => {
       if (prev === p) {
         setPanelOpen((o) => !o);
