@@ -1272,8 +1272,6 @@ export default function Page() {
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (!dragRef.current.active) return;
-
     // ===== Auto-place: move guide point =====
     if (calibOpen && calibPhase === "edit" && calibDragRef.current?.active && calibDragRef.current.id) {
       e.preventDefault();
@@ -1285,6 +1283,8 @@ export default function Page() {
       }) as CalibState);
       return;
     }
+
+    if (!dragRef.current.active) return;
 
     e.preventDefault();
 
