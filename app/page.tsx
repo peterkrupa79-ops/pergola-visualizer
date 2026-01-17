@@ -555,6 +555,16 @@ export default function Page() {
   const calibDragRef = useRef<{ active: boolean; id: CalibPointId | null } | null>(null);
   const CALIB_HIT = 18;
 
+  // auto-place one-shot correction after next bbox read
+  const autoPlaceRef = useRef<null | {
+    active: boolean;
+    wallMid: Vec2;
+    frontMid: Vec2;
+    wallDir: Vec2;
+    forward: Vec2;
+  }>(null);
+
+
   // mobile defaults
   useEffect(() => {
     if (!isMobileRef.current) return;
@@ -905,101 +915,79 @@ export default function Page() {
   }
 
   function computeAutoTransform() {
-  const c = calib;
-  if (
-    !c.wallA ||
-    !c.wallB ||
-    !c.frontA ||
-    !c.frontB ||
-    !c.hLeftBottom ||
-    !c.hLeftTop ||
-    !c.hRightBottom ||
-    !c.hRightTop
-  )
-    return null;
+    const c = calib;
+    if (
+      !c.wallA ||
+      !c.wallB ||
+      !c.frontA ||
+      !c.frontB ||
+      !c.hLeftBottom ||
+      !c.hLeftTop ||
+      !c.hRightBottom ||
+      !c.hRightTop
+    )
+      return null;
 
-  const wallMid = mid(c.wallA, c.wallB);
-  const frontMid = mid(c.frontA, c.frontB);
+    const wallMid = mid(c.wallA, c.wallB);
+    const frontMid = mid(c.frontA, c.frontB);
 
-  const wallVec = vsub(c.wallB, c.wallA);
-  const wallLen = Math.max(1, vlen(wallVec));
-  const wallDir = vnorm(wallVec);
+    const wallVec = vsub(c.wallB, c.wallA);
+    const wallLen = Math.max(1, vlen(wallVec));
+    const wallDir = vnorm(wallVec);
 
-  // kolmica na wallDir (smer "hĺbky" v obraze)
-  const nRaw = vnorm({ x: -wallDir.y, y: wallDir.x });
+    // kolmica na wallDir (smer "hĺbky" v obraze)
+    const nRaw = vnorm({ x: -wallDir.y, y: wallDir.x });
 
-  // vyber smer "dopredu" podľa toho, na ktorej strane je predná línia
-  const depthSigned = vdot(vsub(frontMid, wallMid), nRaw);
-  const forward = depthSigned >= 0 ? nRaw : { x: -nRaw.x, y: -nRaw.y };
+    // vyber smer "dopredu" podľa toho, na ktorej strane je predná línia
+    const depthSigned = vdot(vsub(frontMid, wallMid), nRaw);
+    const forward = depthSigned >= 0 ? nRaw : { x: -nRaw.x, y: -nRaw.y };
 
-  const depthTargetPx = Math.abs(depthSigned);
+    const depthTargetPx = Math.max(1, Math.abs(depthSigned));
 
-  const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
-  const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
-  const hAvg = (hL + hR) * 0.5;
+    const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
+    const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
+    const hAvg = Math.max(1, (hL + hR) * 0.5);
 
-  // yaw z uhla kontaktnej línie
-  const angle = Math.atan2(wallVec.y, wallVec.x);
-  const yaw = clamp(-angle, -2.6, 2.6);
+    // yaw z uhla kontaktnej línie
+    const angle = Math.atan2(wallVec.y, wallVec.x);
+    const yaw = clamp(-angle, -2.6, 2.6);
 
-  // pitch/roll zámerne nechávame 0 (stabilné osadenie bez "padania")
-  const pitch = 0;
-  const roll = 0;
+    // stabilne: pitch/roll nechávame 0
+    const pitch = 0;
+    const roll = 0;
 
-  // ---- SCALE + POSITION z 2D bbox-u (projekcia) ----
-  // používame projekčné dĺžky bboxRect na smery wallDir/forward,
-  // aby sme vedeli kotviť ZADNÚ HRANU (kontakt pri dome), nie stred objektu.
-  let sx: number;
-  let sy: number;
-  let sz: number;
+    // SCALE: rátame z aktuálneho bboxRect (po poslednom rendri)
+    let sx: number;
+    let sy: number;
+    let sz: number;
 
-  // pozícia je v normalized 0..1 (ako máte v editore)
-  let posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
+    if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
+      // projekčné dĺžky bboxu v smere wallDir a forward
+      const projWidth = Math.max(1, Math.abs(wallDir.x) * bboxRect.w + Math.abs(wallDir.y) * bboxRect.h);
+      const projDepth = Math.max(1, Math.abs(forward.x) * bboxRect.w + Math.abs(forward.y) * bboxRect.h);
 
-  if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
-    const bboxCenter = { x: bboxRect.x + bboxRect.w * 0.5, y: bboxRect.y + bboxRect.h * 0.5 };
+      sx = clampPct(scalePct.x * (wallLen / projWidth));
+      sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
+      sz = clampPct(scalePct.z * (depthTargetPx / projDepth));
+    } else {
+      // fallback
+      sx = clampPct((wallLen / canvasW) * 220);
+      sy = clampPct((hAvg / canvasH) * 260);
+      sz = clampPct((depthTargetPx / canvasH) * 260);
+    }
 
-    // projekčná šírka bboxu v smere kontaktnej línie
-    const projWidth = Math.max(1, Math.abs(wallDir.x) * bboxRect.w + Math.abs(wallDir.y) * bboxRect.h);
+    // POS: hrubý anchor na wallMid (fine correction spravíme one-shot po ďalšom bbox read)
+    const posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
 
-    // projekčná "hĺbka" bboxu v smere dopredu
-    const projDepth = Math.max(1, Math.abs(forward.x) * bboxRect.w + Math.abs(forward.y) * bboxRect.h);
-
-    // škála: nastav aby zadná hrana sedela na kontakt + aby hĺbka sedela na prednú líniu
-    sx = clampPct(scalePct.x * (wallLen / projWidth));
-    sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
-    sz = clampPct(scalePct.z * (depthTargetPx / projDepth));
-
-    // POSITION:
-    // chceme, aby "zadná hrana" (kontakt pri dome) sedela na wallMid.
-    // Zadná hrana v projekcii je bboxCenter - forward*(projDepth/2).
-    // Preto bboxCenter musí byť wallMid + forward*(projDepth/2).
-    const desiredCenter = {
-      x: wallMid.x + forward.x * (projDepth * 0.5),
-      y: wallMid.y + forward.y * (projDepth * 0.5),
+    return {
+      posN,
+      yaw,
+      pitch,
+      roll,
+      scale: { x: sx, y: sy, z: sz },
+      __meta: { wallMid, frontMid, wallDir, forward },
     };
-
-    const dx = desiredCenter.x - bboxCenter.x;
-    const dy = desiredCenter.y - bboxCenter.y;
-
-    // navyše chceme, aby spodok bboxu sedel na y kontaktnej línie (terasa)
-    const desiredBottomY = wallMid.y;
-    const currentBottomY = bboxRect.y + bboxRect.h;
-    const dyBottom = desiredBottomY - currentBottomY;
-
-    posN = {
-      x: clamp(posN.x + dx / canvasW, 0.02, 0.98),
-      y: clamp(posN.y + (dy + dyBottom) / canvasH, 0.02, 0.98),
-    };
-  } else {
-    // fallback heuristika (bez bboxRect)
-    sx = clampPct((wallLen / canvasW) * 220);
-    sy = clampPct((hAvg / canvasH) * 260);
-    sz = clampPct((depthTargetPx / canvasH) * 260);
   }
-
-  return { posN, yaw, pitch, roll, scale: { x: sx, y: sy, z: sz } };
-}
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -1094,6 +1082,40 @@ export default function Page() {
           const invMaxY = canvasH - minY;
           const rect = { x: minX, y: invMinY, w: maxX - minX, h: invMaxY - invMinY };
           setBboxRect(rect);
+
+          // auto-place: one-shot correction using *current* bboxRect after scale/yaw were applied
+          if (autoPlaceRef.current?.active) {
+            const meta = autoPlaceRef.current;
+
+            // desired: back edge (towards -forward) sits on wallMid
+            const wallMid = meta.wallMid;
+            const forward = meta.forward;
+
+            const bboxCenter = { x: rect.x + rect.w * 0.5, y: rect.y + rect.h * 0.5 };
+            const projDepthNow = Math.max(1, Math.abs(forward.x) * rect.w + Math.abs(forward.y) * rect.h);
+
+            const desiredCenter = {
+              x: wallMid.x + forward.x * (projDepthNow * 0.5),
+              y: wallMid.y + forward.y * (projDepthNow * 0.5),
+            };
+
+            const dx = desiredCenter.x - bboxCenter.x;
+            const dy = desiredCenter.y - bboxCenter.y;
+
+            // bottom alignment: bbox bottom should touch wallMid.y
+            const desiredBottomY = wallMid.y;
+            const currentBottomY = rect.y + rect.h;
+            const dyBottom = desiredBottomY - currentBottomY;
+
+            // apply a single correction in normalized pos space
+            setPos((prev) => ({
+              x: clamp(prev.x + dx / canvasW, 0.02, 0.98),
+              y: clamp(prev.y + (dy + dyBottom) / canvasH, 0.02, 0.98),
+            }));
+
+            autoPlaceRef.current = null;
+          }
+
 
           ctx.save();
           ctx.strokeStyle = "rgba(0,0,0,0.55)";
@@ -1893,6 +1915,11 @@ export default function Page() {
                       onClick={() => {
                         const tr = computeAutoTransform();
                         if (!tr) return;
+
+                        // schedule one-shot position correction after next bbox read
+                        if ((tr as any).__meta) {
+                          autoPlaceRef.current = { active: true, ...(tr as any).__meta };
+                        }
 
                         if (!prevTransformRef.current) {
                           prevTransformRef.current = { pos, rot2D, rot3D, scalePct };
