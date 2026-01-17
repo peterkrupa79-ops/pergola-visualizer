@@ -9,6 +9,7 @@ function readPngSize(buf: Buffer): { width: number; height: number } | null {
   const sig = buf.subarray(0, 8);
   const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (!sig.equals(pngSig)) return null;
+
   const width = buf.readUInt32BE(16);
   const height = buf.readUInt32BE(20);
   if (!width || !height) return null;
@@ -29,7 +30,6 @@ function readJpegSize(buf: Buffer): { width: number; height: number } | null {
     const marker = buf[offset + 1];
     offset += 2;
 
-    // EOI / SOS
     if (marker === 0xd9 || marker === 0xda) break;
 
     if (offset + 2 > buf.length) break;
@@ -55,67 +55,96 @@ function readJpegSize(buf: Buffer): { width: number; height: number } | null {
   return null;
 }
 
-function detectImageSize(buf: Buffer, mime: string): { width: number; height: number } | null {
-  const m = (mime || "").toLowerCase();
-  if (m.includes("png")) return readPngSize(buf);
-  if (m.includes("jpeg") || m.includes("jpg")) return readJpegSize(buf);
+function detectImageSize(
+  buf: Buffer,
+  mime: string
+): { width: number; height: number } | null {
+  if (mime.includes("png")) return readPngSize(buf);
+  if (mime.includes("jpeg") || mime.includes("jpg")) return readJpegSize(buf);
   return readPngSize(buf) || readJpegSize(buf);
+}
+
+function pickOpenAiSize(
+  width: number,
+  height: number
+): "1024x1024" | "1024x1536" | "1536x1024" {
+  const r = width / height;
+  const candidates = [
+    { size: "1024x1024" as const, ratio: 1 },
+    { size: "1024x1536" as const, ratio: 1024 / 1536 },
+    { size: "1536x1024" as const, ratio: 1536 / 1024 },
+  ];
+
+  let best = candidates[0];
+  let bestDist = Math.abs(r - best.ratio);
+
+  for (const c of candidates) {
+    const d = Math.abs(r - c.ratio);
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  return best.size;
 }
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const image = formData.get("image");
+    const image = formData.get("image") as File | null;
     const prompt = (formData.get("prompt") as string | null) || "";
 
-    if (!(image instanceof File)) {
+    if (!image) {
       return NextResponse.json({ error: "Missing image" }, { status: 400 });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { error: "Missing OPENAI_API_KEY" },
+        { status: 500 }
+      );
     }
 
     const buffer = Buffer.from(await image.arrayBuffer());
     const sizeInfo = detectImageSize(buffer, image.type || "");
+    const chosenSize = sizeInfo
+      ? pickOpenAiSize(sizeInfo.width, sizeInfo.height)
+      : "1024x1024";
 
-    const imgFile = await toFile(buffer, image.name || "input.png", {
+    const imgFile = await toFile(buffer, image.name || "collage.png", {
       type: image.type || "image/png",
     });
 
-    const openai = new OpenAI({ apiKey });
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
-    // GPT Image edits: podporuje size:"auto", output_format, quality
     const res = await openai.images.edit({
-      model: "gpt-image-1.5",
+      model: "gpt-image-1",
       image: imgFile,
       prompt,
-      size: "auto",
-      output_format: "png",
-      quality: "high",
+      size: chosenSize,
     });
 
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) {
-      return NextResponse.json({ error: "No image returned from OpenAI" }, { status: 500 });
+      return NextResponse.json(
+        { error: "No image returned from OpenAI" },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       b64,
       meta: {
         input: sizeInfo || null,
-        size: "auto",
+        chosenSize,
       },
     });
   } catch (err: any) {
     console.error("OpenAI render error:", err);
     return NextResponse.json(
-      {
-        error: err?.message || "Unknown error",
-        code: err?.code || null,
-        type: err?.type || null,
-      },
+      { error: err?.message || "Unknown error" },
       { status: 500 }
     );
   }

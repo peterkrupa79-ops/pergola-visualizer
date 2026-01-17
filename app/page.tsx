@@ -3,12 +3,6 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
-import { FXAAShader } from "three/examples/jsm/shaders/FXAAShader.js";
-import { SAOPass } from "three/examples/jsm/postprocessing/SAOPass.js";
-
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
@@ -30,90 +24,6 @@ Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or 
 Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
 
 const MAX_VARIANTS = 6;
-
-const PERGOLA_LOOKS = [
-  {
-    name: "Matná čierna",
-    color: "#0b0b0c",
-    metalness: 0.08,
-    roughness: 0.78,
-    exposureMul: 1.0,
-    shadowMul: 1.05,
-  },
-  {
-    name: "Satén",
-    color: "#0b0b0c",
-    metalness: 0.18,
-    roughness: 0.55,
-    exposureMul: 1.0,
-    shadowMul: 1.0,
-  },
-  {
-    name: "Pololesk",
-    color: "#0b0b0c",
-    metalness: 0.28,
-    roughness: 0.35,
-    exposureMul: 1.0,
-    shadowMul: 0.95,
-  },
-  {
-    name: "Grafit",
-    color: "#151619",
-    metalness: 0.22,
-    roughness: 0.48,
-    exposureMul: 1.02,
-    shadowMul: 1.0,
-  },
-  {
-    name: "Antracit",
-    color: "#1d1f23",
-    metalness: 0.25,
-    roughness: 0.42,
-    exposureMul: 1.03,
-    shadowMul: 1.0,
-  },
-  {
-    name: "Lesk (demo)",
-    color: "#0b0b0c",
-    metalness: 0.35,
-    roughness: 0.22,
-    exposureMul: 1.05,
-    shadowMul: 0.92,
-  },
-] as const;
-
-type PergolaLook = (typeof PERGOLA_LOOKS)[number];
-
-
-
-// ===== Pomocná mriežka (pre presnejšie umiestnenie) =====
-// Používateľ klikne 3 body na zemi:
-// 1) O = origin na zemi
-// 2) D = smer do hĺbky (napr. škára dlažby smerom od kamery)
-// 3) S = smer do strany (kolmo na smer do hĺbky)
-// Z toho vykreslíme jednoduchú perspektívnu mriežku s 1 vanishing pointom.
-
-type GridPoint = { x: number; y: number };
-
-type GridState = {
-  enabled: boolean;
-  setupActive: boolean;
-  points: GridPoint[]; // [O, D, S]
-  opacity: number; // 0..1
-  density: number; // počet čiar do strán (vyššie = hustejšie)
-  falloff: number; // 0..1, ako rýchlo sa čiary zhustia smerom k VP
-  vpScale: number; // ako ďaleko je vanishing point
-};
-
-const GRID_DEFAULT: GridState = {
-  enabled: false,
-  setupActive: false,
-  points: [],
-  opacity: 0.55,
-  density: 10,
-  falloff: 0.86,
-  vpScale: 2500,
-};
 
 // ===== Hero krokový návod (rozbaľ v mobile) =====
 const HERO_STEPS: { id: number; title: string; hint: string }[] = [
@@ -498,7 +408,6 @@ type VariantItem = {
   type: PergolaType;
   b64: string; // PNG
   createdAt: number;
-  label?: string;
 };
 
 export default function Page() {
@@ -556,34 +465,15 @@ export default function Page() {
 
   // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
-  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z" | "sun" | "shadow" | "grid">("zoom");
+  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
   const [panelOpen, setPanelOpen] = useState(false);
 
   const [editorZoom, setEditorZoom] = useState(100);
-
-  const [grid, setGrid] = useState<GridState>(GRID_DEFAULT);
-
-
-  // Redraw pomocnú mriežku pri zmene bodov/parametrov
-  useEffect(() => {
-    drawGridOverlay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grid.enabled, grid.setupActive, grid.points, grid.opacity, grid.density, grid.falloff, grid.vpScale, canvasW, canvasH, editorZoom]);
-
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
-
-  // ===== Lighting (realizmus) =====
-  // 3 presety smeru slnka (ľavo / spredu / pravo)
-  const [sunPreset, setSunPreset] = useState<0 | 1 | 2>(1);
-  const [sunIntensity, setSunIntensity] = useState(3.2);
-  const [shadowOpacity, setShadowOpacity] = useState(0.35);
-  const [shadowSoftness, setShadowSoftness] = useState(3);
-  const [exposure, setExposure] = useState(1.05);
-
 
   // mobile defaults
   useEffect(() => {
@@ -598,25 +488,12 @@ export default function Page() {
 
   // ===== Three.js refs =====
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
   const threeReadyRef = useRef(false);
   const rendererRef = useRef<any>(null);
-
-  // Postprocessing (FXAA + AO)
-  const composerRef = useRef<EffectComposer | null>(null);
-  const fxaaPassRef = useRef<ShaderPass | null>(null);
-  const saoPassRef = useRef<SAOPass | null>(null);
-
   const sceneRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
-  const dirLightRef = useRef<any>(null);
-  const shadowPlaneRef = useRef<any>(null);
-  const shadowMatRef = useRef<any>(null);
-  const modelMinYRef = useRef<number>(0);
   const baseScaleRef = useRef<number>(1);
-  const threeModuleRef = useRef<any>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -813,7 +690,7 @@ export default function Page() {
     setSelectedVariantIndex(0);
   }
 
-  function togglePanel(p: "zoom" | "x" | "y" | "z" | "sun" | "shadow" | "grid") {
+  function togglePanel(p: "zoom" | "x" | "y" | "z") {
     setPanel((prev) => {
       if (prev === p) {
         setPanelOpen((o) => !o);
@@ -830,101 +707,6 @@ export default function Page() {
     const x = ((e.clientX - rect.left) * canvasW) / rect.width;
     const y = ((e.clientY - rect.top) * canvasH) / rect.height;
     return { x, y };
-  }
-
-
-  function drawGridOverlay() {
-    const gcv = gridCanvasRef.current;
-    if (!gcv) return;
-    const ctx = gcv.getContext("2d");
-    if (!ctx) return;
-
-    // clear
-    ctx.clearRect(0, 0, canvasW, canvasH);
-
-    if (!grid.enabled) return;
-
-    const pts = grid.points;
-    if (pts.length < 1) return;
-
-    // render helper points while setting up
-    ctx.save();
-    ctx.globalAlpha = grid.opacity;
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(0,0,0,0.55)";
-
-    // If we don't have enough points, show simple crosshair markers
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(p.x - 10, p.y);
-      ctx.lineTo(p.x + 10, p.y);
-      ctx.moveTo(p.x, p.y - 10);
-      ctx.lineTo(p.x, p.y + 10);
-      ctx.stroke();
-    }
-
-    if (pts.length < 3) {
-      ctx.restore();
-      return;
-    }
-
-    const O = pts[0];
-    const D = pts[1];
-    const S = pts[2];
-
-    const vdx = D.x - O.x;
-    const vdy = D.y - O.y;
-    const len = Math.max(1, Math.hypot(vdx, vdy));
-    const dirx = vdx / len;
-    const diry = vdy / len;
-
-    // Vanishing point (predĺženie smeru do hĺbky)
-    const VP = { x: O.x + dirx * grid.vpScale, y: O.y + diry * grid.vpScale };
-
-    // Boundary rays (O->VP a S->VP)
-    const A0 = O;
-    const A1 = S;
-
-    // Side rays: points along O->S heading to VP
-    const density = clamp(grid.density, 4, 30);
-
-    // Draw side rays
-    for (let i = 0; i <= density; i++) {
-      const t = i / density;
-      const Q = { x: O.x + (S.x - O.x) * t, y: O.y + (S.y - O.y) * t };
-      ctx.beginPath();
-      ctx.moveTo(Q.x, Q.y);
-      ctx.lineTo(VP.x, VP.y);
-      ctx.stroke();
-    }
-
-    // Draw depth cross-lines between rays
-    const fall = clamp(grid.falloff, 0.7, 0.97);
-    const depthLines = 14;
-    for (let k = 1; k <= depthLines; k++) {
-      // alpha approaches 1 (toward VP)
-      const alpha = 1 - Math.pow(fall, k);
-      const P0 = { x: A0.x + (VP.x - A0.x) * alpha, y: A0.y + (VP.y - A0.y) * alpha };
-      const P1 = { x: A1.x + (VP.x - A1.x) * alpha, y: A1.y + (VP.y - A1.y) * alpha };
-      ctx.beginPath();
-      ctx.moveTo(P0.x, P0.y);
-      ctx.lineTo(P1.x, P1.y);
-      ctx.stroke();
-    }
-
-    // Emphasize the main ground baseline O->S
-    ctx.globalAlpha = Math.min(1, grid.opacity + 0.12);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(O.x, O.y);
-    ctx.lineTo(S.x, S.y);
-    ctx.stroke();
-
-    ctx.restore();
   }
 
   function hitHandle(p: Vec2, r: { x: number; y: number; w: number; h: number }) {
@@ -947,9 +729,7 @@ export default function Page() {
     async function initThree() {
       try {
         const THREE = await import("three");
-        threeModuleRef.current = THREE;
         const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
-        const { RGBELoader } = await import("three/examples/jsm/loaders/RGBELoader.js");
 
         if (cancelled) return;
 
@@ -965,127 +745,15 @@ export default function Page() {
           antialias: true,
           preserveDrawingBuffer: true,
         });
-        
+        renderer.setSize(canvasW, canvasH, false);
+        renderer.setPixelRatio(1);
 
-    // Postprocessing pipeline: RenderPass -> SAO (AO) -> FXAA
-    const composer = new EffectComposer(renderer);
-    composerRef.current = composer;
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.95);
+        scene.add(hemi);
 
-    const renderPass = new RenderPass(scene, camera);
-    composer.addPass(renderPass);
-
-    const saoPass = new SAOPass(scene, camera);
-    // Jemné AO – nech nespôsobuje "špinu", len kontakt/detail
-    saoPass.params.saoIntensity = 0.18;
-    saoPass.params.saoScale = 30;
-    saoPass.params.saoKernelRadius = 18;
-    saoPass.params.saoMinResolution = 0;
-    saoPass.params.saoBlur = true;
-    saoPass.params.saoBlurRadius = 4;
-    saoPass.params.saoBlurStdDev = 2;
-    saoPass.params.saoBlurDepthCutoff = 0.01;
-    saoPassRef.current = saoPass;
-    composer.addPass(saoPass);
-
-    const fxaaPass = new ShaderPass(FXAAShader);
-    fxaaPassRef.current = fxaaPass;
-    composer.addPass(fxaaPass);
-renderer.setSize(canvasW, canvasH, false);
-        
-
-    const updatePostprocess = (w: number, h: number) => {
-      const composer = composerRef.current;
-      if (composer) composer.setSize(w, h);
-
-      const fxaaPass = fxaaPassRef.current;
-      // FXAA needs resolution = 1/width, 1/height
-      if (fxaaPass) {
-        const u = (fxaaPass.material as any).uniforms;
-        if (u?.resolution?.value) {
-          u.resolution.value.set(1 / Math.max(1, w), 1 / Math.max(1, h));
-        }
-      }
-    };
-
-    updatePostprocess(canvasW, canvasH);
-renderer.setPixelRatio(1);
-
-// Realizmus renderu
-// Realizmus renderu (Three.js verzie sa líšia – TS typy nemusia mať physicallyCorrectLights)
-// Preferuj moderné správanie svetiel:
-(renderer as any).useLegacyLights = false;
-// A ak je dostupné, zapni fyzikálne korektné svetlá:
-(renderer as any).physicallyCorrectLights = true;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = exposure;
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-        
-const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.55);
-scene.add(hemi);
-
-// Slnko + tiene (3 presety polohy)
-const SUN_PRESETS: [number, number, number][] = [
-  [-3.5, 6.5, 2.0], // ľavo
-  [0.8, 6.8, 4.8],  // spredu
-  [3.5, 6.5, 2.0],  // pravo
-];
-const sp = SUN_PRESETS[sunPreset] || SUN_PRESETS[1];
-
-const dir = new THREE.DirectionalLight(0xffffff, sunIntensity);
-dir.position.set(sp[0], sp[1], sp[2]);
-dir.castShadow = true;
-
-// kvalita tieňov
-dir.shadow.mapSize.set(2048, 2048);
-dir.shadow.bias = -0.00035;
-dir.shadow.normalBias = 0.02;
-
-// rozsah shadow kamery (d = "box" okolo scény)
-const d = 8;
-dir.shadow.camera.left = -d;
-dir.shadow.camera.right = d;
-dir.shadow.camera.top = d;
-dir.shadow.camera.bottom = -d;
-dir.shadow.camera.near = 0.1;
-dir.shadow.camera.far = 60;
-
-// jemné zmäkčenie (PCFSoft) – UI slider
-// @ts-ignore
-dir.shadow.radius = shadowSoftness;
-
-scene.add(dir);
-dirLightRef.current = dir;
-
-// HDRI environment (odrazy na materiáloch) – ak chýba súbor, iba preskočíme
-try {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  new RGBELoader().load(
-    "/hdri/studio_small_09_1k.hdr",
-    (hdrTex: any) => {
-      const env = pmrem.fromEquirectangular(hdrTex).texture;
-      scene.environment = env;
-      try {
-        hdrTex.dispose?.();
-      } catch {}
-      try {
-        pmrem.dispose();
-      } catch {}
-      draw();
-    },
-    undefined,
-    () => {
-      try {
-        pmrem.dispose();
-      } catch {}
-    }
-  );
-} catch (e) {
-  // ignore
-}
-
+        const dir = new THREE.DirectionalLight(0xffffff, 1.15);
+        dir.position.set(1, 2, 1.2);
+        scene.add(dir);
 
         const loader = new GLTFLoader();
         const gltf = await loader.loadAsync(glbPath);
@@ -1107,44 +775,12 @@ try {
         const center = bbox.getCenter(new THREE.Vector3());
         model.position.sub(center);
 
-// uložíme "podlahu" modelu (minY po centrovaní) – na shadow catcher
-modelMinYRef.current = bbox.min.y - center.y;
-
-// tiene a realistické materiály
-model.traverse((obj: any) => {
-  if (obj && obj.isMesh) {
-    obj.castShadow = true;
-    obj.receiveShadow = false;
-    if (obj.material) {
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      for (const m of mats) {
-        if (m && typeof m === "object") {
-          // @ts-ignore
-          if (m.envMapIntensity !== undefined) m.envMapIntensity = 1.0;
-        }
-      }
-    }
-  }
-});
-
-
         const maxDim = Math.max(size.x, size.y, size.z);
         const safeMaxDim = maxDim > 1e-6 ? maxDim : 1;
         baseScaleRef.current = TARGET_MODEL_MAX_DIM_AT_100 / safeMaxDim;
 
         model.scale.set(1, 1, 1);
-        
-root.add(model);
-
-        // Shadow catcher (iba tieň na transparentnej ploche)
-        const shadowMat = new THREE.ShadowMaterial({ opacity: shadowOpacity });
-        const plane = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), shadowMat);
-        plane.rotation.x = -Math.PI / 2;
-        plane.receiveShadow = true;
-        plane.position.set(0, 0, 0);
-        scene.add(plane);
-        shadowPlaneRef.current = plane;
-        shadowMatRef.current = shadowMat;
+        root.add(model);
 
         sceneRef.current = scene;
         cameraRef.current = camera;
@@ -1171,40 +807,6 @@ root.add(model);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode]);
 
-// ===== Live update osvetlenia (bez reloadu modelu) =====
-useEffect(() => {
-  const THREE = threeModuleRef.current;
-  const renderer = rendererRef.current;
-  const dir = dirLightRef.current;
-  const shadowMat = shadowMatRef.current;
-
-  if (THREE && renderer) {
-    renderer.toneMappingExposure = exposure;
-  }
-
-  if (dir) {
-    const SUN_PRESETS: [number, number, number][] = [
-      [-3.5, 6.5, 2.0],
-      [0.8, 6.8, 4.8],
-      [3.5, 6.5, 2.0],
-    ];
-    const sp = SUN_PRESETS[sunPreset] || SUN_PRESETS[1];
-    dir.position.set(sp[0], sp[1], sp[2]);
-    dir.intensity = sunIntensity;
-    // @ts-ignore
-    dir.shadow.radius = shadowSoftness;
-    dir.needsUpdate = true;
-  }
-
-  if (shadowMat) {
-    shadowMat.opacity = shadowOpacity;
-    shadowMat.needsUpdate = true;
-  }
-
-  draw();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [sunPreset, sunIntensity, shadowOpacity, shadowSoftness, exposure]);
-
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
 
@@ -1219,18 +821,9 @@ useEffect(() => {
 
     const worldX = (pos.x - 0.5) * 1.8;
     const worldY = (0.9 - pos.y) * 1.2;
-    
-root.position.set(worldX, worldY, 0);
+    root.position.set(worldX, worldY, 0);
 
-// zarovnanie shadow catcheru na "podlahu" modelu (minY)
-const plane = shadowPlaneRef.current;
-if (plane) {
-  const minY = modelMinYRef.current;
-  const planeY = root.position.y + minY * root.scale.y;
-  plane.position.y = planeY;
-}
-
-root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
+    root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
   function draw() {
@@ -1376,19 +969,6 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
-    // Mriežka: počas nastavovania zbierame 3 body kliknutím na zem
-    if (grid.enabled && grid.setupActive) {
-      e.preventDefault();
-      (e.currentTarget as any).setPointerCapture(e.pointerId);
-      setGrid((g) => {
-        const pts = [...g.points, { x: p.x, y: p.y }];
-        // po 3 bodoch ukončíme setup
-        const done = pts.length >= 3;
-        return { ...g, points: pts.slice(0, 3), setupActive: done ? false : true };
-      });
-      return;
-    }
-
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
 
@@ -1533,8 +1113,7 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
     } catch {}
   }
 
-  // ===== Generate (AI) =====
-  // AI upraví IBA pozadie. Pergola + tieň sa vyrenderujú v Three.js a zložia lokálne, takže geometria/poloha je vždy 100% presná.
+  // ===== Generate (real API) =====
   async function generate() {
     if (!bgImg) return;
     if (variants.length >= MAX_VARIANTS) return;
@@ -1542,56 +1121,22 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
     setLoading(true);
     setError("");
 
-    const loadImgFromBlob = async (blob: Blob) => {
-      const url = URL.createObjectURL(blob);
-      try {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        await new Promise<void>((res, rej) => {
-          img.onload = () => res();
-          img.onerror = () => rej(new Error("Nepodarilo sa načítať obraz."));
-          img.src = url;
-        });
-        return img;
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-    };
-
-    const b64ToImg = async (b64: string) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      await new Promise<void>((res, rej) => {
-        img.onload = () => res();
-        img.onerror = () => rej(new Error("Nepodarilo sa načítať AI výstup."));
-        img.src = `data:image/png;base64,${b64}`;
-      });
-      return img;
-    };
-
-    const canvasToB64Png = async (c: HTMLCanvasElement) => {
-      const blob: Blob = await new Promise((res, rej) =>
-        c.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/png")
-      );
-      const ab = await blob.arrayBuffer();
-      const bytes = new Uint8Array(ab);
-      let bin = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
-      }
-      return btoa(bin);
-    };
-
     try {
-      // ===== Cieľ: AI upraví iba POZADIE. Pergola + tieň sa skladajú lokálne z Three.js.
-      // 1) priprav downscale background pre AI (kvôli 413)
-      const MAX_DIM = 1280;
+      // downscale export
+      const MAX_DIM = 2048;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
+
       const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
       const outW = Math.max(1, Math.round(bgW * scale));
       const outH = Math.max(1, Math.round(bgH * scale));
+
+      const out = document.createElement("canvas");
+      out.width = outW;
+      out.height = outH;
+
+      const octx = out.getContext("2d")!;
+      octx.drawImage(bgImg, 0, 0, outW, outH);
 
       if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
         throw new Error("3D renderer nie je pripravený.");
@@ -1599,291 +1144,39 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
 
       const renderer = rendererRef.current;
       const scene = sceneRef.current;
-      const camera = cameraRef.current;
 
-      // pripravené pozadie (downscale)
-      const bgScaled = document.createElement("canvas");
-      bgScaled.width = outW;
-      bgScaled.height = outH;
-      const bgCtx = bgScaled.getContext("2d")!;
-      bgCtx.drawImage(bgImg, 0, 0, outW, outH);
-
-      const bgBlob: Blob = await new Promise((res, rej) =>
-        bgScaled.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.88)
-      );
-
-      // 2) Render pergoly (color pass) do RGBA
       applyTransformsForCurrentState(outW, outH);
       renderer.setSize(outW, outH, false);
-      // keep postprocess in sync
-      if (composerRef.current) composerRef.current.setSize(outW, outH);
-      if (fxaaPassRef.current) {
-        const u = (fxaaPassRef.current.material as any).uniforms;
-        if (u?.resolution?.value) u.resolution.value.set(1 / Math.max(1, outW), 1 / Math.max(1, outH));
-      }
-// pomocná shadow plane (shadow catcher) – vytvor raz
-      const ensureShadowPlane = () => {
-        // @ts-ignore
-        if ((scene as any).__shadowPlane) return (scene as any).__shadowPlane as any;
-        const THREE = threeModuleRef.current;
-        if (!THREE) return null;
-        const shadowMat = new THREE.ShadowMaterial({ opacity: 0.35 });
-        const plane = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), shadowMat);
-        plane.rotation.x = -Math.PI / 2;
-        plane.position.y = 0;
-        plane.receiveShadow = true;
-        plane.renderOrder = -1;
-        scene.add(plane);
-        // @ts-ignore
-        (scene as any).__shadowPlane = plane;
-        return plane;
-      };
+      renderer.render(scene, cameraRef.current);
 
-      const shadowPlane = ensureShadowPlane();
+      const glTemp = renderer.domElement;
+      octx.drawImage(glTemp, 0, 0);
 
-      // Render color pass: shadow plane skryť
-      if (shadowPlane) shadowPlane.visible = false;
-      // @ts-ignore
-      renderer.setClearColor?.(0x000000, 0);
-      // @ts-ignore
-      renderer.clear?.();
-      if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
-const pergolaCanvas = renderer.domElement;
-      const pergolaBlob: Blob = await new Promise((res, rej) =>
-        pergolaCanvas.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+      const blob: Blob = await new Promise((res, rej) =>
+        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
 
-      // 3) Render shadow pass (iba tieň)
-      let shadowBlob: Blob | null = null;
-      if (shadowPlane) {
-        shadowPlane.visible = true;
+      const form = new FormData();
+      form.append("image", blob, "collage.jpg");
+      form.append("prompt", prompt);
 
-        // dočasne skry pergolu z colorWrite, ale nechaj castShadow
-        const replaced: { mesh: any; mat: any }[] = [];
-        const THREE = threeModuleRef.current;
-        if (THREE) {
-          rootRef.current.traverse((obj: any) => {
-            if (obj && obj.isMesh && obj.material) {
-              replaced.push({ mesh: obj, mat: obj.material });
-              obj.material = new THREE.MeshBasicMaterial({ colorWrite: false });
-              obj.castShadow = true;
-            }
-          });
-        }
+      const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
-        // transparent background
-        // @ts-ignore
-        renderer.setClearColor?.(0x000000, 0);
-        // @ts-ignore
-        renderer.clear?.();
-        if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
-shadowBlob = await new Promise((res, rej) =>
-          renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať tieň"))), "image/png")
-        );
-
-        // restore materiály
-        for (const r of replaced) r.mesh.material = r.mat;
-        shadowPlane.visible = false;
-      }
-
-      const pergolaImg = await loadImgFromBlob(pergolaBlob);
-      const shadowImg = shadowBlob ? await loadImgFromBlob(shadowBlob) : null;
-
-      // 4) Vytvor 6 variantov vzhľadu pergoly (bez AI): mení sa iba materiál/expozícia/tieň.
-      const looks: readonly PergolaLook[] = PERGOLA_LOOKS.slice(0, MAX_VARIANTS);
-
-      const THREE = threeModuleRef.current;
-      if (!THREE) throw new Error("Three.js nie je pripravené.");
-
-      // uloz pôvodné materiálové parametre (aby sme po každom presete vedeli obnoviť)
-      type MatSnapshot = {
-        mat: any;
-        color?: any;
-        metalness?: number;
-        roughness?: number;
-        clearcoat?: number;
-        clearcoatRoughness?: number;
-      };
-      const snapshots: MatSnapshot[] = [];
-
-      const snapshotMat = (m: any) => {
-        if (!m) return;
-        const s: MatSnapshot = { mat: m };
-        if (m.color) s.color = m.color.clone();
-        if (typeof m.metalness === "number") s.metalness = m.metalness;
-        if (typeof m.roughness === "number") s.roughness = m.roughness;
-        if (typeof m.clearcoat === "number") s.clearcoat = m.clearcoat;
-        if (typeof m.clearcoatRoughness === "number") s.clearcoatRoughness = m.clearcoatRoughness;
-        snapshots.push(s);
-      };
-
-      snapshots.length = 0;
-      rootRef.current.traverse((obj: any) => {
-        if (!obj || !obj.isMesh || !obj.material) return;
-        if (Array.isArray(obj.material)) obj.material.forEach(snapshotMat);
-        else snapshotMat(obj.material);
+      const j = await r.json().catch(async () => {
+        const t = await r.text().catch(() => "");
+        return { error: t || `HTTP ${r.status}` };
       });
 
-      const restoreMats = () => {
-        for (const s of snapshots) {
-          const m = s.mat;
-          if (!m) continue;
-          if (s.color && m.color) m.color.copy(s.color);
-          if (typeof s.metalness === "number" && typeof m.metalness === "number") m.metalness = s.metalness;
-          if (typeof s.roughness === "number" && typeof m.roughness === "number") m.roughness = s.roughness;
-          if (typeof s.clearcoat === "number" && typeof m.clearcoat === "number") m.clearcoat = s.clearcoat;
-          if (typeof s.clearcoatRoughness === "number" && typeof m.clearcoatRoughness === "number") m.clearcoatRoughness = s.clearcoatRoughness;
-          m.needsUpdate = true;
-        }
-      };
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      if (!j?.b64) throw new Error("API nevrátilo b64.");
 
-      const applyLook = (look: PergolaLook) => {
-        const target = new THREE.Color(look.color);
-        rootRef.current.traverse((obj: any) => {
-          if (!obj || !obj.isMesh || !obj.material) return;
-          const applyTo = (m: any) => {
-            if (!m) return;
-            if (m.color) m.color.copy(target);
-            if (typeof m.metalness === "number") m.metalness = clamp(look.metalness, 0, 1);
-            if (typeof m.roughness === "number") m.roughness = clamp(look.roughness, 0.02, 1);
-            // ak GLB používa MeshPhysicalMaterial, necháme clearcoat len ak existuje
-                        m.needsUpdate = true;
-          };
-          if (Array.isArray(obj.material)) obj.material.forEach(applyTo);
-          else applyTo(obj.material);
-        });
-      };
+      setVariants((prev) => {
+        if (prev.length >= MAX_VARIANTS) return prev;
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        return next;
+      });
 
-      // shadow catcher opacity
-      const getShadowMat = () => {
-        if (!shadowPlane) return null;
-        const mat: any = shadowPlane.material;
-        return mat && typeof mat.opacity === "number" ? mat : null;
-      };
-      const shadowMat = getShadowMat();
-      const baseShadowOpacity = shadowMat ? shadowMat.opacity : 0.35;
-
-      const baseExposure = (renderer as any).toneMappingExposure ?? 1;
-
-      // pripravené pozadie (scaled) -> image
-      const bgScaledImg = await loadImgFromBlob(bgBlob);
-
-      for (let i = 0; i < looks.length; i++) {
-        if (variants.length + i >= MAX_VARIANTS) break;
-        const look = looks[i];
-
-        // aplikuj preset
-        restoreMats();
-
-        // apply PBR params + farba
-        const target = new THREE.Color(look.color);
-        rootRef.current.traverse((obj: any) => {
-          if (!obj || !obj.isMesh || !obj.material) return;
-          const applyTo = (m: any) => {
-            if (!m) return;
-            if (m.color) m.color.copy(target);
-            if (typeof m.metalness === "number") m.metalness = clamp(look.metalness, 0, 1);
-            if (typeof m.roughness === "number") m.roughness = clamp(look.roughness, 0.02, 1);
-            if (typeof m.clearcoat === "number" && (look as any).clearcoat != null) m.clearcoat = clamp((look as any).clearcoat, 0, 1);
-            if (typeof m.clearcoatRoughness === "number" && (look as any).clearcoatRoughness != null) m.clearcoatRoughness = clamp((look as any).clearcoatRoughness, 0, 1);
-            m.needsUpdate = true;
-          };
-          if (Array.isArray(obj.material)) obj.material.forEach(applyTo);
-          else applyTo(obj.material);
-        });
-
-        // expozícia (kombinácia globálneho slidera + presetu)
-        (renderer as any).toneMappingExposure = baseExposure * look.exposureMul;
-
-        // tieň (kombinácia globálneho slidera + presetu)
-        if (shadowMat) {
-          shadowMat.opacity = clamp(baseShadowOpacity * look.shadowMul, 0, 0.95);
-          shadowMat.needsUpdate = true;
-        }
-
-        // === render pergola pass ===
-        applyTransformsForCurrentState(outW, outH);
-        renderer.setSize(outW, outH, false);
-      // keep postprocess in sync
-      if (composerRef.current) composerRef.current.setSize(outW, outH);
-      if (fxaaPassRef.current) {
-        const u = (fxaaPassRef.current.material as any).uniforms;
-        if (u?.resolution?.value) u.resolution.value.set(1 / Math.max(1, outW), 1 / Math.max(1, outH));
-      }
-if (shadowPlane) shadowPlane.visible = false;
-        // @ts-ignore
-        renderer.setClearColor?.(0x000000, 0);
-        // @ts-ignore
-        renderer.clear?.();
-        if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
-const pergolaBlob2: Blob = await new Promise((res, rej) =>
-          renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
-        );
-
-        let shadowBlob2: Blob | null = null;
-        if (shadowPlane) {
-          shadowPlane.visible = true;
-          const replaced: { mesh: any; mat: any }[] = [];
-          rootRef.current.traverse((obj: any) => {
-            if (obj && obj.isMesh && obj.material) {
-              replaced.push({ mesh: obj, mat: obj.material });
-              obj.material = new THREE.MeshBasicMaterial({ colorWrite: false });
-              obj.castShadow = true;
-            }
-          });
-
-          // @ts-ignore
-          renderer.setClearColor?.(0x000000, 0);
-          // @ts-ignore
-          renderer.clear?.();
-          if (composerRef.current) composerRef.current.render(); else renderer.render(scene, camera);
-shadowBlob2 = await new Promise((res, rej) =>
-            renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať tieň"))), "image/png")
-          );
-
-          for (const r of replaced) r.mesh.material = r.mat;
-          shadowPlane.visible = false;
-        }
-
-        const pergolaImg2 = await loadImgFromBlob(pergolaBlob2);
-        const shadowImg2 = shadowBlob2 ? await loadImgFromBlob(shadowBlob2) : null;
-
-        // === kompozícia ===
-        const final = document.createElement("canvas");
-        final.width = outW;
-        final.height = outH;
-        const fctx = final.getContext("2d")!;
-
-        // pozadie sa nemení (scaled)
-        fctx.drawImage(bgScaledImg, 0, 0, outW, outH);
-
-        if (shadowImg2) {
-          fctx.save();
-          fctx.globalCompositeOperation = "multiply";
-          fctx.globalAlpha = 1;
-          fctx.drawImage(shadowImg2, 0, 0, outW, outH);
-          fctx.restore();
-        }
-
-        fctx.drawImage(pergolaImg2, 0, 0, outW, outH);
-
-        const finalB64 = await canvasToB64Png(final);
-
-        setVariants((prev) => {
-          if (prev.length >= MAX_VARIANTS) return prev;
-          return [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now(), label: look.name }];
-        });
-      }
-
-      // obnov pôvodné
-      restoreMats();
-      (renderer as any).toneMappingExposure = baseExposure;
-      if (shadowMat) {
-        shadowMat.opacity = baseShadowOpacity;
-        shadowMat.needsUpdate = true;
-      }
-
-      setSelectedVariantIndex(() => clamp(0, 0, MAX_VARIANTS - 1));
+      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (err: any) {
       console.error(err);
       setError(String(err?.message || err));
@@ -1912,37 +1205,6 @@ shadowBlob2 = await new Promise((res, rej) =>
     if (panel === "zoom") {
       return <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />;
     }
-
-if (panel === "sun") {
-  return (
-    <div style={{ display: "grid", gap: 10 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button type="button" onClick={() => setSunPreset(0)} style={{ ...chipStyle, background: sunPreset === 0 ? "rgba(0,0,0,0.06)" : "#fff" }}>
-          Slnko: ľavo
-        </button>
-        <button type="button" onClick={() => setSunPreset(1)} style={{ ...chipStyle, background: sunPreset === 1 ? "rgba(0,0,0,0.06)" : "#fff" }}>
-          Slnko: spredu
-        </button>
-        <button type="button" onClick={() => setSunPreset(2)} style={{ ...chipStyle, background: sunPreset === 2 ? "rgba(0,0,0,0.06)" : "#fff" }}>
-          Slnko: pravo
-        </button>
-      </div>
-
-      <CustomSlider min={0.6} max={8} step={0.1} value={Number(sunIntensity.toFixed(1))} onChange={(v) => setSunIntensity(v)} label="Sila slnka" suffix="" />
-      <CustomSlider min={0.7} max={1.6} step={0.01} value={Number(exposure.toFixed(2))} onChange={(v) => setExposure(v)} label="Expozícia" suffix="" />
-    </div>
-  );
-}
-
-if (panel === "shadow") {
-  return (
-    <div style={{ display: "grid", gap: 10 }}>
-      <CustomSlider min={0} max={0.85} step={0.01} value={Number(shadowOpacity.toFixed(2))} onChange={(v) => setShadowOpacity(v)} label="Sila tieňa" suffix="" />
-      <CustomSlider min={0} max={8} step={1} value={Math.round(shadowSoftness)} onChange={(v) => setShadowSoftness(Math.round(v))} label="Mäkkosť tieňa" suffix="" />
-    </div>
-  );
-}
-
     if (panel === "x") {
       return (
         <CustomSlider
@@ -1980,7 +1242,7 @@ if (panel === "shadow") {
         suffix="%"
       />
     );
-  }, [panel, editorZoom, scalePct, sunPreset, sunIntensity, shadowOpacity, shadowSoftness, exposure]);
+  }, [panel, editorZoom, scalePct]);
 
   const stepCurrent = useMemo(() => {
     const hasAnyVariant = variants.length > 0;
@@ -2291,79 +1553,6 @@ if (panel === "shadow") {
               <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Šírka
               </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setGrid((g) => {
-                    const nextEnabled = !g.enabled;
-                    return {
-                      ...g,
-                      enabled: nextEnabled,
-                      setupActive: nextEnabled ? true : false,
-                      points: nextEnabled ? [] : g.points,
-                    };
-                  })
-                }
-                style={{
-                  ...chipStyle,
-                  background: grid.enabled ? "rgba(0,0,0,0.06)" : "#fff",
-                  borderColor: grid.enabled ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.12)",
-                }}
-              >
-                Mriežka
-</button>
-              <button type="button" onClick={() => togglePanel("sun")} style={{ ...chipStyle, background: panelOpen && panel === "sun" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                Slnko
-              </button>
-              <button type="button" onClick={() => togglePanel("shadow")} style={{ ...chipStyle, background: panelOpen && panel === "shadow" ? "rgba(0,0,0,0.06)" : "#fff" }}>
-                Tieň
-              </button>
-
-
-
-            {grid.enabled ? (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <button
-                  type="button"
-                  onClick={() => setGrid((g) => ({ ...g, setupActive: true, points: [] }))}
-                  style={{
-                    ...btnStyle,
-                    padding: "8px 10px",
-                    borderRadius: 12,
-                    background: grid.setupActive ? "rgba(0,0,0,0.06)" : "#fff",
-                  }}
-                >
-                  {grid.setupActive ? "Klikni 3 body..." : "Nastaviť mriežku"}
-                </button>
-
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <label style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)" }}>
-                    Sila perspektívy
-                  </label>
-                  <input
-                    type="range"
-                    min={0.75}
-                    max={0.96}
-                    step={0.01}
-                    value={grid.falloff}
-                    onChange={(e) => setGrid((g) => ({ ...g, falloff: Number(e.target.value) }))}
-                    style={{ width: 160 }}
-                  />
-                  <label style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.6)" }}>
-                    Viditeľnosť
-                  </label>
-                  <input
-                    type="range"
-                    min={0.15}
-                    max={0.9}
-                    step={0.05}
-                    value={grid.opacity}
-                    onChange={(e) => setGrid((g) => ({ ...g, opacity: Number(e.target.value) }))}
-                    style={{ width: 120 }}
-                  />
-                </div>
-              </div>
-            ) : null}
             </div>
 
             {panelOpen ? (
@@ -2381,7 +1570,7 @@ if (panel === "shadow") {
 
             {/* Canvas */}
             <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, overflow: "hidden", padding: 10 }}>
-              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100), position: 'relative' }}>
+              <div style={{ width: Math.round((canvasW * editorZoom) / 100), height: Math.round((canvasH * editorZoom) / 100) }}>
                 <canvas
                   ref={canvasRef}
                   width={canvasW}
@@ -2397,21 +1586,6 @@ if (panel === "shadow") {
                     touchAction: "none",
                     background: "#fff",
                     borderRadius: 12,
-                  }}
-                />
-
-                {/* Overlay: pomocná mriežka (nechytá input) */}
-                <canvas
-                  ref={gridCanvasRef}
-                  width={canvasW}
-                  height={canvasH}
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    width: `${(canvasW * editorZoom) / 100}px`,
-                    height: `${(canvasH * editorZoom) / 100}px`,
-                    pointerEvents: 'none',
                   }}
                 />
               </div>
