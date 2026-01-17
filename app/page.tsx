@@ -25,35 +25,61 @@ Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and
 
 const MAX_VARIANTS = 6;
 
+const PERGOLA_LOOKS = [
+  {
+    name: "Matná čierna",
+    color: "#0b0b0c",
+    metalness: 0.08,
+    roughness: 0.78,
+    exposureMul: 1.0,
+    shadowMul: 1.05,
+  },
+  {
+    name: "Satén",
+    color: "#0b0b0c",
+    metalness: 0.18,
+    roughness: 0.55,
+    exposureMul: 1.0,
+    shadowMul: 1.0,
+  },
+  {
+    name: "Pololesk",
+    color: "#0b0b0c",
+    metalness: 0.28,
+    roughness: 0.35,
+    exposureMul: 1.0,
+    shadowMul: 0.95,
+  },
+  {
+    name: "Grafit",
+    color: "#151619",
+    metalness: 0.22,
+    roughness: 0.48,
+    exposureMul: 1.02,
+    shadowMul: 1.0,
+  },
+  {
+    name: "Antracit",
+    color: "#1d1f23",
+    metalness: 0.25,
+    roughness: 0.42,
+    exposureMul: 1.03,
+    shadowMul: 1.0,
+  },
+  {
+    name: "Lesk (demo)",
+    color: "#0b0b0c",
+    metalness: 0.35,
+    roughness: 0.22,
+    exposureMul: 1.05,
+    shadowMul: 0.92,
+  },
+] as const;
+
+type PergolaLook = (typeof PERGOLA_LOOKS)[number];
 
 
-// 6 variantov: AI upraví iba POZADIE (bez pergoly). Pergola + tieň sa skladajú lokálne z Three.js render passov.
-const BG_VARIANT_PROMPTS: { name: string; prompt: string }[] = [
-  {
-    name: 'Neutrál',
-    prompt: 'Photo retouch ONLY. Keep exact architecture and perspective. Do NOT add/remove any objects, structures, or furniture. Do NOT invent pergolas, canopies, roofs, beams, posts, glass walls. Do NOT warp geometry. Only adjust color grading, lighting balance, exposure, contrast, white balance, local shadows on ground, and add subtle realism (noise/sharpness) while keeping everything in the same positions.'
-  },
-  {
-    name: 'Teplejšie',
-    prompt: 'Photo retouch ONLY with slightly warmer tone. Keep exact architecture and perspective. Do NOT add/remove any objects or structures (no pergolas/canopies/roofs/beams/posts/glass). Only adjust warmth, exposure, contrast, and subtle shadow realism. No new objects.'
-  },
-  {
-    name: 'Chladnejšie',
-    prompt: 'Photo retouch ONLY with slightly cooler tone. Keep exact architecture and perspective. Do NOT add/remove any objects or structures (no pergolas/canopies/roofs/beams/posts/glass). Only adjust coolness, exposure, contrast, and subtle shadow realism. No new objects.'
-  },
-  {
-    name: 'Vyšší kontrast',
-    prompt: 'Photo retouch ONLY with slightly higher micro-contrast and clarity. Keep exact architecture and perspective. Do NOT add/remove any objects or structures. No pergolas/canopies/roofs/beams/posts/glass. Only enhance clarity, contrast, and natural lighting balance.'
-  },
-  {
-    name: 'Mäkšie svetlo',
-    prompt: 'Photo retouch ONLY with softer lighting and gentler highlights. Keep exact architecture and perspective. Do NOT add/remove any objects or structures. No pergolas/canopies/roofs/beams/posts/glass. Only soften harsh highlights, balance shadows, and keep scene unchanged.'
-  },
-  {
-    name: 'Krištáľové',
-    prompt: 'Photo retouch ONLY with clean, crisp look (slightly sharper, natural). Keep exact architecture and perspective. Do NOT add/remove any objects or structures. No pergolas/canopies/roofs/beams/posts/glass. Only improve sharpness, noise consistency, and subtle color grading.'
-  },
-];
+
 // ===== Pomocná mriežka (pre presnejšie umiestnenie) =====
 // Používateľ klikne 3 body na zemi:
 // 1) O = origin na zemi
@@ -466,6 +492,7 @@ type VariantItem = {
   type: PergolaType;
   b64: string; // PNG
   createdAt: number;
+  label?: string;
 };
 
 export default function Page() {
@@ -930,6 +957,7 @@ export default function Page() {
         renderer.setPixelRatio(1);
 
 // Realizmus renderu
+renderer.physicallyCorrectLights = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = exposure;
@@ -1599,50 +1627,195 @@ root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
       const pergolaImg = await loadImgFromBlob(pergolaBlob);
       const shadowImg = shadowBlob ? await loadImgFromBlob(shadowBlob) : null;
 
-      // 4) Vytvor 6 variantov: AI retouchne iba background
-      const prompts = BG_VARIANT_PROMPTS.slice(0, MAX_VARIANTS);
+      // 4) Vytvor 6 variantov vzhľadu pergoly (bez AI): mení sa iba materiál/expozícia/tieň.
+      const looks: readonly PergolaLook[] = PERGOLA_LOOKS.slice(0, MAX_VARIANTS);
 
-      for (let i = 0; i < prompts.length; i++) {
-        if (variants.length + i >= MAX_VARIANTS) break;
+      const THREE = threeModuleRef.current;
+      if (!THREE) throw new Error("Three.js nie je pripravené.");
 
-        const form = new FormData();
-        form.append("image", bgBlob, "bg.jpg");
-        form.append("prompt", prompts[i].prompt);
+      // uloz pôvodné materiálové parametre (aby sme po každom presete vedeli obnoviť)
+      type MatSnapshot = {
+        mat: any;
+        color?: any;
+        metalness?: number;
+        roughness?: number;
+        clearcoat?: number;
+        clearcoatRoughness?: number;
+      };
+      const snapshots: MatSnapshot[] = [];
 
-        const r = await fetch("/api/render/openai", { method: "POST", body: form });
-        const j = await r.json().catch(async () => {
-          const t = await r.text().catch(() => "");
-          return { error: t || `HTTP ${r.status}` };
+      const snapshotMat = (m: any) => {
+        if (!m) return;
+        const s: MatSnapshot = { mat: m };
+        if (m.color) s.color = m.color.clone();
+        if (typeof m.metalness === "number") s.metalness = m.metalness;
+        if (typeof m.roughness === "number") s.roughness = m.roughness;
+        if (typeof m.clearcoat === "number") s.clearcoat = m.clearcoat;
+        if (typeof m.clearcoatRoughness === "number") s.clearcoatRoughness = m.clearcoatRoughness;
+        snapshots.push(s);
+      };
+
+      snapshots.length = 0;
+      rootRef.current.traverse((obj: any) => {
+        if (!obj || !obj.isMesh || !obj.material) return;
+        if (Array.isArray(obj.material)) obj.material.forEach(snapshotMat);
+        else snapshotMat(obj.material);
+      });
+
+      const restoreMats = () => {
+        for (const s of snapshots) {
+          const m = s.mat;
+          if (!m) continue;
+          if (s.color && m.color) m.color.copy(s.color);
+          if (typeof s.metalness === "number" && typeof m.metalness === "number") m.metalness = s.metalness;
+          if (typeof s.roughness === "number" && typeof m.roughness === "number") m.roughness = s.roughness;
+          if (typeof s.clearcoat === "number" && typeof m.clearcoat === "number") m.clearcoat = s.clearcoat;
+          if (typeof s.clearcoatRoughness === "number" && typeof m.clearcoatRoughness === "number") m.clearcoatRoughness = s.clearcoatRoughness;
+          m.needsUpdate = true;
+        }
+      };
+
+      const applyLook = (look: PergolaLook) => {
+        const target = new THREE.Color(look.color);
+        rootRef.current.traverse((obj: any) => {
+          if (!obj || !obj.isMesh || !obj.material) return;
+          const applyTo = (m: any) => {
+            if (!m) return;
+            if (m.color) m.color.copy(target);
+            if (typeof m.metalness === "number") m.metalness = clamp(look.metalness, 0, 1);
+            if (typeof m.roughness === "number") m.roughness = clamp(look.roughness, 0.02, 1);
+            // ak GLB používa MeshPhysicalMaterial, necháme clearcoat len ak existuje
+                        m.needsUpdate = true;
+          };
+          if (Array.isArray(obj.material)) obj.material.forEach(applyTo);
+          else applyTo(obj.material);
         });
-        if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-        if (!j?.b64) throw new Error("API nevrátilo b64.");
+      };
 
-        const aiBg = await b64ToImg(j.b64);
+      // shadow catcher opacity
+      const getShadowMat = () => {
+        if (!shadowPlane) return null;
+        const mat: any = shadowPlane.material;
+        return mat && typeof mat.opacity === "number" ? mat : null;
+      };
+      const shadowMat = getShadowMat();
+      const baseShadowOpacity = shadowMat ? shadowMat.opacity : 0.35;
 
-        // 5) Kompozícia: AI background + tieň (multiply) + pergola
+      const baseExposure = (renderer as any).toneMappingExposure ?? 1;
+
+      // pripravené pozadie (scaled) -> image
+      const bgScaledImg = await loadImgFromBlob(bgBlob);
+
+      for (let i = 0; i < looks.length; i++) {
+        if (variants.length + i >= MAX_VARIANTS) break;
+        const look = looks[i];
+
+        // aplikuj preset
+        restoreMats();
+
+        // apply PBR params + farba
+        const target = new THREE.Color(look.color);
+        rootRef.current.traverse((obj: any) => {
+          if (!obj || !obj.isMesh || !obj.material) return;
+          const applyTo = (m: any) => {
+            if (!m) return;
+            if (m.color) m.color.copy(target);
+            if (typeof m.metalness === "number") m.metalness = clamp(look.metalness, 0, 1);
+            if (typeof m.roughness === "number") m.roughness = clamp(look.roughness, 0.02, 1);
+            if (typeof m.clearcoat === "number" && (look as any).clearcoat != null) m.clearcoat = clamp((look as any).clearcoat, 0, 1);
+            if (typeof m.clearcoatRoughness === "number" && (look as any).clearcoatRoughness != null) m.clearcoatRoughness = clamp((look as any).clearcoatRoughness, 0, 1);
+            m.needsUpdate = true;
+          };
+          if (Array.isArray(obj.material)) obj.material.forEach(applyTo);
+          else applyTo(obj.material);
+        });
+
+        // expozícia (kombinácia globálneho slidera + presetu)
+        (renderer as any).toneMappingExposure = baseExposure * look.exposureMul;
+
+        // tieň (kombinácia globálneho slidera + presetu)
+        if (shadowMat) {
+          shadowMat.opacity = clamp(baseShadowOpacity * look.shadowMul, 0, 0.95);
+          shadowMat.needsUpdate = true;
+        }
+
+        // === render pergola pass ===
+        applyTransformsForCurrentState(outW, outH);
+        renderer.setSize(outW, outH, false);
+
+        if (shadowPlane) shadowPlane.visible = false;
+        // @ts-ignore
+        renderer.setClearColor?.(0x000000, 0);
+        // @ts-ignore
+        renderer.clear?.();
+        renderer.render(scene, camera);
+
+        const pergolaBlob2: Blob = await new Promise((res, rej) =>
+          renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať pergolu"))), "image/png")
+        );
+
+        let shadowBlob2: Blob | null = null;
+        if (shadowPlane) {
+          shadowPlane.visible = true;
+          const replaced: { mesh: any; mat: any }[] = [];
+          rootRef.current.traverse((obj: any) => {
+            if (obj && obj.isMesh && obj.material) {
+              replaced.push({ mesh: obj, mat: obj.material });
+              obj.material = new THREE.MeshBasicMaterial({ colorWrite: false });
+              obj.castShadow = true;
+            }
+          });
+
+          // @ts-ignore
+          renderer.setClearColor?.(0x000000, 0);
+          // @ts-ignore
+          renderer.clear?.();
+          renderer.render(scene, camera);
+
+          shadowBlob2 = await new Promise((res, rej) =>
+            renderer.domElement.toBlob((b: Blob | null) => (b ? res(b) : rej(new Error("Nepodarilo sa exportovať tieň"))), "image/png")
+          );
+
+          for (const r of replaced) r.mesh.material = r.mat;
+          shadowPlane.visible = false;
+        }
+
+        const pergolaImg2 = await loadImgFromBlob(pergolaBlob2);
+        const shadowImg2 = shadowBlob2 ? await loadImgFromBlob(shadowBlob2) : null;
+
+        // === kompozícia ===
         const final = document.createElement("canvas");
         final.width = outW;
         final.height = outH;
         const fctx = final.getContext("2d")!;
 
-        fctx.drawImage(aiBg, 0, 0, outW, outH);
+        // pozadie sa nemení (scaled)
+        fctx.drawImage(bgScaledImg, 0, 0, outW, outH);
 
-        if (shadowImg) {
+        if (shadowImg2) {
           fctx.save();
           fctx.globalCompositeOperation = "multiply";
           fctx.globalAlpha = 1;
-          fctx.drawImage(shadowImg, 0, 0, outW, outH);
+          fctx.drawImage(shadowImg2, 0, 0, outW, outH);
           fctx.restore();
         }
 
-        fctx.drawImage(pergolaImg, 0, 0, outW, outH);
+        fctx.drawImage(pergolaImg2, 0, 0, outW, outH);
 
         const finalB64 = await canvasToB64Png(final);
 
         setVariants((prev) => {
           if (prev.length >= MAX_VARIANTS) return prev;
-          return [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
+          return [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now(), label: look.name }];
         });
+      }
+
+      // obnov pôvodné
+      restoreMats();
+      (renderer as any).toneMappingExposure = baseExposure;
+      if (shadowMat) {
+        shadowMat.opacity = baseShadowOpacity;
+        shadowMat.needsUpdate = true;
       }
 
       setSelectedVariantIndex(() => clamp(0, 0, MAX_VARIANTS - 1));
