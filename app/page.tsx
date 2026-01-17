@@ -930,7 +930,6 @@ export default function Page() {
         renderer.setPixelRatio(1);
 
 // Realizmus renderu
-renderer.physicallyCorrectLights = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = exposure;
