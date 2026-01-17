@@ -523,7 +523,7 @@ export default function Page() {
 
   // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
-  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
+  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z" | "sun" | "shadow">("zoom");
   const [panelOpen, setPanelOpen] = useState(false);
 
   const [editorZoom, setEditorZoom] = useState(100);
@@ -542,6 +542,15 @@ export default function Page() {
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
+
+  // ===== Lighting (realizmus) =====
+  // 3 presety smeru slnka (ľavo / spredu / pravo)
+  const [sunPreset, setSunPreset] = useState<0 | 1 | 2>(1);
+  const [sunIntensity, setSunIntensity] = useState(3.2);
+  const [shadowOpacity, setShadowOpacity] = useState(0.35);
+  const [shadowSoftness, setShadowSoftness] = useState(3);
+  const [exposure, setExposure] = useState(1.05);
+
 
   // mobile defaults
   useEffect(() => {
@@ -563,6 +572,10 @@ export default function Page() {
   const sceneRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
+  const dirLightRef = useRef<any>(null);
+  const shadowPlaneRef = useRef<any>(null);
+  const shadowMatRef = useRef<any>(null);
+  const modelMinYRef = useRef<number>(0);
   const baseScaleRef = useRef<number>(1);
   const threeModuleRef = useRef<any>(null);
 
@@ -897,6 +910,7 @@ export default function Page() {
         const THREE = await import("three");
         threeModuleRef.current = THREE;
         const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+        const { RGBELoader } = await import("three/examples/jsm/loaders/RGBELoader.js");
 
         if (cancelled) return;
 
@@ -915,12 +929,78 @@ export default function Page() {
         renderer.setSize(canvasW, canvasH, false);
         renderer.setPixelRatio(1);
 
-        const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.95);
-        scene.add(hemi);
+// Realizmus renderu
+renderer.physicallyCorrectLights = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = exposure;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        const dir = new THREE.DirectionalLight(0xffffff, 1.15);
-        dir.position.set(1, 2, 1.2);
-        scene.add(dir);
+        
+const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.55);
+scene.add(hemi);
+
+// Slnko + tiene (3 presety polohy)
+const SUN_PRESETS: [number, number, number][] = [
+  [-3.5, 6.5, 2.0], // ľavo
+  [0.8, 6.8, 4.8],  // spredu
+  [3.5, 6.5, 2.0],  // pravo
+];
+const sp = SUN_PRESETS[sunPreset] || SUN_PRESETS[1];
+
+const dir = new THREE.DirectionalLight(0xffffff, sunIntensity);
+dir.position.set(sp[0], sp[1], sp[2]);
+dir.castShadow = true;
+
+// kvalita tieňov
+dir.shadow.mapSize.set(2048, 2048);
+dir.shadow.bias = -0.00035;
+dir.shadow.normalBias = 0.02;
+
+// rozsah shadow kamery (d = "box" okolo scény)
+const d = 8;
+dir.shadow.camera.left = -d;
+dir.shadow.camera.right = d;
+dir.shadow.camera.top = d;
+dir.shadow.camera.bottom = -d;
+dir.shadow.camera.near = 0.1;
+dir.shadow.camera.far = 60;
+
+// jemné zmäkčenie (PCFSoft) – UI slider
+// @ts-ignore
+dir.shadow.radius = shadowSoftness;
+
+scene.add(dir);
+dirLightRef.current = dir;
+
+// HDRI environment (odrazy na materiáloch) – ak chýba súbor, iba preskočíme
+try {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  new RGBELoader().load(
+    "/hdri/studio_small_09_1k.hdr",
+    (hdrTex: any) => {
+      const env = pmrem.fromEquirectangular(hdrTex).texture;
+      scene.environment = env;
+      try {
+        hdrTex.dispose?.();
+      } catch {}
+      try {
+        pmrem.dispose();
+      } catch {}
+      draw();
+    },
+    undefined,
+    () => {
+      try {
+        pmrem.dispose();
+      } catch {}
+    }
+  );
+} catch (e) {
+  // ignore
+}
+
 
         const loader = new GLTFLoader();
         const gltf = await loader.loadAsync(glbPath);
@@ -942,12 +1022,44 @@ export default function Page() {
         const center = bbox.getCenter(new THREE.Vector3());
         model.position.sub(center);
 
+// uložíme "podlahu" modelu (minY po centrovaní) – na shadow catcher
+modelMinYRef.current = bbox.min.y - center.y;
+
+// tiene a realistické materiály
+model.traverse((obj: any) => {
+  if (obj && obj.isMesh) {
+    obj.castShadow = true;
+    obj.receiveShadow = false;
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) {
+        if (m && typeof m === "object") {
+          // @ts-ignore
+          if (m.envMapIntensity !== undefined) m.envMapIntensity = 1.0;
+        }
+      }
+    }
+  }
+});
+
+
         const maxDim = Math.max(size.x, size.y, size.z);
         const safeMaxDim = maxDim > 1e-6 ? maxDim : 1;
         baseScaleRef.current = TARGET_MODEL_MAX_DIM_AT_100 / safeMaxDim;
 
         model.scale.set(1, 1, 1);
-        root.add(model);
+        
+root.add(model);
+
+        // Shadow catcher (iba tieň na transparentnej ploche)
+        const shadowMat = new THREE.ShadowMaterial({ opacity: shadowOpacity });
+        const plane = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), shadowMat);
+        plane.rotation.x = -Math.PI / 2;
+        plane.receiveShadow = true;
+        plane.position.set(0, 0, 0);
+        scene.add(plane);
+        shadowPlaneRef.current = plane;
+        shadowMatRef.current = shadowMat;
 
         sceneRef.current = scene;
         cameraRef.current = camera;
@@ -974,6 +1086,40 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode]);
 
+// ===== Live update osvetlenia (bez reloadu modelu) =====
+useEffect(() => {
+  const THREE = threeModuleRef.current;
+  const renderer = rendererRef.current;
+  const dir = dirLightRef.current;
+  const shadowMat = shadowMatRef.current;
+
+  if (THREE && renderer) {
+    renderer.toneMappingExposure = exposure;
+  }
+
+  if (dir) {
+    const SUN_PRESETS: [number, number, number][] = [
+      [-3.5, 6.5, 2.0],
+      [0.8, 6.8, 4.8],
+      [3.5, 6.5, 2.0],
+    ];
+    const sp = SUN_PRESETS[sunPreset] || SUN_PRESETS[1];
+    dir.position.set(sp[0], sp[1], sp[2]);
+    dir.intensity = sunIntensity;
+    // @ts-ignore
+    dir.shadow.radius = shadowSoftness;
+    dir.needsUpdate = true;
+  }
+
+  if (shadowMat) {
+    shadowMat.opacity = shadowOpacity;
+    shadowMat.needsUpdate = true;
+  }
+
+  draw();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [sunPreset, sunIntensity, shadowOpacity, shadowSoftness, exposure]);
+
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
 
@@ -988,9 +1134,18 @@ export default function Page() {
 
     const worldX = (pos.x - 0.5) * 1.8;
     const worldY = (0.9 - pos.y) * 1.2;
-    root.position.set(worldX, worldY, 0);
+    
+root.position.set(worldX, worldY, 0);
 
-    root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
+// zarovnanie shadow catcheru na "podlahu" modelu (minY)
+const plane = shadowPlaneRef.current;
+if (plane) {
+  const minY = modelMinYRef.current;
+  const planeY = root.position.y + minY * root.scale.y;
+  plane.position.y = planeY;
+}
+
+root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
   function draw() {
@@ -1520,6 +1675,37 @@ export default function Page() {
     if (panel === "zoom") {
       return <CustomSlider min={50} max={160} step={5} value={editorZoom} onChange={(v) => setEditorZoom(Math.round(v))} label="Zoom" suffix="%" />;
     }
+
+if (panel === "sun") {
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" onClick={() => setSunPreset(0)} style={{ ...chipStyle, background: sunPreset === 0 ? "rgba(0,0,0,0.06)" : "#fff" }}>
+          Slnko: ľavo
+        </button>
+        <button type="button" onClick={() => setSunPreset(1)} style={{ ...chipStyle, background: sunPreset === 1 ? "rgba(0,0,0,0.06)" : "#fff" }}>
+          Slnko: spredu
+        </button>
+        <button type="button" onClick={() => setSunPreset(2)} style={{ ...chipStyle, background: sunPreset === 2 ? "rgba(0,0,0,0.06)" : "#fff" }}>
+          Slnko: pravo
+        </button>
+      </div>
+
+      <CustomSlider min={0.6} max={8} step={0.1} value={Number(sunIntensity.toFixed(1))} onChange={(v) => setSunIntensity(v)} label="Sila slnka" suffix="" />
+      <CustomSlider min={0.7} max={1.6} step={0.01} value={Number(exposure.toFixed(2))} onChange={(v) => setExposure(v)} label="Expozícia" suffix="" />
+    </div>
+  );
+}
+
+if (panel === "shadow") {
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <CustomSlider min={0} max={0.85} step={0.01} value={Number(shadowOpacity.toFixed(2))} onChange={(v) => setShadowOpacity(v)} label="Sila tieňa" suffix="" />
+      <CustomSlider min={0} max={8} step={1} value={Math.round(shadowSoftness)} onChange={(v) => setShadowSoftness(Math.round(v))} label="Mäkkosť tieňa" suffix="" />
+    </div>
+  );
+}
+
     if (panel === "x") {
       return (
         <CustomSlider
@@ -1557,7 +1743,7 @@ export default function Page() {
         suffix="%"
       />
     );
-  }, [panel, editorZoom, scalePct]);
+  }, [panel, editorZoom, scalePct, sunPreset, sunIntensity, shadowOpacity, shadowSoftness, exposure]);
 
   const stepCurrent = useMemo(() => {
     const hasAnyVariant = variants.length > 0;
@@ -1888,6 +2074,12 @@ export default function Page() {
                 }}
               >
                 Mriežka
+</button>
+              <button type="button" onClick={() => togglePanel("sun")} style={{ ...chipStyle, background: panelOpen && panel === "sun" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                Slnko
+              </button>
+              <button type="button" onClick={() => togglePanel("shadow")} style={{ ...chipStyle, background: panelOpen && panel === "shadow" ? "rgba(0,0,0,0.06)" : "#fff" }}>
+                Tieň
               </button>
 
 
