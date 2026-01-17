@@ -550,7 +550,7 @@ export default function Page() {
 
   // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
-  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z" | "sun" | "shadow">("zoom");
+  const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z" | "sun" | "shadow" | "grid">("zoom");
   const [panelOpen, setPanelOpen] = useState(false);
 
   const [editorZoom, setEditorZoom] = useState(100);
