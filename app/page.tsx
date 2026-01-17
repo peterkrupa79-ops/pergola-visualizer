@@ -957,7 +957,11 @@ export default function Page() {
         renderer.setPixelRatio(1);
 
 // Realizmus renderu
-renderer.physicallyCorrectLights = true;
+// Realizmus renderu (Three.js verzie sa líšia – TS typy nemusia mať physicallyCorrectLights)
+// Preferuj moderné správanie svetiel:
+(renderer as any).useLegacyLights = false;
+// A ak je dostupné, zapni fyzikálne korektné svetlá:
+(renderer as any).physicallyCorrectLights = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = exposure;
