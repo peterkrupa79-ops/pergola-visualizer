@@ -917,14 +917,11 @@ export default function Page() {
 
     // kolmica na wallDir (smer "hĺbky" v obraze)
     const n = vnorm({ x: -wallDir.y, y: wallDir.x });
-
     const depthPx = Math.abs(vdot(vsub(frontMid, wallMid), n));
 
     const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
     const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
     const hAvg = (hL + hR) * 0.5;
-
-    const posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
 
     // yaw z uhla línie (screen-space heuristika)
     const angle = Math.atan2(wallVec.y, wallVec.x);
@@ -936,9 +933,38 @@ export default function Page() {
     // roll podľa rozdielu viditeľnej výšky v rohoch
     const roll = clamp(((hR - hL) / canvasH) * 1.4, -0.55, 0.55);
 
-    const sx = clampPct((wallLen / canvasW) * 220);
-    const sz = clampPct((depthPx / canvasH) * 260);
-    const sy = clampPct((hAvg / canvasH) * 260);
+    // ---- SCALE: kalibruj podľa aktuálne vyrátaného bbox v pixeloch ----
+    // keď máme bboxRect, použijeme pomer "chcem mať X px" / "aktuálne mám X px".
+    // keď bboxRect nie je dostupný, spadneme na jednoduchú heuristiku.
+    let sx: number;
+    let sy: number;
+    let sz: number;
+
+    if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
+      sx = clampPct(scalePct.x * (wallLen / bboxRect.w));
+      sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
+      // hĺbka je v 2D len približná; viažeme ju na šírku bbox-u (aby to nepadalo na 20%)
+      const base = Math.max(1, bboxRect.w);
+      sz = clampPct(scalePct.z * (depthPx / base) * 1.15);
+    } else {
+      sx = clampPct((wallLen / canvasW) * 220);
+      sy = clampPct((hAvg / canvasH) * 260);
+      sz = clampPct((depthPx / canvasH) * 260);
+    }
+
+    // ---- POSITION: najprv podľa wallMid, potom jedným krokom dorovnaj podľa bbox-u ----
+    let posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
+
+    if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
+      // chceme, aby spodný stred bbox-u sedel na wallMid
+      const bboxBottomMid = { x: bboxRect.x + bboxRect.w * 0.5, y: bboxRect.y + bboxRect.h };
+      const dx = wallMid.x - bboxBottomMid.x;
+      const dy = wallMid.y - bboxBottomMid.y;
+      posN = {
+        x: clamp(posN.x + dx / canvasW, 0.02, 0.98),
+        y: clamp(posN.y + dy / canvasH, 0.02, 0.98),
+      };
+    }
 
     return { posN, yaw, pitch, roll, scale: { x: sx, y: sy, z: sz } };
   }
