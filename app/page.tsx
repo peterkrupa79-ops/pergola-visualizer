@@ -1127,12 +1127,34 @@ export default function Page() {
   function applyCameraCalibToThree(cal: CamCalib) {
     const cam = cameraRef.current;
     if (!cam) return;
+
+    // Keep the model in view by orbiting the camera around a fixed target
+    // instead of overwriting camera.rotation (which can easily point away).
+    const target = new THREE.Vector3(0, 0.35, 0);
+
     cam.fov = cal.fov;
-    cam.rotation.order = "YXZ";
-    cam.rotation.y = cal.yaw;
-    cam.rotation.x = cal.pitch;
-    cam.rotation.z = cal.roll;
     cam.updateProjectionMatrix();
+
+    // Convert current camera position to spherical coordinates around target
+    const offset = cam.position.clone().sub(target);
+    const sph = new THREE.Spherical();
+    sph.setFromVector3(offset);
+
+    // Apply yaw (theta) and pitch (phi) as small offsets
+    sph.theta += cal.yaw;
+    sph.phi += cal.pitch;
+
+    // Clamp pitch to avoid flipping
+    const EPS = 0.12;
+    sph.phi = Math.max(EPS, Math.min(Math.PI - EPS, sph.phi));
+
+    // Set new position and aim at target
+    const newPos = new THREE.Vector3().setFromSpherical(sph).add(target);
+    cam.position.copy(newPos);
+    cam.lookAt(target);
+
+    // Apply roll around the view axis
+    cam.rotateZ(cal.roll);
   }
 
   function makeGhostClone(src: THREE.Object3D) {
@@ -1179,9 +1201,12 @@ export default function Page() {
 
   function hideGhost() {
     const scene = sceneRef.current;
-    const root = rootRef.current;
-    if (root) root.visible = true;
-    if (!scene || !ghostRef.current) return;
+    if (!scene) return;
+
+    // restore real model visibility
+    if (rootRef.current) rootRef.current.visible = true;
+
+    if (!ghostRef.current) return;
     scene.remove(ghostRef.current);
   }
 
