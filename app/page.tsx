@@ -1267,7 +1267,23 @@ export default function Page() {
 
           octx.save();
           octx.globalAlpha = 0.22;
-          octx.fillStyle = 
+          octx.fillStyle = "rgba(0,0,0,0.9)";
+          octx.strokeStyle = "rgba(255,255,255,0.35)";
+          octx.lineWidth = 2;
+          for (const pt of pts) {
+            octx.beginPath();
+            octx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+            octx.fill();
+            octx.stroke();
+          }
+          octx.restore();
+
+          // IMPORTANT: anchors are export-only (not shown in UI). They help the model keep the exact leg count/positions.
+
+        }
+      } catch {
+        // if readPixels is not allowed, just skip anchors
+      }
       const blob: Blob = await new Promise((res, rej) =>
         out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
