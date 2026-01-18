@@ -1108,11 +1108,9 @@ export default function Page() {
   }
 
   function yawPitchFromVPz(vpZ: Vec2, C: Vec2, w: number, h: number) {
-    const dx = (vpZ.x - C.x) / w;
-    const dy = (vpZ.y - C.y) / h;
-    const yaw = -dx * 1.8;
-    const pitch = dy * 1.2;
-    return { yaw, pitch };
+    // v8: keep camera orientation stable. We only use VP to estimate FOV.
+    // Deriving yaw/pitch from noisy lines can easily flip the camera and hide the model.
+    return { yaw: 0, pitch: 0 };
   }
 
   function solveCameraCalib(s: Calib2AState, w: number, h: number): CamCalib | null {
@@ -1152,8 +1150,8 @@ export default function Page() {
     // Absolute yaw/pitch relative to the base (no compounding drift)
     const sph = new THREE.Spherical();
     sph.radius = base.radius;
-    sph.theta = base.theta + cal.yaw;
-    sph.phi = base.phi + cal.pitch;
+    sph.theta = base.theta;// v8: yaw disabled (stability)
+    sph.phi = base.phi;// v8: pitch disabled (stability)
 
     // Clamp pitch to avoid flipping
     const EPS = 0.12;
