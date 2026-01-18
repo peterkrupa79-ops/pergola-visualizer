@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
@@ -861,7 +862,6 @@ export default function Page() {
 
     async function initThree() {
       try {
-        const THREE = await import("three");
         const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
 
         if (cancelled) return;
