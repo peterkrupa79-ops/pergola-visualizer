@@ -1236,53 +1236,13 @@ export default function Page() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
-      // --- Stabilizácia geometrie: odstráň AI-pergolu a prekry originálny render pergoly ---
-      const pergolaCanvas = document.createElement("canvas");
-      pergolaCanvas.width = outW;
-      pergolaCanvas.height = outH;
-      const pctx = pergolaCanvas.getContext("2d")!;
-      pctx.drawImage(glTemp, 0, 0);
-
-      const bgCanvas = document.createElement("canvas");
-      bgCanvas.width = outW;
-      bgCanvas.height = outH;
-      const bgCtx = bgCanvas.getContext("2d")!;
-      bgCtx.drawImage(bgImg, 0, 0, outW, outH);
-
-      const aiImg = new Image();
-      aiImg.src = `data:image/png;base64,${j.b64}`;
-      await aiImg.decode();
-
-      const finalCanvas = document.createElement("canvas");
-      finalCanvas.width = outW;
-      finalCanvas.height = outH;
-      const fctx = finalCanvas.getContext("2d")!;
-
-      // 1) AI výstup (obsahuje aj pergolu)
-      fctx.drawImage(aiImg, 0, 0);
-
-      // 2) Vyrež oblasť pergoly z AI výstupu podľa alpha masky (aby nevznikli 2 pergoly)
-      fctx.globalCompositeOperation = "destination-out";
-      fctx.drawImage(pergolaCanvas, 0, 0);
-
-      // 3) Vyplň dieru pôvodným pozadím
-      fctx.globalCompositeOperation = "destination-over";
-      fctx.drawImage(bgCanvas, 0, 0);
-
-      // 4) Vráť režim a nakresli originálnu pergolu navrch
-      fctx.globalCompositeOperation = "source-over";
-      fctx.drawImage(pergolaCanvas, 0, 0);
-
-      const finalB64 = finalCanvas.toDataURL("image/png").split(",")[1];
-
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
         return next;
       });
 
       setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
-
     } catch (err: any) {
       console.error(err);
       setError(String(err?.message || err));
