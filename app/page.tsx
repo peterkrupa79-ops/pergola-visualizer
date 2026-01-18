@@ -18,10 +18,11 @@ const SCALE_MAX = 200;
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
-const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
-Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
+const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Preserve the exact original geometry, perspective and camera viewpoint.
+CRITICAL: Keep ALL pergola legs visible (all 4 legs). Do NOT remove, hide, thin, merge, or simplify any legs.
+CRITICAL: Do NOT move, resize, warp, or change proportions of the pergola. Do NOT change frame thickness or leg positions.
 Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
-Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
+Preserve the background as much as possible; edit only lighting/shadows/color/noise/sharpness around the pergola so it looks photo-realistic in the scene.`;
 
 const MAX_VARIANTS = 6;
 
@@ -833,14 +834,14 @@ export default function Page() {
 
     // --- Camera matching (photo perspective) ---
     // depthPct -> FOV range (tele -> wide)
-    const fov = lerp(30, 75, clamp(perspective.depthPct / 100, 0, 1));
+    const fov = lerp(35, 65, clamp(perspective.depthPct / 100, 0, 1));
     camera.fov = fov;
 
     camera.aspect = width / height;
 
     // horizonPct -> approximate camera height + look target
-    const hPct = clamp(perspective.horizonPct, 10, 90);
-    const t = (hPct - 10) / 80; // 0..1
+    const hPct = clamp(perspective.horizonPct, 25, 80);
+    const t = (hPct - 25) / 55; // 0..1
     const camY = lerp(1.20, 0.55, t);
     const targetY = lerp(0.42, 0.14, t);
 
@@ -1216,7 +1217,11 @@ export default function Page() {
       renderer.render(scene, cameraRef.current);
 
       const glTemp = renderer.domElement;
+      octx.save();
+      // Slight readability boost for thin legs (export only – UI stays unchanged)
+      octx.filter = "contrast(1.08) brightness(1.02)";
       octx.drawImage(glTemp, 0, 0);
+      octx.restore();
 
       const blob: Blob = await new Promise((res, rej) =>
         out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
@@ -1687,8 +1692,8 @@ export default function Page() {
                 </div>
 
                 <CustomSlider
-                  min={10}
-                  max={90}
+                  min={25}
+                  max={80}
                   step={1}
                   value={Math.round(perspective.horizonPct)}
                   onChange={(v) => setPerspective((p) => ({ ...p, horizonPct: v }))}
