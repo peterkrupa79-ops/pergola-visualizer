@@ -1180,6 +1180,60 @@ export default function Page() {
   }
 
   // ===== Generate (real API) =====
+  // Render pergola ONLY as transparent PNG (alpha), using the current Three.js scene/camera state.
+  // This is used to "lock" geometry so AI can never remove legs / change size / shift the pergola.
+  async function renderPergolaAlpha(width: number, height: number): Promise<HTMLCanvasElement> {
+    if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) {
+      throw new Error("3D renderer nie je pripravený.");
+    }
+
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+
+    // Apply the same transforms (camera matching + pergola transforms) for the export resolution.
+    applyTransformsForCurrentState(width, height);
+
+    // Preserve renderer clear settings.
+    let prevClearAlpha = 0;
+    let prevClearHex = 0x000000;
+    try {
+      prevClearAlpha = renderer.getClearAlpha?.() ?? 0;
+      const c = renderer.getClearColor?.();
+      // some three versions return Color; handle both
+      if (c && typeof c.getHex === "function") prevClearHex = c.getHex();
+    } catch {
+      // ignore
+    }
+
+    // Transparent background
+    try {
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear?.();
+    } catch {
+      // ignore
+    }
+
+    renderer.setSize(width, height, false);
+    renderer.render(scene, camera);
+
+    const out = document.createElement("canvas");
+    out.width = width;
+    out.height = height;
+    const ctx = out.getContext("2d");
+    if (!ctx) throw new Error("2D context not available");
+    ctx.drawImage(renderer.domElement, 0, 0);
+
+    // Restore clear settings
+    try {
+      renderer.setClearColor(prevClearHex, prevClearAlpha);
+    } catch {
+      // ignore
+    }
+
+    return out;
+  }
+
   async function generate() {
     if (!bgImg) return;
     if (variants.length >= MAX_VARIANTS) return;
@@ -1236,13 +1290,45 @@ export default function Page() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
+      // --- HARD-LOCK the pergola geometry ---
+      // OpenAI may "clean" thin parts (e.g., legs). We always overlay the original pergola render (alpha)
+      // on top of the AI result, so the pergola can never be removed/shifted/rescaled by the model.
+      const aiImg = new Image();
+      aiImg.src = `data:image/png;base64,${j.b64}`;
+      try {
+        // modern browsers
+        // @ts-ignore
+        await aiImg.decode?.();
+      } catch {
+        // fallback
+        await new Promise<void>((resolve, reject) => {
+          aiImg.onload = () => resolve();
+          aiImg.onerror = () => reject(new Error("Nepodarilo sa načítať AI obrázok"));
+        });
+      }
+
+      const pergolaAlpha = await renderPergolaAlpha(outW, outH);
+
+      const finalCanvas = document.createElement("canvas");
+      finalCanvas.width = outW;
+      finalCanvas.height = outH;
+      const fctx = finalCanvas.getContext("2d");
+      if (!fctx) throw new Error("2D context not available");
+
+      // 1) AI output (harmonized scene)
+      fctx.drawImage(aiImg, 0, 0, outW, outH);
+      // 2) Original pergola pixels (alpha) from Three.js
+      fctx.drawImage(pergolaAlpha, 0, 0);
+
+      const finalB64 = finalCanvas.toDataURL("image/png").split(",")[1];
+
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
+        // select the newly created variant
+        setSelectedVariantIndex(clamp(next.length - 1, 0, MAX_VARIANTS - 1));
         return next;
       });
-
-      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (err: any) {
       console.error(err);
       setError(String(err?.message || err));
