@@ -1157,16 +1157,23 @@ export default function Page() {
 
   function showGhost() {
     const scene = sceneRef.current;
-    const root = rootRef.current;
+    const root = rootRef.current as THREE.Object3D | null;
     if (!scene || !root) return;
+
+    // lazily create ghost clone
     if (!ghostRef.current) {
       ghostRef.current = makeGhostClone(root);
-      ghostRef.current.position.copy(root.position);
-      ghostRef.current.rotation.copy(root.rotation);
-      ghostRef.current.scale.copy(root.scale);
     }
+
+    // IMPORTANT: keep ghost transform in sync (root is still being transformed each draw)
+    ghostRef.current.position.copy(root.position);
+    ghostRef.current.rotation.copy(root.rotation);
+    ghostRef.current.scale.copy(root.scale);
+
     // hide real root during preview
     root.visible = false;
+
+    // ensure ghost is in the scene
     if (!scene.children.includes(ghostRef.current)) scene.add(ghostRef.current);
   }
 
