@@ -629,6 +629,9 @@ export default function Page() {
   const rootRef = useRef<any>(null);
   const baseScaleRef = useRef<number>(1);
 
+  // base camera spherical around a stable target (for step 2A calibration)
+  const camBaseSphRef = useRef<{ theta: number; phi: number; radius: number } | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -872,6 +875,13 @@ export default function Page() {
         const camera = new THREE.PerspectiveCamera(35, canvasW / canvasH, 0.01, 100);
         camera.position.set(0, 0.7, 2.2);
         camera.lookAt(0, 0.35, 0);
+        // store base camera spherical for step 2A calibration
+        {
+          const target = new THREE.Vector3(0, 0.35, 0);
+          const off = camera.position.clone().sub(target);
+          const sph = new THREE.Spherical().setFromVector3(off);
+          camBaseSphRef.current = { theta: sph.theta, phi: sph.phi, radius: sph.radius };
+        }
 
         const renderer = new THREE.WebGLRenderer({
           alpha: true,
@@ -938,7 +948,7 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode, calibOpen, calibPhase, calib]);
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode, calibOpen, calibPhase, calib, cameraCalib, cameraCalibPreview, calib2a, calib2aMode]);
 
   function vsub(a: Vec2, b: Vec2) {
     return { x: a.x - b.x, y: a.y - b.y };
@@ -1040,11 +1050,9 @@ export default function Page() {
     // krok 2A/kalibrovaná perspektíva – aplikuj na kameru
     const cal = stepCurrent === 2 ? cameraCalibPreview || cameraCalib : cameraCalib;
     if (cal) {
-      camera.fov = cal.fov;
-      camera.rotation.order = "YXZ";
-      camera.rotation.y = cal.yaw;
-      camera.rotation.x = cal.pitch;
-      camera.rotation.z = cal.roll;
+      // IMPORTANT: do NOT overwrite camera.rotation here; keep the model in view
+      // by orbiting around a stable target (implemented in applyCameraCalibToThree).
+      applyCameraCalibToThree(cal);
     }
 
     const root = rootRef.current;
@@ -1128,33 +1136,40 @@ export default function Page() {
     const cam = cameraRef.current;
     if (!cam) return;
 
-    // Keep the model in view by orbiting the camera around a fixed target
-    // instead of overwriting camera.rotation (which can easily point away).
     const target = new THREE.Vector3(0, 0.35, 0);
 
+    // Base spherical taken from the initial camera setup
+    if (!camBaseSphRef.current) {
+      const off = cam.position.clone().sub(target);
+      const sph0 = new THREE.Spherical().setFromVector3(off);
+      camBaseSphRef.current = { theta: sph0.theta, phi: sph0.phi, radius: sph0.radius };
+    }
+
+    const base = camBaseSphRef.current!;
     cam.fov = cal.fov;
     cam.updateProjectionMatrix();
 
-    // Convert current camera position to spherical coordinates around target
-    const offset = cam.position.clone().sub(target);
+    // Absolute yaw/pitch relative to the base (no compounding drift)
     const sph = new THREE.Spherical();
-    sph.setFromVector3(offset);
-
-    // Apply yaw (theta) and pitch (phi) as small offsets
-    sph.theta += cal.yaw;
-    sph.phi += cal.pitch;
+    sph.radius = base.radius;
+    sph.theta = base.theta + cal.yaw;
+    sph.phi = base.phi + cal.pitch;
 
     // Clamp pitch to avoid flipping
     const EPS = 0.12;
     sph.phi = Math.max(EPS, Math.min(Math.PI - EPS, sph.phi));
 
-    // Set new position and aim at target
+    // Position and "no-roll" orientation
     const newPos = new THREE.Vector3().setFromSpherical(sph).add(target);
     cam.position.copy(newPos);
+    cam.up.set(0, 1, 0);
     cam.lookAt(target);
 
-    // Apply roll around the view axis
-    cam.rotateZ(cal.roll);
+    // Apply absolute roll around the camera's forward axis (no compounding)
+    const dir = new THREE.Vector3();
+    cam.getWorldDirection(dir); // forward direction
+    const qRoll = new THREE.Quaternion().setFromAxisAngle(dir.normalize(), cal.roll);
+    cam.quaternion.premultiply(qRoll);
   }
 
   function makeGhostClone(src: THREE.Object3D) {
