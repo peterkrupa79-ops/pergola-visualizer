@@ -327,7 +327,6 @@ async function hasTooManyFrontPosts(b64: string): Promise<boolean> {
   return peaks.length >= 3;
 }
 
-}
 
 function useMedia(query: string) {
   const [match, setMatch] = useState(false);
