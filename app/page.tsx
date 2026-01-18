@@ -169,6 +169,58 @@ function enhanceReferenceRegion(
   }
 
   ctx.putImageData(img, ix, iy);
+
+  // Extra stabilizer: lightly brighten the center of the top beam region so the model
+  // is less tempted to "add a center support". We detect the pergola bbox by scanning for dark pixels.
+  try {
+    const img2 = ctx.getImageData(ix, iy, iw, ih);
+    const d = img2.data;
+    let minX = iw, minY = ih, maxX = -1, maxY = -1;
+
+    // threshold for "dark" pixels (pergola is usually dark/black in the ref)
+    const thr = 92;
+    for (let py = 0; py < ih; py += 2) {
+      const row = py * iw * 4;
+      for (let px = 0; px < iw; px += 2) {
+        const i = row + px * 4;
+        const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
+        if (a < 10) continue;
+        // approximate luminance
+        const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        if (lum < thr) {
+          if (px < minX) minX = px;
+          if (py < minY) minY = py;
+          if (px > maxX) maxX = px;
+          if (py > maxY) maxY = py;
+        }
+      }
+    }
+
+    if (maxX > minX && maxY > minY) {
+      const bw = maxX - minX;
+      const bh = maxY - minY;
+
+      // top beam area (top ~22% of bbox) and center ~50% width
+      const bx0 = ix + minX + bw * 0.25;
+      const bx1 = ix + minX + bw * 0.75;
+      const by0 = iy + minY + bh * 0.02;
+      const by1 = iy + minY + bh * 0.22;
+
+      const grad = ctx.createLinearGradient(bx0, by0, bx1, by0);
+      grad.addColorStop(0, "rgba(255,255,255,0)");
+      grad.addColorStop(0.5, "rgba(255,255,255,0.10)");
+      grad.addColorStop(1, "rgba(255,255,255,0)");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = grad;
+      ctx.fillRect(bx0, by0, bx1 - bx0, Math.max(1, by1 - by0));
+      ctx.restore();
+    }
+  } catch {
+    // ignore
+  }
+
 }
 function isValidEmail(email: string) {
   const s = email.trim();
@@ -186,6 +238,95 @@ function makeId() {
 async function b64PngToBlob(b64: string): Promise<Blob> {
   const r = await fetch(`data:image/png;base64,${b64}`);
   return await r.blob();
+
+
+async function hasTooManyFrontPosts(b64: string): Promise<boolean> {
+  // Heuristic: count strong dark vertical "post" columns in the left half of the image.
+  // If we detect >= 3 prominent vertical posts, we assume AI added a center post.
+  const img = new Image();
+  img.src = `data:image/png;base64,${b64}`;
+  await img.decode();
+
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  if (!ctx) return false;
+  ctx.drawImage(img, 0, 0);
+
+  // Region of interest: left ~60% width, middle/bottom where posts are visible.
+  const x0 = 0;
+  const x1 = Math.floor(w * 0.60);
+  const y0 = Math.floor(h * 0.32);
+  const y1 = Math.floor(h * 0.95);
+
+  let data: ImageData;
+  try {
+    data = ctx.getImageData(x0, y0, x1 - x0, y1 - y0);
+  } catch {
+    return false;
+  }
+  const d = data.data;
+  const rw = x1 - x0;
+  const rh = y1 - y0;
+
+  // For each column, count dark pixels.
+  const counts = new Float32Array(rw);
+  const lumThr = 70; // dark threshold
+  for (let y = 0; y < rh; y += 2) {
+    const row = y * rw * 4;
+    for (let x = 0; x < rw; x++) {
+      const i = row + x * 4;
+      const a = d[i + 3];
+      if (a < 30) continue;
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (lum < lumThr) counts[x] += 1;
+    }
+  }
+
+  // Smooth with small window to reduce noise.
+  const smooth = new Float32Array(rw);
+  const win = 5;
+  for (let x = 0; x < rw; x++) {
+    let s = 0;
+    let n = 0;
+    for (let k = -win; k <= win; k++) {
+      const xx = x + k;
+      if (xx < 0 || xx >= rw) continue;
+      s += counts[xx];
+      n++;
+    }
+    smooth[x] = s / Math.max(1, n);
+  }
+
+  // Find peaks (local maxima) over threshold.
+  const peakThr = (rh / 2) * 0.18; // tuned: needs to be tall & dark
+  const minSep = Math.max(12, Math.floor(rw * 0.045));
+  const peaks: number[] = [];
+
+  for (let x = 2; x < rw - 2; x++) {
+    const v = smooth[x];
+    if (v < peakThr) continue;
+    if (v >= smooth[x - 1] && v >= smooth[x + 1] && v >= smooth[x - 2] && v >= smooth[x + 2]) {
+      // enforce separation
+      if (peaks.length === 0 || x - peaks[peaks.length - 1] > minSep) {
+        peaks.push(x);
+      } else {
+        // keep the stronger peak
+        const last = peaks[peaks.length - 1];
+        if (v > smooth[last]) peaks[peaks.length - 1] = x;
+      }
+    }
+  }
+
+  // If we see 3+ strong vertical post-like peaks, likely an extra post was added.
+  return peaks.length >= 3;
+}
+
 }
 
 function useMedia(query: string) {
@@ -1381,6 +1522,9 @@ GEOMETRY LOCK (CRITICAL):
 - Copy the pergola design EXACTLY from the LEFT panel: roof type, roof shape, pitch angle, beam/profile thickness, proportions, and leg spacing.
 - Match the pergola placement EXACTLY from the RIGHT panel: position, scale, rotation, perspective, and tilt.
 - Keep ALL existing legs/posts. There are exactly 4 legs/posts total. Do NOT add any extra legs/posts/supports/columns.
+- Front edge must have exactly 2 posts (not 3). There must be clear open space between the two front posts.
+- The front beam is engineered to span the full width without a center support. Do NOT add a center post under the front beam.
+- Do not add any implicit supports, hidden columns, or structural reinforcements.
 - Do NOT remove, thin, merge, or hide any legs or beams.
 - Do NOT redesign the structure or add construction details/joints.
 - If there is any conflict between realism and matching the reference pergola, ALWAYS match the reference.
@@ -1394,19 +1538,36 @@ EDITING SCOPE:
 
 ${prompt}`);
 
-      const r = await fetch("/api/render/openai", { method: "POST", body: form });
+      let b64Out: string | null = null;
+      const maxAttempts = 2;
 
-      const j = await r.json().catch(async () => {
-        const t = await r.text().catch(() => "");
-        return { error: t || `HTTP ${r.status}` };
-      });
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      if (!j?.b64) throw new Error("API nevrátilo b64.");
+        const j = await r.json().catch(async () => {
+          const t = await r.text().catch(() => "");
+          return { error: t || `HTTP ${r.status}` };
+        });
+
+        if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+        if (!j?.b64) throw new Error("API nevrátilo b64.");
+
+        // Filter: discard variants where the model hallucinates an extra front post.
+        const badPosts = await hasTooManyFrontPosts(j.b64);
+        if (badPosts) {
+          if (attempt < maxAttempts - 1) continue;
+          throw new Error("AI pridalo tretiu nohu vpredu – variant bol zahodený. Skús generovať znovu.");
+        }
+
+        b64Out = j.b64;
+        break;
+      }
+
+      if (!b64Out) throw new Error("Generovanie zlyhalo.");
 
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: b64Out!, createdAt: Date.now() }];
         return next;
       });
 
