@@ -57,6 +57,9 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
 function dist(a: Vec2, b: Vec2) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -470,6 +473,18 @@ export default function Page() {
 
   const [editorZoom, setEditorZoom] = useState(100);
 
+  // ===== Photo perspective calibration (camera matching) =====
+  // UX: user aligns a horizon line + adjusts depth (FOV) + view direction (yaw).
+  const defaultPerspective = (mobile: boolean) => ({
+    horizonPct: mobile ? 62 : 58, // 0..100 (vertical position of horizon line from top)
+    depthPct: mobile ? 52 : 48, // 0..100 (maps to FOV)
+    viewYawDeg: 0, // -25..25 degrees
+  });
+
+  const [perspectiveOpen, setPerspectiveOpen] = useState(false);
+  const [perspective, setPerspective] = useState(defaultPerspective(isMobileRef.current));
+
+
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
@@ -480,6 +495,7 @@ export default function Page() {
     if (!isMobileRef.current) return;
     setScalePct({ x: 75, y: 75, z: 75 });
     setPos({ x: 0.5, y: 0.78 });
+    setPerspective(defaultPerspective(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -684,9 +700,11 @@ export default function Page() {
     setRot3D({ yaw: 0.35, pitch: -0.12 });
     setRot2D(0);
     setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
+    setPerspective(defaultPerspective(isMobileRef.current));
     setError("");
     setPanel("zoom");
     setPanelOpen(false);
+    setPerspectiveOpen(false);
     setSelectedVariantIndex(0);
   }
 
@@ -805,7 +823,7 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode]);
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode, perspective, perspectiveOpen]);
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
@@ -813,9 +831,29 @@ export default function Page() {
     const camera = cameraRef.current;
     const root = rootRef.current;
 
+    // --- Camera matching (photo perspective) ---
+    // depthPct -> FOV range (tele -> wide)
+    const fov = lerp(30, 75, clamp(perspective.depthPct / 100, 0, 1));
+    camera.fov = fov;
+
     camera.aspect = width / height;
+
+    // horizonPct -> approximate camera height + look target
+    const hPct = clamp(perspective.horizonPct, 10, 90);
+    const t = (hPct - 10) / 80; // 0..1
+    const camY = lerp(1.20, 0.55, t);
+    const targetY = lerp(0.42, 0.14, t);
+
+    // viewYawDeg -> rotate camera around the scene (does NOT rotate the pergola itself)
+    const yaw = clamp(perspective.viewYawDeg, -25, 25) * (Math.PI / 180);
+    const radius = 2.2;
+
+    camera.position.set(Math.sin(yaw) * radius, camY, Math.cos(yaw) * radius);
+    camera.lookAt(0, targetY, 0);
+
     camera.updateProjectionMatrix();
 
+    // --- Pergola transform (user manipulation) ---
     const base = baseScaleRef.current;
     root.scale.set(base * (scalePct.x / 100), base * (scalePct.y / 100), base * (scalePct.z / 100));
 
@@ -826,11 +864,13 @@ export default function Page() {
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
+
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const ctxMaybe = canvas.getContext("2d");
+    if (!ctxMaybe) return;
+    const ctx = ctxMaybe;
 
     // clear (light editor)
     ctx.clearRect(0, 0, canvasW, canvasH);
@@ -938,6 +978,32 @@ export default function Page() {
       }
     }
   }
+    // Perspective overlay (horizon line) – shown only when the perspective panel is open
+    if (perspectiveOpen) {
+      const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
+      ctx.save();
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvasW, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // label
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
+      const label = "HORIZONT";
+      const pad = 8;
+      const w = ctx.measureText(label).width + pad * 2;
+      const bx = 12;
+      const by = clamp(y - 28, 8, canvasH - 28);
+      ctx.fillRect(bx, by, w, 22);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, bx + pad, by + 15);
+      ctx.restore();
+    }
+
 
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
@@ -1429,6 +1495,7 @@ export default function Page() {
                       onChange={(e) => {
                         const f = e.target.files?.[0] || null;
                         setBgFile(f);
+                        setPerspective(defaultPerspective(isMobileRef.current));
                         setError("");
                       }}
                     />
@@ -1489,6 +1556,7 @@ export default function Page() {
                       onChange={(e) => {
                         const f = e.target.files?.[0] || null;
                         setBgFile(f);
+                        setPerspective(defaultPerspective(isMobileRef.current));
                         setError("");
                       }}
                     />
@@ -1553,6 +1621,20 @@ export default function Page() {
               <button type="button" onClick={() => togglePanel("z")} style={{ ...chipStyle, background: panelOpen && panel === "z" ? "rgba(0,0,0,0.06)" : "#fff" }}>
                 Šírka
               </button>
+
+              <button
+                type="button"
+                onClick={() => setPerspectiveOpen((o) => !o)}
+                style={{
+                  ...chipStyle,
+                  background: perspectiveOpen ? "rgba(0,0,0,0.06)" : "#fff",
+                }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <Icon name="rotate" size={16} />
+                  Perspektíva
+                </span>
+              </button>
             </div>
 
             {panelOpen ? (
@@ -1567,6 +1649,75 @@ export default function Page() {
                 {sliderBox}
               </div>
             ) : null}
+
+            {perspectiveOpen ? (
+              <div
+                style={{
+                  background: "#fff",
+                  border: "1px solid rgba(0,0,0,0.08)",
+                  borderRadius: 14,
+                  padding: 12,
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.60)" }}>
+                    Zladiť perspektívu s fotkou
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPerspective(defaultPerspective(isMobileRef.current))}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      background: "#fff",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Reset perspektívy
+                  </button>
+                </div>
+
+                <div style={{ fontSize: 13, fontWeight: 750, color: "rgba(0,0,0,0.70)", lineHeight: 1.35 }}>
+                  Posuň čiaru <b>HORIZONT</b> na približnú výšku očí (miesto, kde sa „láme“ zem a obloha / vzdialený okraj terasy).
+                  Potom dolaď <b>Hĺbku</b> (ako širokouhlá je fotka) a <b>Smer</b> (z ktorej strany je fotka).
+                </div>
+
+                <CustomSlider
+                  min={10}
+                  max={90}
+                  step={1}
+                  value={Math.round(perspective.horizonPct)}
+                  onChange={(v) => setPerspective((p) => ({ ...p, horizonPct: v }))}
+                  label="Horizont fotky"
+                  suffix="%"
+                />
+
+                <CustomSlider
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(perspective.depthPct)}
+                  onChange={(v) => setPerspective((p) => ({ ...p, depthPct: v }))}
+                  label="Hĺbka pohľadu"
+                  suffix="%"
+                />
+
+                <CustomSlider
+                  min={-25}
+                  max={25}
+                  step={1}
+                  value={Math.round(perspective.viewYawDeg)}
+                  onChange={(v) => setPerspective((p) => ({ ...p, viewYawDeg: v }))}
+                  label="Smer pohľadu"
+                  suffix="°"
+                />
+              </div>
+            ) : null}
+
 
             {/* Canvas */}
             <div style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 14, overflow: "hidden", padding: 10 }}>
