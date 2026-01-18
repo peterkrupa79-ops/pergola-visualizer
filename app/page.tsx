@@ -71,6 +71,105 @@ function roundToStep(v: number, step = SCALE_STEP) {
 function clampPct(v: number) {
   return clamp(roundToStep(v), SCALE_MIN, SCALE_MAX);
 }
+
+function _clamp255(n: number) {
+  return n < 0 ? 0 : n > 255 ? 255 : n;
+}
+
+/**
+ * Enhance the reference (LEFT) panel so the model treats it as a geometric authority:
+ * - small unsharp mask (edge clarity)
+ * - slight contrast boost
+ * Runs only at generate-time (not interactive).
+ */
+function enhanceReferenceRegion(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  opts?: { contrast?: number; amount?: number }
+) {
+  const contrast = opts?.contrast ?? 1.10; // 1.0 = no change
+  const amount = opts?.amount ?? 0.55; // unsharp amount
+
+  const ix = Math.max(0, Math.floor(x));
+  const iy = Math.max(0, Math.floor(y));
+  const iw = Math.max(1, Math.floor(w));
+  const ih = Math.max(1, Math.floor(h));
+
+  let img: ImageData;
+  try {
+    img = ctx.getImageData(ix, iy, iw, ih);
+  } catch {
+    return;
+  }
+  const data = img.data;
+
+  // 3x3 box blur as "low-pass" for unsharp mask
+  const blur = new Uint8ClampedArray(data.length);
+  const idx = (xx: number, yy: number) => (yy * iw + xx) * 4;
+
+  for (let yy = 0; yy < ih; yy++) {
+    for (let xx = 0; xx < iw; xx++) {
+      let r = 0,
+        g = 0,
+        b = 0,
+        a = 0,
+        c = 0;
+      for (let ky = -1; ky <= 1; ky++) {
+        const y2 = yy + ky;
+        if (y2 < 0 || y2 >= ih) continue;
+        for (let kx = -1; kx <= 1; kx++) {
+          const x2 = xx + kx;
+          if (x2 < 0 || x2 >= iw) continue;
+          const p = idx(x2, y2);
+          r += data[p + 0];
+          g += data[p + 1];
+          b += data[p + 2];
+          a += data[p + 3];
+          c++;
+        }
+      }
+      const p0 = idx(xx, yy);
+      blur[p0 + 0] = r / c;
+      blur[p0 + 1] = g / c;
+      blur[p0 + 2] = b / c;
+      blur[p0 + 3] = a / c;
+    }
+  }
+
+  // Unsharp + contrast
+  const mid = 128;
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    if (a === 0) continue;
+
+    const r0 = data[i + 0];
+    const g0 = data[i + 1];
+    const b0 = data[i + 2];
+
+    const rb = blur[i + 0];
+    const gb = blur[i + 1];
+    const bb = blur[i + 2];
+
+    // unsharp
+    let r = r0 + amount * (r0 - rb);
+    let g = g0 + amount * (g0 - gb);
+    let b = b0 + amount * (b0 - bb);
+
+    // contrast
+    r = (r - mid) * contrast + mid;
+    g = (g - mid) * contrast + mid;
+    b = (b - mid) * contrast + mid;
+
+    data[i + 0] = _clamp255(r);
+    data[i + 1] = _clamp255(g);
+    data[i + 2] = _clamp255(b);
+  }
+
+  ctx.putImageData(img, ix, iy);
+}
 function isValidEmail(email: string) {
   const s = email.trim();
   if (!s) return false;
@@ -1244,6 +1343,9 @@ export default function Page() {
       const dy = (outH - dh) / 2;
       dctx.drawImage(glTemp, dx, dy, dw, dh);
 
+      // strengthen reference panel edges/contrast so AI follows exact profile
+      enhanceReferenceRegion(dctx, dx, dy, dw, dh, { contrast: 1.12, amount: 0.6 });
+
       // separator
       dctx.fillStyle = "rgba(0,0,0,0.22)";
       dctx.fillRect(refW, 0, GAP, outH);
@@ -1258,11 +1360,36 @@ export default function Page() {
       const form = new FormData();
       form.append("image", blob, "duo.jpg");
 
-      const duoPrompt = `LEFT PANEL: reference pergola render (exact shape, roof design, beam thickness, leg count and spacing).
-RIGHT PANEL: the pergola placed into the real photo.
-Rules: Keep the pergola geometry EXACTLY like the LEFT panel and keep its position/scale/rotation/tilt EXACTLY like the RIGHT panel.
-Do NOT redesign the roof or structure. Do NOT add/remove legs or any supports.
-Only harmonize lighting, shadows, ambient occlusion, reflections, color grading, sharpness and noise so it looks photo-realistic in the scene.`;
+      const SHAPE_LOCK =
+        pergolaType === "bioklim"
+          ? `TYPE: BIOCLIMATIC PERGOLA.
+- The roof is a flat bioclimatic roof (louvered system). Keep it flat and keep the louver/roof structure exactly as in the reference.
+- Do NOT convert it to a solid roof, glass roof, or a sloped roof.`
+          : pergolaType === "pevna"
+          ? `TYPE: FIXED-ROOF PERGOLA.
+- The roof is a solid fixed roof. Keep the roof form and pitch exactly as in the reference.
+- Do NOT convert it to a louvered roof or a glass/winter-garden roof.`
+          : `TYPE: WINTER GARDEN / CONSERVATORY.
+- The roof is a sloped winter-garden style roof (typically glazed/paneled). Keep the roof form, pitch, and framing exactly as in the reference.
+- Do NOT convert it to a flat roof or a louvered pergola roof.`;
+
+      const duoPrompt = `TWO-PANEL INPUT.
+LEFT PANEL: Reference pergola render (this defines the exact pergola design).
+RIGHT PANEL: The pergola placed into the real photo (this defines the exact position, scale, rotation, and tilt).
+
+GEOMETRY LOCK (CRITICAL):
+- Copy the pergola design EXACTLY from the LEFT panel: roof type, roof shape, pitch angle, beam/profile thickness, proportions, and leg spacing.
+- Match the pergola placement EXACTLY from the RIGHT panel: position, scale, rotation, perspective, and tilt.
+- Keep ALL existing legs/posts. There are exactly 4 legs/posts total. Do NOT add any extra legs/posts/supports/columns.
+- Do NOT remove, thin, merge, or hide any legs or beams.
+- Do NOT redesign the structure or add construction details/joints.
+- If there is any conflict between realism and matching the reference pergola, ALWAYS match the reference.
+${SHAPE_LOCK}
+
+EDITING SCOPE:
+- Preserve the original photo background as much as possible.
+- Only harmonize lighting, shadows, ambient occlusion, reflections, color/grain, sharpness and noise so the pergola looks photo-realistic in the scene.`;
+
       form.append("prompt", `${duoPrompt}
 
 ${prompt}`);
