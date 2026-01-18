@@ -1517,6 +1517,11 @@ export default function Page() {
     }
   }
 
+  function requestDraw() {
+    draw();
+  }
+
+
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
     active: boolean;
