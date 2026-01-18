@@ -2,55 +2,10 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
-
-type Line2 = { a: Vec2 | null; b: Vec2 | null };
-type Calib2AState = {
-  depth1: Line2;
-  depth2: Line2;
-  side1: Line2;
-  side2: Line2;
-  vertical: Line2;
-};
-
-type CamCalib = {
-  fov: number;
-  yaw: number;
-  pitch: number;
-  roll: number;
-  confidence: number;
-  vpX?: Vec2;
-  vpZ?: Vec2;
-};
-
-
-
-type CalibPointId =
-  | "wallA"
-  | "wallB"
-  | "frontA"
-  | "frontB"
-  | "hLeftBottom"
-  | "hLeftTop"
-  | "hRightBottom"
-  | "hRightTop";
-
-type CalibState = {
-  wallA: Vec2 | null;
-  wallB: Vec2 | null;
-  frontA: Vec2 | null;
-  frontB: Vec2 | null;
-  hLeftBottom: Vec2 | null;
-  hLeftTop: Vec2 | null;
-  hRightBottom: Vec2 | null;
-  hRightTop: Vec2 | null;
-};
-
-type CalibPhase = "off" | "edit" | "preview" | "applied";
 
 type HandleId = "nw" | "ne" | "se" | "sw";
 const HANDLE_R = 9;
@@ -75,35 +30,29 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
   {
     id: 1,
     title: "Nahraj fotku",
-    hint: "Nahraj fotografiu domu alebo terasy (JPG/PNG). Fotka by mala byť čo najrovnejšia, bez extrémneho širokouhlého skreslenia. Ideálne je fotiť na želaný priestor vo výške očí alebo z mierne bočného pohľadu",
+    hint: "Nahraj fotografiu domu alebo terasy (JPG/PNG). Fotka sa zobrazí ako pozadie v editore. Fotka by mala s dostatočným presahom zachytávať priestor, kam chceš umiestniť pergolu. Pre dosiahnutie čo najlepšieho výsledku by mala byť fotka z predného pohľadu na želaný priestor vo výške očí alebo z mierne bočného pohľadu",
   },
   {
     id: 2,
-    title: "Nastav perspektívu",
-    hint: "Nakresli 2 čiary po hranách, ktoré idú do diaľky (napr. škára dlažby), potom 2 čiary v druhom smere a nakoniec 1 zvislú čiaru (roh domu/stĺpik). V náhľade skontroluj ghost pergolu a potom použi perspektívu.",
+    title: "Umiestni pergolu",
+    hint: "Vyber typ pergoly, posuň ju na správne miesto, otoč alebo nakloň. Pomocou sliderov uprav rozmery.",
   },
   {
     id: 3,
-    title: "Umiestni pergolu",
-    hint: "Umiestni 3D pergolu do fotky. Môžeš ju posúvať, otáčať, nakláňať a meniť rozmer. Použi zoom a šírku/výšku/hĺbku tak, aby pergola sedela k fasáde a terase.",
+    title: "Vygeneruj varianty",
+    hint: "Klikni na Vygenerovať a vytvor si až 6 AI variantov. Môžeš si vymeniť fotku pozadia alebo vyskúšať rôzne varianty pergoly alebo zimnej záhrady. Potom si otvor náhľad a vyber najlepší.",
   },
   {
     id: 4,
-    title: "Vygeneruj varianty",
-    hint: "Klikni na Vygenerovať a vytvor si až 6 AI variantov. Môžeš skúšať rôzne nálady, farby, ročné obdobia alebo štýl terasy. Potom si otvor náhľad a vyber najlepší.",
+    title: "Vyplň formulár",
+    hint: "Pre odomknutie sťahovania vyplň formulár a vyber 1 vizualizáciu, ktorú nám odošleš (môžeš pridať poznámku kde vieš uviesť doplňujúce informácie).",
   },
   {
     id: 5,
-    title: "Vyplň formulár",
-    hint: "Pre odomknutie sťahovania vyplň formulár a vyber 1 variant (môžeš pridať poznámku s doplňujúcimi informáciami).",
-  },
-  {
-    id: 6,
     title: "Stiahni PNG",
     hint: "Po úspešnom odoslaní formulára sa odomkne sťahovanie PNG jednej alebo všetkých vizualizácií.",
   },
 ];
-
 
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
@@ -514,53 +463,7 @@ export default function Page() {
   const canvasW = canvasSize.w;
   const canvasH = canvasSize.h;
 
-  // ===== Auto-place defaults (guide points) =====
-  useEffect(() => {
-    if (!bgImg) return;
-
-    // inicializuj iba ak ešte nie sú nastavené základné body
-    if (calib.wallA && calib.wallB && calib.frontA && calib.frontB && calib.hLeftTop && calib.hRightTop) return;
-
-    const w = canvasW;
-    const h = canvasH;
-
-    const wallY = h * 0.68;
-    const frontY = h * 0.80;
-    const leftX = w * 0.30;
-    const rightX = w * 0.70;
-
-    const wallA = { x: leftX, y: wallY };
-    const wallB = { x: rightX, y: wallY };
-    const frontA = { x: leftX + w * 0.02, y: frontY };
-    const frontB = { x: rightX - w * 0.02, y: frontY };
-
-    const hLeftBottom = { x: wallA.x, y: wallA.y };
-    const hLeftTop = { x: wallA.x, y: wallA.y - h * 0.25 };
-    const hRightBottom = { x: wallB.x, y: wallB.y };
-    const hRightTop = { x: wallB.x, y: wallB.y - h * 0.25 };
-
-    setCalib({ wallA, wallB, frontA, frontB, hLeftBottom, hLeftTop, hRightBottom, hRightTop });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH]);
-
-  
-  // ===== Krok 2A: Kalibrácia kamery (perspektíva) =====
-  const [cameraCalib, setCameraCalib] = useState<CamCalib | null>(null);
-  const [cameraCalibPreview, setCameraCalibPreview] = useState<CamCalib | null>(null);
-  const [calib2aMode, setCalib2aMode] = useState<"edit" | "preview">("edit");
-  const [calib2a, setCalib2a] = useState<Calib2AState>({
-    depth1: { a: null, b: null },
-    depth2: { a: null, b: null },
-    side1: { a: null, b: null },
-    side2: { a: null, b: null },
-    vertical: { a: null, b: null },
-  });
-
-  const calib2aDragRef = useRef<{ active: boolean; key: string | null }>({ active: false, key: null });
-
-  const ghostRef = useRef<THREE.Object3D | null>(null);
-
-// ===== Editor state =====
+  // ===== Editor state =====
   const [mode, setMode] = useState<Mode>("move");
   const [panel, setPanel] = useState<"zoom" | "x" | "y" | "z">("zoom");
   const [panelOpen, setPanelOpen] = useState(false);
@@ -571,43 +474,6 @@ export default function Page() {
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
-
-
-  // ===== Auto-place (beta) =====
-  const [calibOpen, setCalibOpen] = useState(false);
-  const [calibPhase, setCalibPhase] = useState<CalibPhase>("off");
-
-  const [calib, setCalib] = useState<CalibState>({
-    wallA: null,
-    wallB: null,
-    frontA: null,
-    frontB: null,
-    hLeftBottom: null,
-    hLeftTop: null,
-    hRightBottom: null,
-    hRightTop: null,
-  });
-
-  // pri "náhľade" si zapamätáme pôvodné transformy, aby sme vedeli vrátiť
-  const prevTransformRef = useRef<{
-    pos: Vec2;
-    rot2D: number;
-    rot3D: { yaw: number; pitch: number };
-    scalePct: { x: number; y: number; z: number };
-  } | null>(null);
-
-  const calibDragRef = useRef<{ active: boolean; id: CalibPointId | null } | null>(null);
-  const CALIB_HIT = 18;
-
-  // auto-place one-shot correction after next bbox read
-  const autoPlaceRef = useRef<null | {
-    active: boolean;
-    wallMid: Vec2;
-    frontMid: Vec2;
-    wallDir: Vec2;
-    forward: Vec2;
-  }>(null);
-
 
   // mobile defaults
   useEffect(() => {
@@ -628,9 +494,6 @@ export default function Page() {
   const cameraRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
   const baseScaleRef = useRef<number>(1);
-
-  // base camera spherical around a stable target (for step 2A calibration)
-  const camBaseSphRef = useRef<{ theta: number; phi: number; radius: number } | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -865,6 +728,7 @@ export default function Page() {
 
     async function initThree() {
       try {
+        const THREE = await import("three");
         const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
 
         if (cancelled) return;
@@ -875,13 +739,6 @@ export default function Page() {
         const camera = new THREE.PerspectiveCamera(35, canvasW / canvasH, 0.01, 100);
         camera.position.set(0, 0.7, 2.2);
         camera.lookAt(0, 0.35, 0);
-        // store base camera spherical for step 2A calibration
-        {
-          const target = new THREE.Vector3(0, 0.35, 0);
-          const off = camera.position.clone().sub(target);
-          const sph = new THREE.Spherical().setFromVector3(off);
-          camBaseSphRef.current = { theta: sph.theta, phi: sph.phi, radius: sph.radius };
-        }
 
         const renderer = new THREE.WebGLRenderer({
           alpha: true,
@@ -948,113 +805,12 @@ export default function Page() {
   useEffect(() => {
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode, calibOpen, calibPhase, calib, cameraCalib, cameraCalibPreview, calib2a, calib2aMode]);
-
-  function vsub(a: Vec2, b: Vec2) {
-    return { x: a.x - b.x, y: a.y - b.y };
-  }
-  function vlen(a: Vec2) {
-    return Math.sqrt(a.x * a.x + a.y * a.y);
-  }
-  function vnorm(a: Vec2) {
-    const l = vlen(a);
-    return l > 1e-6 ? { x: a.x / l, y: a.y / l } : { x: 1, y: 0 };
-  }
-  function vdot(a: Vec2, b: Vec2) {
-    return a.x * b.x + a.y * b.y;
-  }
-  function mid(a: Vec2, b: Vec2) {
-    return { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 };
-  }
-
-  function computeAutoTransform() {
-    const c = calib;
-    if (
-      !c.wallA ||
-      !c.wallB ||
-      !c.frontA ||
-      !c.frontB ||
-      !c.hLeftBottom ||
-      !c.hLeftTop ||
-      !c.hRightBottom ||
-      !c.hRightTop
-    )
-      return null;
-
-    const wallMid = mid(c.wallA, c.wallB);
-    const frontMid = mid(c.frontA, c.frontB);
-
-    const wallVec = vsub(c.wallB, c.wallA);
-    const wallLen = Math.max(1, vlen(wallVec));
-    const wallDir = vnorm(wallVec);
-
-    // kolmica na wallDir (smer "hĺbky" v obraze)
-    const nRaw = vnorm({ x: -wallDir.y, y: wallDir.x });
-
-    // vyber smer "dopredu" podľa toho, na ktorej strane je predná línia
-    const depthSigned = vdot(vsub(frontMid, wallMid), nRaw);
-    const forward = depthSigned >= 0 ? nRaw : { x: -nRaw.x, y: -nRaw.y };
-
-    const depthTargetPx = Math.max(1, Math.abs(depthSigned));
-
-    const hL = Math.max(1, vlen(vsub(c.hLeftTop, c.hLeftBottom)));
-    const hR = Math.max(1, vlen(vsub(c.hRightTop, c.hRightBottom)));
-    const hAvg = Math.max(1, (hL + hR) * 0.5);
-
-    // yaw z uhla kontaktnej línie
-    const angle = Math.atan2(wallVec.y, wallVec.x);
-    const yaw = clamp(-angle, -2.6, 2.6);
-
-    // stabilne: pitch/roll nechávame 0
-    const pitch = 0;
-    const roll = 0;
-
-    // SCALE: rátame z aktuálneho bboxRect (po poslednom rendri)
-    let sx: number;
-    let sy: number;
-    let sz: number;
-
-    if (bboxRect && bboxRect.w > 2 && bboxRect.h > 2) {
-      // projekčné dĺžky bboxu v smere wallDir a forward
-      const projWidth = Math.max(1, Math.abs(wallDir.x) * bboxRect.w + Math.abs(wallDir.y) * bboxRect.h);
-      const projDepth = Math.max(1, Math.abs(forward.x) * bboxRect.w + Math.abs(forward.y) * bboxRect.h);
-
-      sx = clampPct(scalePct.x * (wallLen / projWidth));
-      sy = clampPct(scalePct.y * (hAvg / bboxRect.h));
-      sz = clampPct(scalePct.z * (depthTargetPx / projDepth));
-    } else {
-      // fallback
-      sx = clampPct((wallLen / canvasW) * 220);
-      sy = clampPct((hAvg / canvasH) * 260);
-      sz = clampPct((depthTargetPx / canvasH) * 260);
-    }
-
-    // POS: hrubý anchor na wallMid (fine correction spravíme one-shot po ďalšom bbox read)
-    const posN = { x: wallMid.x / canvasW, y: wallMid.y / canvasH };
-
-    return {
-      posN,
-      yaw,
-      pitch,
-      roll,
-      scale: { x: sx, y: sy, z: sz },
-      __meta: { wallMid, frontMid, wallDir, forward },
-    };
-  }
+  }, [bgImg, canvasW, canvasH, editorZoom, pos, rot2D, rot3D, scalePct, mode]);
 
   function applyTransformsForCurrentState(width: number, height: number) {
     if (!threeReadyRef.current || !cameraRef.current || !rootRef.current) return;
 
     const camera = cameraRef.current;
-
-    // krok 2A/kalibrovaná perspektíva – aplikuj na kameru
-    const cal = stepCurrent === 2 ? cameraCalibPreview || cameraCalib : cameraCalib;
-    if (cal) {
-      // IMPORTANT: do NOT overwrite camera.rotation here; keep the model in view
-      // by orbiting around a stable target (implemented in applyCameraCalibToThree).
-      applyCameraCalibToThree(cal);
-    }
-
     const root = rootRef.current;
 
     camera.aspect = width / height;
@@ -1069,207 +825,6 @@ export default function Page() {
 
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
-  // ===== Krok 2A helpers (vanishing points + camera solve) =====
-  function lineABC(p1: Vec2, p2: Vec2) {
-    const a = p1.y - p2.y;
-    const b = p2.x - p1.x;
-    const c = p1.x * p2.y - p2.x * p1.y;
-    return { a, b, c };
-  }
-
-  function intersectLines(l1: { a: number; b: number; c: number }, l2: { a: number; b: number; c: number }): Vec2 | null {
-    const det = l1.a * l2.b - l2.a * l1.b;
-    if (Math.abs(det) < 1e-6) return null;
-    const x = (l1.b * l2.c - l2.b * l1.c) / det;
-    const y = (l2.a * l1.c - l1.a * l2.c) / det;
-    return { x, y };
-  }
-
-  function rollFromVertical(v1: Vec2, v2: Vec2) {
-    const dx = v2.x - v1.x;
-    const dy = v2.y - v1.y;
-    const ang = Math.atan2(dx, dy);
-    return -ang;
-  }
-
-  function estimateFovFromVP(vpX: Vec2, vpZ: Vec2, C: Vec2, h: number) {
-    const ux = { x: vpX.x - C.x, y: vpX.y - C.y };
-    const uz = { x: vpZ.x - C.x, y: vpZ.y - C.y };
-    const dot = ux.x * uz.x + ux.y * uz.y;
-    let f2 = -dot;
-    if (!(f2 > 1)) {
-      const f = 0.9 * h;
-      const fov = (2 * Math.atan((h / 2) / f)) * (180 / Math.PI);
-      return clamp(fov, 25, 90);
-    }
-    const f = Math.sqrt(f2);
-    const fov = (2 * Math.atan((h / 2) / f)) * (180 / Math.PI);
-    return clamp(fov, 25, 90);
-  }
-
-  function yawPitchFromVPz(vpZ: Vec2, C: Vec2, w: number, h: number) {
-    // v8: keep camera orientation stable. We only use VP to estimate FOV.
-    // Deriving yaw/pitch from noisy lines can easily flip the camera and hide the model.
-    return { yaw: 0, pitch: 0 };
-  }
-
-  function solveCameraCalib(s: Calib2AState, w: number, h: number): CamCalib | null {
-    const okLine = (ln: Line2) => ln.a && ln.b;
-    if (!okLine(s.depth1) || !okLine(s.depth2) || !okLine(s.side1) || !okLine(s.side2) || !okLine(s.vertical)) return null;
-
-    const vpZ = intersectLines(lineABC(s.depth1.a!, s.depth1.b!), lineABC(s.depth2.a!, s.depth2.b!));
-    const vpX = intersectLines(lineABC(s.side1.a!, s.side1.b!), lineABC(s.side2.a!, s.side2.b!));
-    if (!vpZ || !vpX) return null;
-
-    const C = { x: w / 2, y: h / 2 };
-    const roll = rollFromVertical(s.vertical.a!, s.vertical.b!);
-    const fov = estimateFovFromVP(vpX, vpZ, C, h);
-    const { yaw, pitch } = yawPitchFromVPz(vpZ, C, w, h);
-
-    const confidence = fov >= 28 && fov <= 85 ? 0.85 : 0.55;
-    return { fov, yaw, pitch, roll, confidence, vpX, vpZ };
-  }
-
-  function applyCameraCalibToThree(cal: CamCalib) {
-    const cam = cameraRef.current;
-    if (!cam) return;
-
-    const target = new THREE.Vector3(0, 0.35, 0);
-
-    // Base spherical taken from the initial camera setup
-    if (!camBaseSphRef.current) {
-      const off = cam.position.clone().sub(target);
-      const sph0 = new THREE.Spherical().setFromVector3(off);
-      camBaseSphRef.current = { theta: sph0.theta, phi: sph0.phi, radius: sph0.radius };
-    }
-
-    const base = camBaseSphRef.current!;
-    cam.fov = cal.fov;
-    cam.updateProjectionMatrix();
-
-    // Absolute yaw/pitch relative to the base (no compounding drift)
-    const sph = new THREE.Spherical();
-    sph.radius = base.radius;
-    sph.theta = base.theta;// v8: yaw disabled (stability)
-    sph.phi = base.phi;// v8: pitch disabled (stability)
-
-    // Clamp pitch to avoid flipping
-    const EPS = 0.12;
-    sph.phi = Math.max(EPS, Math.min(Math.PI - EPS, sph.phi));
-
-    // Position and "no-roll" orientation
-    const newPos = new THREE.Vector3().setFromSpherical(sph).add(target);
-    cam.position.copy(newPos);
-    cam.up.set(0, 1, 0);
-    cam.lookAt(target);
-
-    // Apply absolute roll around the camera's forward axis (no compounding)
-    const dir = new THREE.Vector3();
-    cam.getWorldDirection(dir); // forward direction
-    const qRoll = new THREE.Quaternion().setFromAxisAngle(dir.normalize(), cal.roll);
-    cam.quaternion.premultiply(qRoll);
-  }
-
-  function makeGhostClone(src: THREE.Object3D) {
-    const ghost = src.clone(true);
-    ghost.traverse((o: any) => {
-      if (o.isMesh) {
-        o.castShadow = false;
-        o.receiveShadow = false;
-        o.material = new THREE.MeshBasicMaterial({
-          color: 0x000000,
-          transparent: true,
-          opacity: 0.28,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          polygonOffsetUnits: -1,
-        });
-      }
-    });
-    return ghost;
-  }
-
-  function showGhost() {
-    const scene = sceneRef.current;
-    const root = rootRef.current as THREE.Object3D | null;
-    if (!scene || !root) return;
-
-    // lazily create ghost clone
-    if (!ghostRef.current) {
-      ghostRef.current = makeGhostClone(root);
-    }
-
-    // IMPORTANT: keep ghost transform in sync (root is still being transformed each draw)
-    ghostRef.current.position.copy(root.position);
-    ghostRef.current.rotation.copy(root.rotation);
-    ghostRef.current.scale.copy(root.scale);
-
-    // hide real root during preview
-    root.visible = false;
-
-    // ensure ghost is in the scene
-    if (!scene.children.includes(ghostRef.current)) scene.add(ghostRef.current);
-  }
-
-  function hideGhost() {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    // restore real model visibility
-    if (rootRef.current) rootRef.current.visible = true;
-
-    if (!ghostRef.current) return;
-    scene.remove(ghostRef.current);
-  }
-
-  function isLineReady(ln: Line2) {
-    return !!(ln.a && ln.b);
-  }
-
-  function listCalib2aPoints(s: Calib2AState): Array<[string, Vec2 | null]> {
-    return [
-      ["depth1a", s.depth1.a],
-      ["depth1b", s.depth1.b],
-      ["depth2a", s.depth2.a],
-      ["depth2b", s.depth2.b],
-      ["side1a", s.side1.a],
-      ["side1b", s.side1.b],
-      ["side2a", s.side2.a],
-      ["side2b", s.side2.b],
-      ["vera", s.vertical.a],
-      ["verb", s.vertical.b],
-    ];
-  }
-
-  function setCalib2aPoint(prev: Calib2AState, key: string, p: Vec2): Calib2AState {
-    const setLineEnd = (line: Line2, end: "a" | "b") => ({ ...line, [end]: p });
-    switch (key) {
-      case "depth1a":
-        return { ...prev, depth1: setLineEnd(prev.depth1, "a") };
-      case "depth1b":
-        return { ...prev, depth1: setLineEnd(prev.depth1, "b") };
-      case "depth2a":
-        return { ...prev, depth2: setLineEnd(prev.depth2, "a") };
-      case "depth2b":
-        return { ...prev, depth2: setLineEnd(prev.depth2, "b") };
-      case "side1a":
-        return { ...prev, side1: setLineEnd(prev.side1, "a") };
-      case "side1b":
-        return { ...prev, side1: setLineEnd(prev.side1, "b") };
-      case "side2a":
-        return { ...prev, side2: setLineEnd(prev.side2, "a") };
-      case "side2b":
-        return { ...prev, side2: setLineEnd(prev.side2, "b") };
-      case "vera":
-        return { ...prev, vertical: setLineEnd(prev.vertical, "a") };
-      case "verb":
-        return { ...prev, vertical: setLineEnd(prev.vertical, "b") };
-      default:
-        return prev;
-    }
-  }
-
 
   function draw() {
     const canvas = canvasRef.current;
@@ -1302,78 +857,6 @@ export default function Page() {
     }
 
     // 3D render over it
-
-    // ===== Krok 2A: Kalibrácia perspektívy =====
-    if (stepCurrent === 2) {
-      // v preview režime zobraz ghost + render 3D s kalibrovanou kamerou
-      if (calib2aMode === "preview" && cameraCalibPreview) {
-        applyTransformsForCurrentState(canvasW, canvasH);
-        showGhost();
-        const renderer = rendererRef.current!;
-        renderer.setSize(canvasW, canvasH, false);
-        renderer.render(sceneRef.current!, cameraRef.current!);
-        ctx.drawImage(renderer.domElement, 0, 0);
-      } else {
-        hideGhost();
-      }
-
-      // overlay čiar (vždy)
-      const drawLine = (ln: Line2, label: string) => {
-        if (!ln.a || !ln.b) return;
-        ctx.save();
-        ctx.strokeStyle = "rgba(0,0,0,0.85)";
-        ctx.lineWidth = 3;
-        ctx.setLineDash([10, 7]);
-        ctx.beginPath();
-        ctx.moveTo(ln.a.x, ln.a.y);
-        ctx.lineTo(ln.b.x, ln.b.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        const m = { x: (ln.a.x + ln.b.x) / 2, y: (ln.a.y + ln.b.y) / 2 };
-        ctx.fillStyle = "rgba(255,255,255,0.92)";
-        ctx.strokeStyle = "rgba(0,0,0,0.25)";
-        ctx.lineWidth = 1;
-        ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-        const pad = 6;
-        const tw = ctx.measureText(label).width + pad * 2;
-        const th = 20;
-        // @ts-ignore
-        ctx.beginPath();
-        // @ts-ignore
-        ctx.roundRect(m.x - tw / 2, m.y - th / 2, tw, th, 10);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = "rgba(0,0,0,0.85)";
-        ctx.fillText(label, m.x - tw / 2 + pad, m.y + 4);
-        ctx.restore();
-      };
-
-      const drawPt = (p: Vec2 | null) => {
-        if (!p) return;
-        ctx.save();
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(255,255,255,0.95)";
-        ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.fillStyle = "rgba(0,0,0,0.85)";
-        ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      };
-
-      drawLine(calib2a.depth1, "Smer do diaľky A");
-      drawLine(calib2a.depth2, "Smer do diaľky B");
-      drawLine(calib2a.side1, "Smer do strany A");
-      drawLine(calib2a.side2, "Smer do strany B");
-      drawLine(calib2a.vertical, "Zvislica");
-
-      listCalib2aPoints(calib2a).forEach(([, p]) => drawPt(p));
-
-      // nič ďalšie v draw (nechceme editor handly)
-      return;
-    }
     if (threeReadyRef.current && rendererRef.current && sceneRef.current && cameraRef.current && rootRef.current) {
       const renderer = rendererRef.current;
       const scene = sceneRef.current;
@@ -1418,40 +901,6 @@ export default function Page() {
           const rect = { x: minX, y: invMinY, w: maxX - minX, h: invMaxY - invMinY };
           setBboxRect(rect);
 
-          // auto-place: one-shot correction using *current* bboxRect after scale/yaw were applied
-          if (autoPlaceRef.current?.active) {
-            const meta = autoPlaceRef.current;
-
-            // desired: back edge (towards -forward) sits on wallMid
-            const wallMid = meta.wallMid;
-            const forward = meta.forward;
-
-            const bboxCenter = { x: rect.x + rect.w * 0.5, y: rect.y + rect.h * 0.5 };
-            const projDepthNow = Math.max(1, Math.abs(forward.x) * rect.w + Math.abs(forward.y) * rect.h);
-
-            const desiredCenter = {
-              x: wallMid.x + forward.x * (projDepthNow * 0.5),
-              y: wallMid.y + forward.y * (projDepthNow * 0.5),
-            };
-
-            const dx = desiredCenter.x - bboxCenter.x;
-            const dy = desiredCenter.y - bboxCenter.y;
-
-            // bottom alignment: bbox bottom should touch wallMid.y
-            const desiredBottomY = wallMid.y;
-            const currentBottomY = rect.y + rect.h;
-            const dyBottom = desiredBottomY - currentBottomY;
-
-            // apply a single correction in normalized pos space
-            setPos((prev) => ({
-              x: clamp(prev.x + dx / canvasW, 0.02, 0.98),
-              y: clamp(prev.y + (dy + dyBottom) / canvasH, 0.02, 0.98),
-            }));
-
-            autoPlaceRef.current = null;
-          }
-
-
           ctx.save();
           ctx.strokeStyle = "rgba(0,0,0,0.55)";
           ctx.lineWidth = 2;
@@ -1484,88 +933,11 @@ export default function Page() {
         } else {
           setBboxRect(null);
         }
-      // ===== calibration overlay (auto-place) =====
-      if (calibOpen && calibPhase !== "applied") {
-        const c = calib;
-
-        const drawLine = (a: Vec2 | null, b: Vec2 | null, label: string) => {
-          if (!a || !b) return;
-          ctx.save();
-          ctx.strokeStyle = "rgba(0,0,0,0.85)";
-          ctx.lineWidth = 3;
-          ctx.setLineDash([10, 7]);
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-          const pad = 6;
-          ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-          const tw = ctx.measureText(label).width;
-          const w = tw + pad * 2;
-          const h = 20;
-
-          ctx.fillStyle = "rgba(255,255,255,0.92)";
-          ctx.strokeStyle = "rgba(0,0,0,0.25)";
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          // @ts-ignore
-          if ((ctx as any).roundRect) {
-            // @ts-ignore
-            (ctx as any).roundRect(m.x - w / 2, m.y - h / 2, w, h, 10);
-          } else {
-            // fallback
-            const x = m.x - w / 2;
-            const y = m.y - h / 2;
-            const r = 10;
-            ctx.moveTo(x + r, y);
-            ctx.arcTo(x + w, y, x + w, y + h, r);
-            ctx.arcTo(x + w, y + h, x, y + h, r);
-            ctx.arcTo(x, y + h, x, y, r);
-            ctx.arcTo(x, y, x + w, y, r);
-          }
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = "rgba(0,0,0,0.82)";
-          ctx.fillText(label, m.x - w / 2 + pad, m.y + 4);
-          ctx.restore();
-        };
-
-        const drawPt = (p: Vec2 | null) => {
-          if (!p) return;
-          ctx.save();
-          ctx.beginPath();
-          ctx.fillStyle = "rgba(255,255,255,0.95)";
-          ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.fillStyle = "rgba(0,0,0,0.85)";
-          ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        };
-
-        drawLine(c.wallA, c.wallB, "Kontakt pri dome");
-        drawLine(c.frontA, c.frontB, "Predná línia");
-        drawLine(c.hLeftBottom, c.hLeftTop, "Výška L");
-        drawLine(c.hRightBottom, c.hRightTop, "Výška P");
-
-        [c.wallA, c.wallB, c.frontA, c.frontB, c.hLeftBottom, c.hLeftTop, c.hRightBottom, c.hRightTop].forEach(drawPt);
-      }
-
       } catch {
         // ignore
       }
     }
   }
-
-  function requestDraw() {
-    draw();
-  }
-
 
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
@@ -1596,104 +968,6 @@ export default function Page() {
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
-
-    // ===== Krok 2A: kalibrácia perspektívy (kamera) =====
-    if (stepCurrent === 2 && calib2aMode === "edit") {
-      // 1) najprv skús chytiť existujúci bod
-      const pts = listCalib2aPoints(calib2a);
-      let hit: string | null = null;
-      for (const [k, pt] of pts) {
-        if (!pt) continue;
-        if (dist(p, pt) <= 18) {
-          hit = k;
-          break;
-        }
-      }
-      if (hit) {
-        e.preventDefault();
-        (e.currentTarget as any).setPointerCapture?.(e.pointerId);
-        calib2aDragRef.current = { active: true, key: hit };
-        return;
-      }
-
-      // 2) ak nič netrafíš, pridaj nový bod do najbližšieho "prázdneho" slotu
-      // poradie: depth1 (a,b) -> depth2 -> side1 -> side2 -> vertical
-      const order: string[] = [
-        "depth1.a",
-        "depth1.b",
-        "depth2.a",
-        "depth2.b",
-        "side1.a",
-        "side1.b",
-        "side2.a",
-        "side2.b",
-        "vertical.a",
-        "vertical.b",
-      ];
-
-      const keyMap: Record<string, string> = {
-        "depth1.a": "depth1a",
-        "depth1.b": "depth1b",
-        "depth2.a": "depth2a",
-        "depth2.b": "depth2b",
-        "side1.a": "side1a",
-        "side1.b": "side1b",
-        "side2.a": "side2a",
-        "side2.b": "side2b",
-        "vertical.a": "vera",
-        "vertical.b": "verb",
-      };
-
-      let firstEmpty: string | null = null;
-      for (const k of order) {
-        const [ln, end] = k.split(".");
-        // @ts-ignore
-        const cur = calib2a[ln]?.[end] as Vec2 | null | undefined;
-        if (!cur) {
-          firstEmpty = keyMap[k];
-          break;
-        }
-      }
-
-      if (firstEmpty) {
-        setCalib2a((prev) => setCalib2aPoint(prev, firstEmpty!, { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) }));
-        requestDraw();
-        return;
-      }
-
-      // 3) ak sú všetky body vyplnené, nič nerob (user môže chytiť bodky a posúvať)
-      return;
-    }
-
-    // ===== Auto-place: drag guide points =====
-    if (calibOpen && calibPhase === "edit") {
-      const points: [CalibPointId, Vec2 | null][] = [
-        ["wallA", calib.wallA],
-        ["wallB", calib.wallB],
-        ["frontA", calib.frontA],
-        ["frontB", calib.frontB],
-        ["hLeftBottom", calib.hLeftBottom],
-        ["hLeftTop", calib.hLeftTop],
-        ["hRightBottom", calib.hRightBottom],
-        ["hRightTop", calib.hRightTop],
-      ];
-
-      let hit: CalibPointId | null = null;
-      for (const [id, pt] of points) {
-        if (!pt) continue;
-        if (dist(p, pt) <= CALIB_HIT) {
-          hit = id;
-          break;
-        }
-      }
-
-      if (hit) {
-        e.preventDefault();
-        (e.currentTarget as any).setPointerCapture(e.pointerId);
-        calibDragRef.current = { active: true, id: hit };
-        return;
-      }
-    }
 
     e.preventDefault();
     (e.currentTarget as any).setPointerCapture(e.pointerId);
@@ -1760,29 +1034,6 @@ export default function Page() {
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-    // ===== Krok 2A: drag kalibračných bodov (kamera) =====
-    if (stepCurrent === 2 && calib2aMode === "edit" && calib2aDragRef.current.active && calib2aDragRef.current.key) {
-      e.preventDefault();
-      const p = toCanvasXY(e);
-      const key = calib2aDragRef.current.key;
-      setCalib2a((prev) => setCalib2aPoint(prev, key, { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) }));
-      requestDraw();
-      return;
-    }
-
-    // ===== Auto-place: move guide point =====
-    if (calibOpen && calibPhase === "edit" && calibDragRef.current?.active && calibDragRef.current.id) {
-      e.preventDefault();
-      const p = toCanvasXY(e);
-      const id = calibDragRef.current.id;
-      setCalib((prev) => ({
-        ...prev,
-        [id]: { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) },
-      }) as CalibState);
-      requestDraw();
-      return;
-    }
-
     if (!dragRef.current.active) return;
 
     e.preventDefault();
@@ -1852,23 +1103,6 @@ export default function Page() {
   }
 
   function onPointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
-
-    // ===== Krok 2A: end drag =====
-    if (stepCurrent === 2 && calib2aDragRef.current.active) {
-      calib2aDragRef.current = { active: false, key: null };
-      try {
-        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
-      } catch {}
-      return;
-    }
-    // ===== Auto-place: end guide drag =====
-    if (calibOpen && calibPhase === "edit" && calibDragRef.current?.active) {
-      calibDragRef.current = null;
-      try {
-        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
-      } catch {}
-      return;
-    }
     if (!dragRef.current.active) return;
     dragRef.current.active = false;
     dragRef.current.tiltAxis = null;
@@ -2013,11 +1247,10 @@ export default function Page() {
   const stepCurrent = useMemo(() => {
     const hasAnyVariant = variants.length > 0;
     if (!bgImg) return 1;
-    if (!cameraCalib) return 2; // 2A perspektíva
-    if (!hasAnyVariant) return 3; // editor
-    if (!leadSubmitted) return leadOpen ? 5 : 4;
-    return 6;
-  }, [bgImg, cameraCalib, variants.length, leadSubmitted, leadOpen]);
+    if (!hasAnyVariant) return 2;
+    if (!leadSubmitted) return leadOpen ? 4 : 3;
+    return 5;
+  }, [bgImg, variants.length, leadSubmitted, leadOpen]);
 
   const heroStep = useMemo(() => {
     return HERO_STEPS.find((s) => s.id === stepCurrent) || HERO_STEPS[0];
@@ -2077,7 +1310,7 @@ export default function Page() {
                   fontWeight: 950,
                 }}
               >
-                {heroStep.id}/6
+                {heroStep.id}/5
               </span>
               <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
                 {heroStep.title}
@@ -2126,106 +1359,6 @@ export default function Page() {
           </div>
 
           <div style={{ padding: 14, display: "grid", gap: 12 }}>
-
-            {stepCurrent === 2 ? (
-              <div
-                style={{
-                  background: "#fff",
-                  border: "1px solid rgba(0,0,0,0.10)",
-                  borderRadius: 14,
-                  padding: 12,
-                  display: "grid",
-                  gap: 10,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 950, fontSize: 14 }}>Krok 2A: Nastav perspektívu</div>
-                  <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(0,0,0,0.55)" }}>
-                    {cameraCalib ? "✅ uložené" : calib2aMode === "preview" ? "Náhľad" : "Edit"}
-                    {cameraCalibPreview ? ` • confidence ${(cameraCalibPreview.confidence * 100).toFixed(0)}%` : ""}
-                  </div>
-                </div>
-
-                <div style={{ fontSize: 12, color: "rgba(0,0,0,0.75)", lineHeight: 1.35 }}>
-                  Nakresli čiary: <b>2× do diaľky</b>, <b>2× do strany</b>, <b>1× zvislica</b>. Potom klikni na Náhľad (ghost pergola) a Použiť.
-                </div>
-
-                <div style={{ display: "grid", gap: 6, fontSize: 12 }}>
-                  <div>• Smer do diaľky: {isLineReady(calib2a.depth1) && isLineReady(calib2a.depth2) ? "✅" : "⬜"}</div>
-                  <div>• Smer do strany: {isLineReady(calib2a.side1) && isLineReady(calib2a.side2) ? "✅" : "⬜"}</div>
-                  <div>• Zvislica: {isLineReady(calib2a.vertical) ? "✅" : "⬜"}</div>
-                </div>
-
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cal = solveCameraCalib(calib2a, canvasW, canvasH);
-                      if (!cal) {
-                        alert("Najprv nakresli všetky čiary (2× do diaľky, 2× do strany, 1× zvislica).");
-                        return;
-                      }
-                      setCameraCalibPreview(cal);
-                      applyCameraCalibToThree(cal);
-                      setCalib2aMode("preview");
-                      showGhost();
-                      requestDraw();
-                    }}
-                    style={{ ...btnStyle, background: "#111", color: "#fff", borderColor: "#111" }}
-                  >
-                    Náhľad perspektívy
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCalib2aMode("edit");
-                      setCameraCalibPreview(null);
-                      hideGhost();
-                      requestDraw();
-                    }}
-                    style={btnStyle}
-                    disabled={calib2aMode !== "preview"}
-                  >
-                    Upraviť
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cal = cameraCalibPreview || solveCameraCalib(calib2a, canvasW, canvasH);
-                      if (!cal) {
-                        alert("Najprv sprav Náhľad perspektívy.");
-                        return;
-                      }
-                      setCameraCalib(cal);
-                      setCameraCalibPreview(null);
-                      setCalib2aMode("edit");
-                      hideGhost();
-                      requestDraw();
-                    }}
-                    style={{ ...btnStyle, background: "rgba(0,0,0,0.08)" }}
-                  >
-                    Použiť perspektívu
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCameraCalib({ fov: 35, yaw: 0, pitch: 0, roll: 0, confidence: 0 });
-                      setCameraCalibPreview(null);
-                      setCalib2aMode("edit");
-                      hideGhost();
-                      requestDraw();
-                    }}
-                    style={{ ...btnStyle, background: "transparent" }}
-                  >
-                    Preskočiť
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
             {/* Mode controls like screenshot */}
             {isMobile ? (
               <div style={{ display: "grid", gap: 10 }}>
@@ -2402,114 +1535,6 @@ export default function Page() {
                 </div>
               </div>
             )}
-
-            {/* Auto-place (beta) */}
-            {bgImg ? (
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!calibOpen) {
-                      setCalibOpen(true);
-                      setCalibPhase("edit");
-                      prevTransformRef.current = null;
-                    } else {
-                      setCalibOpen(false);
-                      setCalibPhase("off");
-                      // ak bol náhľad, vráť transformy
-                      if (prevTransformRef.current) {
-                        const t = prevTransformRef.current;
-                        setPos(t.pos);
-                        setRot2D(t.rot2D);
-                        setRot3D(t.rot3D);
-                        setScalePct(t.scalePct);
-                        prevTransformRef.current = null;
-                      }
-                    }
-                  }}
-                  style={{
-                    ...btnStyle,
-                    background: calibOpen ? "#111" : "#fff",
-                    color: calibOpen ? "#fff" : "#111",
-                    borderColor: calibOpen ? "#111" : "rgba(0,0,0,0.14)",
-                  }}
-                >
-                  Auto osadenie (beta)
-                </button>
-
-                {calibOpen ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const tr = computeAutoTransform();
-                        if (!tr) return;
-
-                        // schedule one-shot position correction after next bbox read
-                        if ((tr as any).__meta) {
-                          autoPlaceRef.current = { active: true, ...(tr as any).__meta };
-                        }
-
-                        if (!prevTransformRef.current) {
-                          prevTransformRef.current = { pos, rot2D, rot3D, scalePct };
-                        }
-
-                        setPos(tr.posN);
-                        setRot3D({ yaw: tr.yaw, pitch: tr.pitch });
-                        setRot2D(tr.roll);
-                        setScalePct(tr.scale);
-                        setCalibPhase("preview");
-                      }}
-                      style={{ ...btnStyle }}
-                    >
-                      Náhľad osadenia
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (prevTransformRef.current) {
-                          const t = prevTransformRef.current;
-                          setPos(t.pos);
-                          setRot2D(t.rot2D);
-                          setRot3D(t.rot3D);
-                          setScalePct(t.scalePct);
-                          prevTransformRef.current = null;
-                        }
-                        setCalibPhase("edit");
-                      }}
-                      style={{ ...btnStyle }}
-                    >
-                      Upraviť čiary
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const tr = computeAutoTransform();
-                        if (!tr) return;
-
-                        setPos(tr.posN);
-                        setRot3D({ yaw: tr.yaw, pitch: tr.pitch });
-                        setRot2D(tr.roll);
-                        setScalePct(tr.scale);
-
-                        prevTransformRef.current = null;
-                        setCalibPhase("applied");
-                        setCalibOpen(false);
-                      }}
-                      style={{ ...btnStyle, background: "#111", color: "#fff", borderColor: "#111" }}
-                    >
-                      Osadiť pergolu
-                    </button>
-
-                    <div style={{ fontSize: 12, fontWeight: 850, color: "rgba(0,0,0,0.62)", width: "100%" }}>
-                      Tip: potiahni bodky na čiarach. Najprv „Kontakt pri dome“, potom „Predná línia“, potom výšky.
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
 
             {/* 4. riadok na mobile: Zoom / Hĺbka / Výška / Šírka (a na desktope ostáva ako bolo) */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
