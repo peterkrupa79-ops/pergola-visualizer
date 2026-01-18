@@ -868,9 +868,8 @@ export default function Page() {
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctxMaybe = canvas.getContext("2d");
-    if (!ctxMaybe) return;
-    const ctx = ctxMaybe;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
     // clear (light editor)
     ctx.clearRect(0, 0, canvasW, canvasH);
@@ -976,33 +975,33 @@ export default function Page() {
       } catch {
         // ignore
       }
-
-	    // Perspective overlay (horizon line) – shown only when the perspective panel is open
-	    if (perspectiveOpen) {
-	      const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
-	      ctx.save();
-	      ctx.strokeStyle = "rgba(0,0,0,0.55)";
-	      ctx.lineWidth = 2;
-	      ctx.setLineDash([10, 8]);
-	      ctx.beginPath();
-	      ctx.moveTo(0, y);
-	      ctx.lineTo(canvasW, y);
-	      ctx.stroke();
-	      ctx.setLineDash([]);
-	      // label
-	      ctx.fillStyle = "rgba(0,0,0,0.75)";
-	      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-	      const label = "HORIZONT";
-	      const pad = 8;
-	      const w = ctx.measureText(label).width + pad * 2;
-	      const bx = 12;
-	      const by = clamp(y - 28, 8, canvasH - 28);
-	      ctx.fillRect(bx, by, w, 22);
-	      ctx.fillStyle = "#fff";
-	      ctx.fillText(label, bx + pad, by + 15);
-	      ctx.restore();
-	    }
-	  }
+    }
+  }
+    // Perspective overlay (horizon line) – shown only when the perspective panel is open
+    if (perspectiveOpen) {
+      const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
+      ctx.save();
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvasW, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // label
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
+      const label = "HORIZONT";
+      const pad = 8;
+      const w = ctx.measureText(label).width + pad * 2;
+      const bx = 12;
+      const by = clamp(y - 28, 8, canvasH - 28);
+      ctx.fillRect(bx, by, w, 22);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, bx + pad, by + 15);
+      ctx.restore();
+    }
 
 
   // ===== 1 finger = always edit canvas =====
