@@ -18,13 +18,10 @@ const SCALE_MAX = 200;
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
-const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Preserve the exact original geometry, perspective and camera viewpoint.
-CRITICAL: Keep ALL pergola legs visible (all 4 legs). Do NOT remove, hide, thin, merge, or simplify any legs.
-CRITICAL: There are exactly 4 legs/posts. Do NOT add any extra legs/posts/supports. Front edge must have exactly 2 posts (not 3).
-CRITICAL: Do NOT move, resize, warp, or change proportions of the pergola. Do NOT change frame thickness or leg positions.
-If small dark markers are present near the ground, they indicate the exact leg positions. Keep legs exactly on these markers and do not add any other legs.
+const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
+Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
 Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
-Preserve the background as much as possible; edit only lighting/shadows/color/noise/sharpness around the pergola so it looks photo-realistic in the scene.`;
+Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
 
 const MAX_VARIANTS = 6;
 
@@ -836,14 +833,14 @@ export default function Page() {
 
     // --- Camera matching (photo perspective) ---
     // depthPct -> FOV range (tele -> wide)
-    const fov = lerp(35, 65, clamp(perspective.depthPct / 100, 0, 1));
+    const fov = lerp(30, 75, clamp(perspective.depthPct / 100, 0, 1));
     camera.fov = fov;
 
     camera.aspect = width / height;
 
     // horizonPct -> approximate camera height + look target
-    const hPct = clamp(perspective.horizonPct, 25, 80);
-    const t = (hPct - 25) / 55; // 0..1
+    const hPct = clamp(perspective.horizonPct, 10, 90);
+    const t = (hPct - 10) / 80; // 0..1
     const camY = lerp(1.20, 0.55, t);
     const targetY = lerp(0.42, 0.14, t);
 
@@ -1219,78 +1216,56 @@ export default function Page() {
       renderer.render(scene, cameraRef.current);
 
       const glTemp = renderer.domElement;
-      octx.save();
-      // Slight readability boost for thin legs (export only – UI stays unchanged)
-      octx.filter = "contrast(1.08) brightness(1.02)";
       octx.drawImage(glTemp, 0, 0);
-      octx.restore();
-      // --- Leg anchor markers (export only) to discourage AI from inventing extra posts ---
-      try {
-        const gl = renderer.getContext();
-        const pixels = new Uint8Array(outW * outH * 4);
-        gl.readPixels(0, 0, outW, outH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
-        let minX = outW, minY = outH, maxX = 0, maxY = 0;
-        let any = false;
-        const step = 4;
-        for (let y = 0; y < outH; y += step) {
-          for (let x = 0; x < outW; x += step) {
-            const i = (y * outW + x) * 4;
-            const a = pixels[i + 3];
-            if (a > 12) {
-              any = true;
-              if (x < minX) minX = x;
-              if (y < minY) minY = y;
-              if (x > maxX) maxX = x;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
+      // === Dual-panel input pre AI (vlavo referencia pergoly, vpravo scéna) ===
+      // Cieľ: donútiť AI rešpektovať presný tvar/rotáciu/tilt/scale pergoly.
+      const GAP = Math.max(18, Math.round(outW * 0.02));
+      const refW = Math.max(360, Math.round(outW * 0.32));
 
-        if (any) {
-          // convert Y from WebGL bottom-left to canvas top-left
-          const invMinY = outH - maxY;
-          const invMaxY = outH - minY;
-          const rect = { x: minX, y: invMinY, w: maxX - minX, h: invMaxY - invMinY };
+      const duo = document.createElement("canvas");
+      duo.width = refW + GAP + outW;
+      duo.height = outH;
+      const dctx = duo.getContext("2d")!;
 
-          // heuristic: front legs near the bottom of bbox; rear legs appear higher
-          const frontY = clamp(rect.y + rect.h - 6, 0, outH);
-          const rearY = clamp(rect.y + rect.h * 0.62, 0, outH);
-          const leftX = clamp(rect.x + 8, 0, outW);
-          const rightX = clamp(rect.x + rect.w - 8, 0, outW);
-          const pts = [
-            { x: leftX, y: frontY },
-            { x: rightX, y: frontY },
-            { x: leftX, y: rearY },
-            { x: rightX, y: rearY },
-          ];
+      // background
+      dctx.fillStyle = "#fff";
+      dctx.fillRect(0, 0, duo.width, duo.height);
 
-          octx.save();
-          octx.globalAlpha = 0.22;
-          octx.fillStyle = "rgba(0,0,0,0.9)";
-          octx.strokeStyle = "rgba(255,255,255,0.35)";
-          octx.lineWidth = 2;
-          for (const pt of pts) {
-            octx.beginPath();
-            octx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
-            octx.fill();
-            octx.stroke();
-          }
-          octx.restore();
+      // left panel (reference)
+      dctx.fillStyle = "rgb(235,235,235)";
+      dctx.fillRect(0, 0, refW, outH);
 
-          // IMPORTANT: anchors are export-only (not shown in UI). They help the model keep the exact leg count/positions.
+      // draw reference pergola render into left panel (contain)
+      const s = Math.min(refW / outW, 1);
+      const dw = outW * s;
+      const dh = outH * s;
+      const dx = (refW - dw) / 2;
+      const dy = (outH - dh) / 2;
+      dctx.drawImage(glTemp, dx, dy, dw, dh);
 
-        }
-      } catch {
-        // if readPixels is not allowed, just skip anchors
-      }
+      // separator
+      dctx.fillStyle = "rgba(0,0,0,0.22)";
+      dctx.fillRect(refW, 0, GAP, outH);
+
+      // right panel (scene composite)
+      dctx.drawImage(out, refW + GAP, 0);
+
       const blob: Blob = await new Promise((res, rej) =>
-        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+        duo.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
 
       const form = new FormData();
-      form.append("image", blob, "collage.jpg");
-      form.append("prompt", prompt);
+      form.append("image", blob, "duo.jpg");
+
+      const duoPrompt = `LEFT PANEL: reference pergola render (exact shape, roof design, beam thickness, leg count and spacing).
+RIGHT PANEL: the pergola placed into the real photo.
+Rules: Keep the pergola geometry EXACTLY like the LEFT panel and keep its position/scale/rotation/tilt EXACTLY like the RIGHT panel.
+Do NOT redesign the roof or structure. Do NOT add/remove legs or any supports.
+Only harmonize lighting, shadows, ambient occlusion, reflections, color grading, sharpness and noise so it looks photo-realistic in the scene.`;
+      form.append("prompt", `${duoPrompt}
+
+${prompt}`);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
@@ -1753,8 +1728,8 @@ export default function Page() {
                 </div>
 
                 <CustomSlider
-                  min={25}
-                  max={80}
+                  min={10}
+                  max={90}
                   step={1}
                   value={Math.round(perspective.horizonPct)}
                   onChange={(v) => setPerspective((p) => ({ ...p, horizonPct: v }))}
