@@ -1552,8 +1552,9 @@ export default function Page() {
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const p = toCanvasXY(e);
 
-    // ===== Krok 2A: drag kalibračných bodov (kamera) =====
+    // ===== Krok 2A: kalibrácia perspektívy (kamera) =====
     if (stepCurrent === 2 && calib2aMode === "edit") {
+      // 1) najprv skús chytiť existujúci bod
       const pts = listCalib2aPoints(calib2a);
       let hit: string | null = null;
       for (const [k, pt] of pts) {
@@ -1569,6 +1570,54 @@ export default function Page() {
         calib2aDragRef.current = { active: true, key: hit };
         return;
       }
+
+      // 2) ak nič netrafíš, pridaj nový bod do najbližšieho "prázdneho" slotu
+      // poradie: depth1 (a,b) -> depth2 -> side1 -> side2 -> vertical
+      const order: string[] = [
+        "depth1.a",
+        "depth1.b",
+        "depth2.a",
+        "depth2.b",
+        "side1.a",
+        "side1.b",
+        "side2.a",
+        "side2.b",
+        "vertical.a",
+        "vertical.b",
+      ];
+
+      const keyMap: Record<string, string> = {
+        "depth1.a": "depth1a",
+        "depth1.b": "depth1b",
+        "depth2.a": "depth2a",
+        "depth2.b": "depth2b",
+        "side1.a": "side1a",
+        "side1.b": "side1b",
+        "side2.a": "side2a",
+        "side2.b": "side2b",
+        "vertical.a": "vera",
+        "vertical.b": "verb",
+      };
+
+      let firstEmpty: string | null = null;
+      for (const k of order) {
+        const [ln, end] = k.split(".");
+        // @ts-ignore
+        const cur = calib2a[ln]?.[end] as Vec2 | null | undefined;
+        if (!cur) {
+          firstEmpty = keyMap[k];
+          break;
+        }
+      }
+
+      if (firstEmpty) {
+        setCalib2a((prev) => setCalib2aPoint(prev, firstEmpty!, { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) }));
+        requestDraw();
+        return;
+      }
+
+      // 3) ak sú všetky body vyplnené, nič nerob (user môže chytiť bodky a posúvať)
+      return;
     }
 
     // ===== Auto-place: drag guide points =====
@@ -1666,23 +1715,26 @@ export default function Page() {
   }
 
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+    // ===== Krok 2A: drag kalibračných bodov (kamera) =====
+    if (stepCurrent === 2 && calib2aMode === "edit" && calib2aDragRef.current.active && calib2aDragRef.current.key) {
+      e.preventDefault();
+      const p = toCanvasXY(e);
+      const key = calib2aDragRef.current.key;
+      setCalib2a((prev) => setCalib2aPoint(prev, key, { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) }));
+      requestDraw();
+      return;
+    }
+
     // ===== Auto-place: move guide point =====
     if (calibOpen && calibPhase === "edit" && calibDragRef.current?.active && calibDragRef.current.id) {
       e.preventDefault();
       const p = toCanvasXY(e);
-
-    // ===== Krok 2A: drag =====
-    if (stepCurrent === 2 && calib2aMode === "edit" && calib2aDragRef.current.active && calib2aDragRef.current.key) {
-      e.preventDefault();
-      const key = calib2aDragRef.current.key;
-      setCalib2a((prev) => setCalib2aPoint(prev, key, { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) }));
-      return;
-    }
       const id = calibDragRef.current.id;
       setCalib((prev) => ({
         ...prev,
         [id]: { x: clamp(p.x, 0, canvasW), y: clamp(p.y, 0, canvasH) },
       }) as CalibState);
+      requestDraw();
       return;
     }
 
