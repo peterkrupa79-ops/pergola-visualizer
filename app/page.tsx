@@ -238,7 +238,7 @@ function makeId() {
 async function b64PngToBlob(b64: string): Promise<Blob> {
   const r = await fetch(`data:image/png;base64,${b64}`);
   return await r.blob();
-
+}
 
 async function hasTooManyFrontPosts(b64: string): Promise<boolean> {
   // Heuristic: count strong dark vertical "post" columns in the left half of the image.
