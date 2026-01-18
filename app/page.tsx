@@ -20,7 +20,9 @@ const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
 const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Preserve the exact original geometry, perspective and camera viewpoint.
 CRITICAL: Keep ALL pergola legs visible (all 4 legs). Do NOT remove, hide, thin, merge, or simplify any legs.
+CRITICAL: There are exactly 4 legs/posts. Do NOT add any extra legs/posts/supports. Front edge must have exactly 2 posts (not 3).
 CRITICAL: Do NOT move, resize, warp, or change proportions of the pergola. Do NOT change frame thickness or leg positions.
+If small dark markers are present near the ground, they indicate the exact leg positions. Keep legs exactly on these markers and do not add any other legs.
 Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
 Preserve the background as much as possible; edit only lighting/shadows/color/noise/sharpness around the pergola so it looks photo-realistic in the scene.`;
 
@@ -1222,7 +1224,50 @@ export default function Page() {
       octx.filter = "contrast(1.08) brightness(1.02)";
       octx.drawImage(glTemp, 0, 0);
       octx.restore();
+      // --- Leg anchor markers (export only) to discourage AI from inventing extra posts ---
+      try {
+        const gl = renderer.getContext();
+        const pixels = new Uint8Array(outW * outH * 4);
+        gl.readPixels(0, 0, outW, outH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
+        let minX = outW, minY = outH, maxX = 0, maxY = 0;
+        let any = false;
+        const step = 4;
+        for (let y = 0; y < outH; y += step) {
+          for (let x = 0; x < outW; x += step) {
+            const i = (y * outW + x) * 4;
+            const a = pixels[i + 3];
+            if (a > 12) {
+              any = true;
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+
+        if (any) {
+          // convert Y from WebGL bottom-left to canvas top-left
+          const invMinY = outH - maxY;
+          const invMaxY = outH - minY;
+          const rect = { x: minX, y: invMinY, w: maxX - minX, h: invMaxY - invMinY };
+
+          // heuristic: front legs near the bottom of bbox; rear legs appear higher
+          const frontY = clamp(rect.y + rect.h - 6, 0, outH);
+          const rearY = clamp(rect.y + rect.h * 0.62, 0, outH);
+          const leftX = clamp(rect.x + 8, 0, outW);
+          const rightX = clamp(rect.x + rect.w - 8, 0, outW);
+          const pts = [
+            { x: leftX, y: frontY },
+            { x: rightX, y: frontY },
+            { x: leftX, y: rearY },
+            { x: rightX, y: rearY },
+          ];
+
+          octx.save();
+          octx.globalAlpha = 0.22;
+          octx.fillStyle = 
       const blob: Blob = await new Promise((res, rej) =>
         out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
