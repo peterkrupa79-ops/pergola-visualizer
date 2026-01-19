@@ -1232,13 +1232,60 @@ export default function Page() {
       const glTemp = renderer.domElement;
       octx.drawImage(glTemp, 0, 0);
 
+      // --- Position lock overlay (anchors + footprint) for AI (export-only) ---
+      // This helps prevent the model from translating the pergola in the final render.
+      if (bboxRect) {
+        const sx = outW / Math.max(1, canvasW);
+        const sy = outH / Math.max(1, canvasH);
+        const rx = bboxRect.x * sx;
+        const ry = bboxRect.y * sy;
+        const rw = bboxRect.w * sx;
+        const rh = bboxRect.h * sy;
+
+        const pad = Math.min(rw, rh) * 0.02;
+        const x0 = rx + pad;
+        const y0 = ry + pad;
+        const x1 = rx + rw - pad;
+        const y1 = ry + rh - pad;
+
+        octx.save();
+        octx.lineWidth = Math.max(2, Math.round(Math.min(outW, outH) * 0.002));
+        octx.strokeStyle = "rgba(0,0,0,0.45)";
+        octx.setLineDash([Math.max(10, octx.lineWidth * 6), Math.max(8, octx.lineWidth * 5)]);
+        octx.strokeRect(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0));
+        octx.setLineDash([]);
+
+        const r = Math.max(4, Math.round(octx.lineWidth * 2.4));
+        const pts = [
+          [x0, y1],
+          [x1, y1],
+          [x0, y0],
+          [x1, y0],
+        ];
+        octx.globalAlpha = 0.22;
+        octx.fillStyle = "rgba(0,0,0,1)";
+        for (const [px, py] of pts) {
+          octx.beginPath();
+          octx.arc(px, py, r, 0, Math.PI * 2);
+          octx.fill();
+        }
+        octx.restore();
+      }
+
       const blob: Blob = await new Promise((res, rej) =>
         out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
 
       const form = new FormData();
       form.append("image", blob, "collage.jpg");
-      form.append("prompt", prompt);
+      const promptForSend =
+        prompt +
+        "\n\nPOSITION LOCK:\n" +
+        "- Do NOT move (translate) the pergola. Keep its footprint in the exact same pixel position as in the input image.\n" +
+        "- The dashed footprint outline and the 4 small ground markers define the exact pergola placement. All 4 legs must stay on those markers.\n" +
+        "- Do not add, remove, or reposition any legs/posts.\n" +
+        "- No reframing, no cropping, no camera change. Keep image boundaries identical.\n";
+      form.append("prompt", promptForSend);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
