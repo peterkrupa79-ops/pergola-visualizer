@@ -30,35 +30,26 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
   {
     id: 1,
     title: "Nahraj fotku",
-    hint: "Pre najlepší výsledok odporúčame fotografiu:
-
-z výšky očí alebo mierne zboku,
-
-s dobrým svetlom,
-
-ktorá zachytáva čo najväčší priestor okolo terasy, nielen miesto tesne pri pergole.
-
-Čím viac okolia je na fotke viditeľné, tým lepšie vie AI pochopiť mierku, perspektívu a osadenie pergoly.",
+    hint:
+      "Nahraj fotku terasy alebo domu (JPG/PNG). Ideálne z výšky očí alebo mierne zboku a tak, aby na fotke bolo vidno čo najviac okolia (nie len miesto tesne pri pergole). Viac priestoru na fotke pomôže mierke a perspektíve.",
   },
   {
     id: 2,
     title: "Umiestni pergolu",
-    hint: "Vyber typ pergoly, posuň ju na správne miesto, otoč alebo nakloň. Pomocou sliderov uprav rozmery.",
+    hint:
+      "Vyber typ pergoly, posuň ju do fotky, otoč alebo nakloň a nastav rozmery. Voliteľne otvor Perspektíva a dolaď horizont a hĺbku pohľadu podľa fotky. Tip: nastav pergolu radšej trochu menšiu, AI ju vo výsledku často mierne zväčší.",
   },
   {
     id: 3,
-    title: "Vygeneruj varianty",
-    hint: "Klikni na Vygenerovať a vytvor si až 6 AI variantov. Môžeš si vymeniť fotku pozadia alebo vyskúšať rôzne varianty pergoly alebo zimnej záhrady. Potom si otvor náhľad a vyber najlepší.",
+    title: "Vygeneruj vizualizácie",
+    hint:
+      "Klikni na Vygenerovať a nechaj AI vytvoriť varianty. AI doladí svetlo, tiene a celkový vzhľad, aby pergola pôsobila prirodzene. Je to pomôcka pre predstavu, AI môže občas domýšľať alebo dokresľovať detaily.",
   },
   {
     id: 4,
-    title: "Vyplň formulár",
-    hint: "Pre odomknutie sťahovania vyplň formulár a vyber 1 vizualizáciu, ktorú nám odošleš (môžeš pridať poznámku kde vieš uviesť doplňujúce informácie).",
-  },
-  {
-    id: 5,
-    title: "Stiahni PNG",
-    hint: "Po úspešnom odoslaní formulára sa odomkne sťahovanie PNG jednej alebo všetkých vizualizácií.",
+    title: "Odošli dopyt a stiahni PNG",
+    hint:
+      "Vyber najlepší variant a vyplň krátky formulár, aby sa odomklo sťahovanie. Po odoslaní si môžeš stiahnuť PNG a pridať poznámku k požiadavke, aby sme vedeli pripraviť ďalší postup.",
   },
 ];
 
@@ -430,6 +421,25 @@ export default function Page() {
 
   // ===== Hero (rozbaľovací návod v mobile) =====
   const [heroHintOpen, setHeroHintOpen] = useState(false);
+  // ===== Úvodné info (pop-up) =====
+  const [introOpen, setIntroOpen] = useState(false);
+
+  // ===== Úvodné info (pop-up) =====
+  useEffect(() => {
+    try {
+      const seen = window.localStorage.getItem("pergola_intro_seen") === "1";
+      setIntroOpen(!seen);
+    } catch {
+      setIntroOpen(true);
+    }
+  }, []);
+
+  const closeIntro = () => {
+    setIntroOpen(false);
+    try {
+      window.localStorage.setItem("pergola_intro_seen", "1");
+    } catch {}
+  };
 
   // jemné guide správanie (bez overlayov)
   const [guideSeen, setGuideSeen] = useState({ move: false, roll: false, resize: false });
@@ -491,7 +501,6 @@ export default function Page() {
 
   const [perspectiveOpen, setPerspectiveOpen] = useState(false);
   const [perspective, setPerspective] = useState(defaultPerspective(isMobileRef.current));
-
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
@@ -872,7 +881,6 @@ export default function Page() {
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
-
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -984,34 +992,32 @@ export default function Page() {
         // ignore
       }
     }
+  }
     // Perspective overlay (horizon line) – shown only when the perspective panel is open
     if (perspectiveOpen) {
-    const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
-    ctx.save();
-    ctx.strokeStyle = "rgba(0,0,0,0.55)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([10, 8]);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(canvasW, y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // label
-    ctx.fillStyle = "rgba(0,0,0,0.75)";
-    ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
-    const label = "HORIZONT";
-    const pad = 8;
-    const w = ctx.measureText(label).width + pad * 2;
-    const bx = 12;
-    const by = clamp(y - 28, 8, canvasH - 28);
-    ctx.fillRect(bx, by, w, 22);
-    ctx.fillStyle = "#fff";
-    ctx.fillText(label, bx + pad, by + 15);
-    ctx.restore();
+      const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
+      ctx.save();
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 8]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvasW, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // label
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.font = "12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto";
+      const label = "HORIZONT";
+      const pad = 8;
+      const w = ctx.measureText(label).width + pad * 2;
+      const bx = 12;
+      const by = clamp(y - 28, 8, canvasH - 28);
+      ctx.fillRect(bx, by, w, 22);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, bx + pad, by + 15);
+      ctx.restore();
     }
-  }
-
-
 
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
@@ -1323,7 +1329,7 @@ export default function Page() {
     if (!bgImg) return 1;
     if (!hasAnyVariant) return 2;
     if (!leadSubmitted) return leadOpen ? 4 : 3;
-    return 5;
+    return 4;
   }, [bgImg, variants.length, leadSubmitted, leadOpen]);
 
   const heroStep = useMemo(() => {
@@ -1344,7 +1350,33 @@ export default function Page() {
         fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
       }}
     >
+
+      {introOpen ? (
+        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.55)", display: "grid", placeItems: "center", padding: 16 }}>
+          <div style={{ width: "min(760px, 100%)", background: "#fff", borderRadius: 18, border: "1px solid rgba(0,0,0,0.10)", boxShadow: "0 30px 90px rgba(0,0,0,0.35)", padding: 18, display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.01em" }}>Ako to funguje</div>
+            <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 15, lineHeight: 1.45 }}>
+              Tento vizualizér <b>nie je profesionálny architektonický nástroj</b>. Je to rýchla pomôcka, ktorá ti pomôže vytvoriť si lepšiu predstavu, ako môže pergola vyzerať na tvojom dome.
+              <br />
+              <br />
+              Používame umelú inteligenciu, ktorá vie spraviť veľmi presvedčivé vizualizácie, no aj napriek snahe o presnosť si občas <b>domýšľa a dokresľuje detaily</b>.
+            </div>
+            <div style={{ display: "grid", gap: 8, color: "rgba(0,0,0,0.75)", fontSize: 14, lineHeight: 1.45 }}>
+              <div>• Ideálna je fotka z výšky očí alebo mierne zboku a so záberom čo najväčšieho priestoru (nie len tesne okolo pergoly).</div>
+              <div>• V návrhu nastav pergolu radšej <b>o trochu menšiu</b> – AI ju vo výsledku často mierne zväčší.</div>
+              <div>• Výsledky ber ako <b>vizuálnu inšpiráciu</b>, nie ako finálny technický návrh.</div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
+                Rozumiem
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+
         {/* Hero */}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1384,7 +1416,7 @@ export default function Page() {
                   fontWeight: 950,
                 }}
               >
-                {heroStep.id}/5
+                {heroStep.id}/4
               </span>
               <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
                 {heroStep.title}
@@ -2201,9 +2233,8 @@ function Stepper({ current }: { current: number }) {
   const items = [
     { id: 1, label: "Nahraj fotku" },
     { id: 2, label: "Umiestni pergolu" },
-    { id: 3, label: "Vygeneruj varianty" },
-    { id: 4, label: "Vyplň formulár" },
-    { id: 5, label: "Stiahni PNG" },
+    { id: 3, label: "Vygeneruj vizualizácie" },
+    { id: 4, label: "Odošli dopyt & stiahni PNG" },
   ];
 
   return (
