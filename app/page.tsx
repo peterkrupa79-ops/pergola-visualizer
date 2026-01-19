@@ -992,7 +992,6 @@ export default function Page() {
         // ignore
       }
     }
-  }
     // Perspective overlay (horizon line) – shown only when the perspective panel is open
     if (perspectiveOpen) {
       const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
@@ -1018,6 +1017,7 @@ export default function Page() {
       ctx.fillText(label, bx + pad, by + 15);
       ctx.restore();
     }
+  }
 
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
