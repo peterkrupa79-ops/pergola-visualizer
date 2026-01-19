@@ -30,7 +30,15 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
   {
     id: 1,
     title: "Nahraj fotku",
-    hint: "Nahraj fotografiu domu alebo terasy (JPG/PNG). Fotka sa zobrazí ako pozadie v editore. Fotka by mala s dostatočným presahom zachytávať priestor, kam chceš umiestniť pergolu. Pre dosiahnutie čo najlepšieho výsledku by mala byť fotka z predného pohľadu na želaný priestor vo výške očí alebo z mierne bočného pohľadu",
+    hint: "Pre najlepší výsledok odporúčame fotografiu:
+
+z výšky očí alebo mierne zboku,
+
+s dobrým svetlom,
+
+ktorá zachytáva čo najväčší priestor okolo terasy, nielen miesto tesne pri pergole.
+
+Čím viac okolia je na fotke viditeľné, tým lepšie vie AI pochopiť mierku, perspektívu a osadenie pergoly.",
   },
   {
     id: 2,
