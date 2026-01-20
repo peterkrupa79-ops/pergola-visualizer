@@ -318,99 +318,51 @@ function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: numbe
 }
 
 async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Promise<string> {
-  const bmp = await _b64ToImageBitmap(aiB64);
-  const edges = _edgeMapFromImageBitmap(bmp, template.w, template.h);
-  const { dx, dy, score } = _estimateShift(template, edges);
+  // Post-process alignment (safe mode):
+  // We estimate a small (dx,dy) shift between the reference overlay and the AI output,
+  // then shift ONLY the AI image (no blending with the original photo), to avoid "photo-in-photo" artifacts.
+  try {
+    const bmp = await _b64ToImageBitmap(aiB64);
+    const edges = _edgeMapFromImageBitmap(bmp, template.w, template.h);
+    const est = _estimateShift(template, edges);
 
-  // If confidence is low, skip alignment.
-  const minScore = Math.max(120, Math.round(template.pts.length * 0.08));
-  if (score < minScore) return aiB64;
+    const score = typeof (est as any).score === "number" ? (est as any).score : 0;
+    const dx = Math.round((est as any).dx || 0);
+    const dy = Math.round((est as any).dy || 0);
 
-  const scaleX = bmp.width / template.w;
-  const scaleY = bmp.height / template.h;
+    // If confidence is low or shift is tiny, skip.
+    const minScore = Math.max(120, Math.round(template.pts.length * 0.08));
+    if (score < minScore || (Math.abs(dx) <= 2 && Math.abs(dy) <= 2)) return aiB64;
 
-  // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
-  // So AI pergola is shifted by (+dx,+dy) relative to template -> translate pergola region by (-dx,-dy).
-  const sx = Math.round((-dx) * scaleX);
-  const sy = Math.round((-dy) * scaleY);
+    const w = bmp.width;
+    const h = bmp.height;
 
-  // Build a union ROI that covers both the template pergola area and the shifted one,
-  // so we can replace the "wrong" area without creating double-pergola artifacts.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [x, y] of template.pts) {
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
+    // Wrap-shift the AI image (tile draw) so we don't introduce blank/ghost areas.
+    const out = document.createElement("canvas");
+    out.width = w;
+    out.height = h;
+    const octx = out.getContext("2d");
+    if (!octx) return aiB64;
+
+    const ox = ((dx % w) + w) % w;
+    const oy = ((dy % h) + h) % h;
+
+    // Draw 4 tiles to fully cover canvas after shift.
+    octx.drawImage(bmp, ox, oy);
+    octx.drawImage(bmp, ox - w, oy);
+    octx.drawImage(bmp, ox, oy - h);
+    octx.drawImage(bmp, ox - w, oy - h);
+
+    const blob: Blob = await new Promise((res, rej) =>
+      out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.92)
+    );
+    const alignedB64 = await _blobToB64(blob);
+
+    // Preserve original mime prefix style.
+    return alignedB64;
+  } catch {
+    return aiB64;
   }
-  // Scale to bitmap coordinates
-  let x0 = Math.floor(minX * scaleX);
-  let y0 = Math.floor(minY * scaleY);
-  let x1 = Math.ceil(maxX * scaleX);
-  let y1 = Math.ceil(maxY * scaleY);
-
-  // Shifted bbox
-  const x0s = x0 + sx, y0s = y0 + sy, x1s = x1 + sx, y1s = y1 + sy;
-
-  // Union
-  x0 = Math.min(x0, x0s);
-  y0 = Math.min(y0, y0s);
-  x1 = Math.max(x1, x1s);
-  y1 = Math.max(y1, y1s);
-
-  // Expand a bit so lighting/shadows around the pergola get moved consistently.
-  const roiW = Math.max(1, x1 - x0);
-  const roiH = Math.max(1, y1 - y0);
-  const pad = Math.round(Math.max(roiW, roiH) * 0.18);
-  const feather = 32;
-
-  const clampI = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-  x0 = clampI(x0 - pad, 0, bmp.width);
-  y0 = clampI(y0 - pad, 0, bmp.height);
-  x1 = clampI(x1 + pad, 0, bmp.width);
-  y1 = clampI(y1 + pad, 0, bmp.height);
-
-  const out = document.createElement("canvas");
-  out.width = bmp.width;
-  out.height = bmp.height;
-  const octx = out.getContext("2d")!;
-  octx.drawImage(bmp, 0, 0);
-
-  // Shifted layer (full size so we can mask easily)
-  const shifted = document.createElement("canvas");
-  shifted.width = bmp.width;
-  shifted.height = bmp.height;
-  const sctx = shifted.getContext("2d")!;
-  sctx.drawImage(bmp, sx, sy);
-
-  // Feathered ROI mask
-  const mask = document.createElement("canvas");
-  mask.width = bmp.width;
-  mask.height = bmp.height;
-  const mctx = mask.getContext("2d")!;
-  mctx.clearRect(0, 0, mask.width, mask.height);
-
-  // Draw a solid rect then blur it to create feathered edges.
-  // We draw an inset rect so the blur doesn't "bleed" too far beyond the ROI.
-  const insetX0 = clampI(x0 + feather, 0, bmp.width);
-  const insetY0 = clampI(y0 + feather, 0, bmp.height);
-  const insetX1 = clampI(x1 - feather, 0, bmp.width);
-  const insetY1 = clampI(y1 - feather, 0, bmp.height);
-
-  mctx.filter = `blur(${feather}px)`;
-  mctx.fillStyle = "rgba(255,255,255,1)";
-  mctx.fillRect(insetX0, insetY0, Math.max(1, insetX1 - insetX0), Math.max(1, insetY1 - insetY0));
-  mctx.filter = "none";
-
-  // Apply mask to shifted layer
-  sctx.globalCompositeOperation = "destination-in";
-  sctx.drawImage(mask, 0, 0);
-  sctx.globalCompositeOperation = "source-over";
-
-  // Composite shifted ROI over original AI image
-  octx.drawImage(shifted, 0, 0);
-
-  return _canvasToB64Png(out);
 }
 
 function useMedia(query: string) {
