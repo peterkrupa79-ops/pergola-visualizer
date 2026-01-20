@@ -337,11 +337,11 @@ async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Pro
   // Build a union ROI that covers both the template pergola area and the shifted one,
   // so we can replace the "wrong" area without creating double-pergola artifacts.
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of template.pts) {
-    if (p.x < minX) minX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y > maxY) maxY = p.y;
+  for (const [x, y] of template.pts) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
   }
   // Scale to bitmap coordinates
   let x0 = Math.floor(minX * scaleX);
