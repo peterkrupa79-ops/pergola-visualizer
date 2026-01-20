@@ -88,6 +88,166 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
+
+// --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
+type EdgeTemplate = { w: number; h: number; pts: Array<[number, number]>; maxShift: number };
+
+function _clampInt(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n | 0));
+}
+
+function _b64ToImageBitmap(b64: string): Promise<ImageBitmap> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = async () => {
+      try {
+        // @ts-ignore
+        const bmp: ImageBitmap = await createImageBitmap(img);
+        resolve(bmp);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => reject(new Error("Nepodarilo sa dekódovať PNG."));
+    img.src = `data:image/png;base64,${b64}`;
+  });
+}
+
+function _canvasToB64Png(c: HTMLCanvasElement): string {
+  const d = c.toDataURL("image/png");
+  const comma = d.indexOf(",");
+  return comma >= 0 ? d.slice(comma + 1) : d;
+}
+
+function _makeEdgeTemplateFromDiff(bg: HTMLCanvasElement, collage: HTMLCanvasElement, targetW = 256): EdgeTemplate {
+  const w = collage.width;
+  const h = collage.height;
+
+  const scale = Math.min(1, targetW / Math.max(w, h));
+  const sw = Math.max(32, Math.round(w * scale));
+  const sh = Math.max(32, Math.round(h * scale));
+
+  const a = document.createElement("canvas");
+  a.width = sw; a.height = sh;
+  const actx = a.getContext("2d")!;
+  actx.drawImage(bg, 0, 0, sw, sh);
+  const bgData = actx.getImageData(0, 0, sw, sh).data;
+
+  actx.clearRect(0, 0, sw, sh);
+  actx.drawImage(collage, 0, 0, sw, sh);
+  const colData = actx.getImageData(0, 0, sw, sh).data;
+
+  // diff mask
+  const mask = new Uint8Array(sw * sh);
+  const thr = 28; // per-channel diff threshold
+  for (let i = 0, p = 0; p < sw * sh; p++, i += 4) {
+    const dr = Math.abs(colData[i] - bgData[i]);
+    const dg = Math.abs(colData[i + 1] - bgData[i + 1]);
+    const db = Math.abs(colData[i + 2] - bgData[i + 2]);
+    // strong change likely belongs to pergola render
+    mask[p] = (dr + dg + db) / 3 > thr ? 1 : 0;
+  }
+
+  // edge points from mask
+  const pts: Array<[number, number]> = [];
+  for (let y = 1; y < sh - 1; y++) {
+    for (let x = 1; x < sw - 1; x++) {
+      const idx = y * sw + x;
+      if (!mask[idx]) continue;
+      // edge if any neighbor is 0
+      if (
+        !mask[idx - 1] || !mask[idx + 1] ||
+        !mask[idx - sw] || !mask[idx + sw]
+      ) {
+        pts.push([x, y]);
+      }
+    }
+  }
+
+  // max shift in downscaled pixels
+  const maxShift = Math.round(Math.min(sw, sh) * 0.14); // ~14% of shorter side
+  return { w: sw, h: sh, pts, maxShift: Math.max(10, Math.min(70, maxShift)) };
+}
+
+function _edgeMapFromImageBitmap(bmp: ImageBitmap, w: number, h: number): Uint8Array {
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(bmp, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const e = new Uint8Array(w * h);
+
+  // simple gradient magnitude on luminance
+  const lum = new Uint8Array(w * h);
+  for (let i = 0, p = 0; p < w * h; p++, i += 4) {
+    lum[p] = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) | 0;
+  }
+  const thr = 26;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x;
+      const gx = (lum[p + 1] - lum[p - 1]) + (lum[p + 1 + w] - lum[p - 1 + w]) + (lum[p + 1 - w] - lum[p - 1 - w]);
+      const gy = (lum[p + w] - lum[p - w]) + (lum[p + w + 1] - lum[p - w + 1]) + (lum[p + w - 1] - lum[p - w - 1]);
+      const mag = Math.abs(gx) + Math.abs(gy);
+      e[p] = mag > thr ? 1 : 0;
+    }
+  }
+  return e;
+}
+
+function _estimateShift(template: EdgeTemplate, aiEdges: Uint8Array): { dx: number; dy: number; score: number } {
+  const { w, h, pts, maxShift } = template;
+  let best = { dx: 0, dy: 0, score: -1 };
+
+  // quick bounds
+  const ptsLen = pts.length;
+  if (ptsLen < 50) return best;
+
+  for (let dy = -maxShift; dy <= maxShift; dy++) {
+    for (let dx = -maxShift; dx <= maxShift; dx++) {
+      let s = 0;
+      for (let i = 0; i < ptsLen; i++) {
+        const x = pts[i][0] + dx;
+        const y = pts[i][1] + dy;
+        if (x < 1 || x >= w - 1 || y < 1 || y >= h - 1) continue;
+        s += aiEdges[y * w + x];
+      }
+      if (s > best.score) best = { dx, dy, score: s };
+    }
+  }
+  return best;
+}
+
+async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Promise<string> {
+  const bmp = await _b64ToImageBitmap(aiB64);
+  const edges = _edgeMapFromImageBitmap(bmp, template.w, template.h);
+  const { dx, dy, score } = _estimateShift(template, edges);
+
+  // If confidence is low, skip alignment.
+  const minScore = Math.max(120, Math.round(template.pts.length * 0.08));
+  if (score < minScore) return aiB64;
+
+  // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
+  // So AI pergola is shifted by (+dx,+dy) relative to template -> translate image by (-dx,-dy).
+  const full = document.createElement("canvas");
+  full.width = bmp.width;
+  full.height = bmp.height;
+  const ctx = full.getContext("2d")!;
+  // fill by original first (prevents empty borders)
+  ctx.drawImage(bmp, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  // overlay shifted copy
+  const sx = Math.round((-dx) * (bmp.width / template.w));
+  const sy = Math.round((-dy) * (bmp.height / template.h));
+  ctx.clearRect(0, 0, full.width, full.height);
+  ctx.drawImage(bmp, sx, sy);
+  // For uncovered areas, draw original under it (already empty due to clearRect). Use destination-over:
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.drawImage(bmp, 0, 0);
+
+  return _canvasToB64Png(full);
+}
+
 function useMedia(query: string) {
   const [match, setMatch] = useState(false);
   useEffect(() => {
@@ -1210,6 +1370,13 @@ export default function Page() {
       const octx = out.getContext("2d")!;
       octx.drawImage(bgImg, 0, 0, outW, outH);
 
+      // bg-only canvas for diff-based template (locks pergola position without using masks in AI)
+      const bgOnly = document.createElement("canvas");
+      bgOnly.width = outW;
+      bgOnly.height = outH;
+      const bgctx = bgOnly.getContext("2d")!;
+      bgctx.drawImage(bgImg, 0, 0, outW, outH);
+
       if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
         throw new Error("3D renderer nie je pripravený.");
       }
@@ -1223,6 +1390,8 @@ export default function Page() {
 
       const glTemp = renderer.domElement;
       octx.drawImage(glTemp, 0, 0);
+
+      const alignTemplate = _makeEdgeTemplateFromDiff(bgOnly, out);
 
       const blob: Blob = await new Promise((res, rej) =>
         out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
@@ -1242,9 +1411,17 @@ export default function Page() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       if (!j?.b64) throw new Error("API nevrátilo b64.");
 
+      // Post-align the AI output back to the exact user placement (prevents drifting onto grass/away from terrace)
+      let finalB64 = j.b64 as string;
+      try {
+        finalB64 = await _alignAiB64ToTemplate(finalB64, alignTemplate);
+      } catch (e) {
+        // alignment is best-effort; ignore failures
+      }
+
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: j.b64, createdAt: Date.now() }];
+        const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
         return next;
       });
 
