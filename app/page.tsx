@@ -18,10 +18,30 @@ const SCALE_MAX = 200;
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
-const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
-Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
-Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
-Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
+const BASE_HARMONIZE_RULES = `HARMONIZE ONLY (photorealistic integration).
+CAMERA LOCK: Do NOT change camera position, lens/focal length, perspective, horizon, framing, crop, or viewpoint. No reframe.
+ARCHITECTURE LOCK: Do NOT redesign, relocate, improve, or 'clean up' the house/yard/terrain. Do NOT add/remove architectural elements.
+POSITION LOCK: Do NOT translate/shift the pergola. Keep the pergola footprint in the exact same pixel location as the input. Keep the relative position between pergola, house facade, roof edge, and ground unchanged.
+SURFACE LOCK: Keep the pergola on the SAME ground surface/material it sits on in the input (tiles/concrete/deck/grass). Do NOT move it onto a different surface.
+STRUCTURE LOCK: Do NOT change pergola geometry, size, thickness, proportions, spacing, angles, or structural details. Do NOT add/remove posts/legs/beams. Keep the exact number of legs/posts.
+Allowed changes ONLY: lighting, realistic shading, ambient occlusion/contact shadows at the feet, reflections, color grading, noise/grain, sharpness/blur matching, and blending so it looks like a real photo.`;
+
+function pergolaTypeSpec(t: PergolaType) {
+  if (t === 'bioklim') {
+    return 'TYPE: Bioklimatická pergola (rovná strecha / lamely). Preserve a flat/level roof profile; do NOT turn it into a pitched roof.';
+  }
+  if (t === 'pevna') {
+    return 'TYPE: Pergola s rovnou strechou. Preserve a straight flat roof; do NOT make it pitched or curved.';
+  }
+  return 'TYPE: Zimná záhrada so šikmou strechou. Preserve a pitched/sloped roof; do NOT make it flat.';
+}
+
+function buildFinalPrompt(t: PergolaType) {
+  return `${BASE_HARMONIZE_RULES}
+${pergolaTypeSpec(t)}
+
+IMPORTANT: If anything is ambiguous, preserve the input as-is and only harmonize lighting/shadows.`;
+}
 
 const MAX_VARIANTS = 6;
 
@@ -423,13 +443,6 @@ export default function Page() {
   // ===== Hero (rozbaľovací návod v mobile) =====
   const [heroHintOpen, setHeroHintOpen] = useState(false);
 
-  // ===== Úvodné vyskakovacie okno (zobrazí sa pri každom novom načítaní stránky) =====
-  const [introOpen, setIntroOpen] = useState(true);
-  useEffect(() => {
-    // pri každom novom načítaní stránky sa komponent znovu mountne → zobrazíme úvod
-    setIntroOpen(true);
-  }, []);
-
   // jemné guide správanie (bez overlayov)
   const [guideSeen, setGuideSeen] = useState({ move: false, roll: false, resize: false });
 
@@ -521,7 +534,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [prompt] = useState(FINAL_PROMPT_DEFAULT);
+  const prompt = useMemo(() => buildFinalPrompt(pergolaType), [pergolaType]);
 
   // ===== Variants =====
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -1008,9 +1021,7 @@ export default function Page() {
       ctx.fillText(label, bx + pad, by + 15);
       ctx.restore();
     }
-
   }
-
 
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
@@ -1343,92 +1354,6 @@ export default function Page() {
         fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
       }}
     >
-      {/* Úvodné vyskakovacie okno – zobrazí sa pri každom novom načítaní stránky */}
-      {introOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 120,
-            background: "rgba(0,0,0,0.50)",
-            display: "grid",
-            placeItems: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              width: "min(820px, 100%)",
-              background: "#fff",
-              borderRadius: 18,
-              border: "1px solid rgba(0,0,0,0.10)",
-              boxShadow: "0 26px 70px rgba(0,0,0,0.28)",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{ padding: "18px 18px 14px", borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
-              <div style={{ fontSize: 18, fontWeight: 980, letterSpacing: "-0.01em" }}>Ako funguje vizualizácia</div>
-              <div style={{ marginTop: 8, color: "rgba(0,0,0,0.72)", fontSize: 14, lineHeight: 1.5 }}>
-                Toto je rýchla pomôcka pre lepšiu predstavu, ako môže pergola vyzerať na tvojom dome – nie profesionálny projektový nástroj.
-                Aj keď sme sa snažili halucinácie AI čo najviac eliminovať, AI si môže niektoré detaily domyslieť alebo dokresliť.
-                Pre lepší výsledok odporúčame v návrhu nastaviť pergolu radšej o trochu menšiu (AI ju často prirodzene „zväčší“).
-                Najlepšie fungujú fotky z ideálneho pohľadu, ktoré zachytávajú väčší priestor okolo miesta montáže (nie iba tesný výrez).
-              </div>
-            </div>
-
-            <div style={{ padding: 18, display: "grid", gap: 12 }}>
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontWeight: 950 }}>1. Nahraj fotku</div>
-                <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 14, lineHeight: 1.45 }}>
-                  Nahraj JPG/PNG tak, aby bolo vidno čo najviac okolia. Čím viac priestoru v zábere, tým stabilnejšie osadenie a realistickejšie svetlo.
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontWeight: 950 }}>2. Umiestni a vygeneruj</div>
-                <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 14, lineHeight: 1.45 }}>
-                  Vyber typ pergoly, posuň/otoč/nakloň ju a uprav rozmery. Potom vygeneruj AI varianty – výsledok bude „fotografickejší“, ale AI môže mierne upravovať detaily.
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontWeight: 950 }}>3. Vyber variant a odošli</div>
-                <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 14, lineHeight: 1.45 }}>
-                  Otvor náhľad, vyber najlepší variant a vyplň formulár. Môžeš pridať poznámku (rozmery, farba, požiadavky) – pomôže nám to pripraviť relevantnú ponuku.
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ fontWeight: 950 }}>4. Stiahni vizualizácie</div>
-                <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 14, lineHeight: 1.45 }}>
-                  Po odoslaní formulára sa odomkne sťahovanie PNG. Ak chceš presnejšie osadenie, skús spraviť menšiu pergolu a urob fotku s väčším presahom.
-                </div>
-              </div>
-            </div>
-
-            <div style={{ padding: 18, borderTop: "1px solid rgba(0,0,0,0.08)", display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={() => setIntroOpen(false)}
-                style={{
-                  padding: "12px 16px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(0,0,0,0.10)",
-                  background: "#111",
-                  color: "#fff",
-                  fontWeight: 950,
-                  cursor: "pointer",
-                }}
-              >
-                Rozumiem
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
         {/* Hero */}
         <div style={{ display: "grid", gap: 10 }}>
