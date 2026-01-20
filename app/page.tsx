@@ -18,30 +18,10 @@ const SCALE_MAX = 200;
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
-const BASE_HARMONIZE_RULES = `HARMONIZE ONLY (photorealistic integration).
-CAMERA LOCK: Do NOT change camera position, lens/focal length, perspective, horizon, framing, crop, or viewpoint. No reframe.
-ARCHITECTURE LOCK: Do NOT redesign, relocate, improve, or 'clean up' the house/yard/terrain. Do NOT add/remove architectural elements.
-POSITION LOCK: Do NOT translate/shift the pergola. Keep the pergola footprint in the exact same pixel location as the input. Keep the relative position between pergola, house facade, roof edge, and ground unchanged.
-SURFACE LOCK: Keep the pergola on the SAME ground surface/material it sits on in the input (tiles/concrete/deck/grass). Do NOT move it onto a different surface.
-STRUCTURE LOCK: Do NOT change pergola geometry, size, thickness, proportions, spacing, angles, or structural details. Do NOT add/remove posts/legs/beams. Keep the exact number of legs/posts.
-Allowed changes ONLY: lighting, realistic shading, ambient occlusion/contact shadows at the feet, reflections, color grading, noise/grain, sharpness/blur matching, and blending so it looks like a real photo.`;
-
-function pergolaTypeSpec(t: PergolaType) {
-  if (t === 'bioklim') {
-    return 'TYPE: Bioklimatická pergola (rovná strecha / lamely). Preserve a flat/level roof profile; do NOT turn it into a pitched roof.';
-  }
-  if (t === 'pevna') {
-    return 'TYPE: Pergola s rovnou strechou. Preserve a straight flat roof; do NOT make it pitched or curved.';
-  }
-  return 'TYPE: Zimná záhrada so šikmou strechou. Preserve a pitched/sloped roof; do NOT make it flat.';
-}
-
-function buildFinalPrompt(t: PergolaType) {
-  return `${BASE_HARMONIZE_RULES}
-${pergolaTypeSpec(t)}
-
-IMPORTANT: If anything is ambiguous, preserve the input as-is and only harmonize lighting/shadows.`;
-}
+const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
+Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
+Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
+Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
 
 const MAX_VARIANTS = 6;
 
@@ -50,27 +30,26 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
   {
     id: 1,
     title: "Nahraj fotku",
-    hint: "Nahraj fotografiu domu alebo terasy (JPG/PNG). Fotka sa zobrazí ako pozadie v editore. Fotka by mala s dostatočným presahom zachytávať priestor, kam chceš umiestniť pergolu. Pre dosiahnutie čo najlepšieho výsledku by mala byť fotka z predného pohľadu na želaný priestor vo výške očí alebo z mierne bočného pohľadu",
+    hint:
+      "Nahraj fotku terasy alebo domu (JPG/PNG). Ideálne z výšky očí alebo mierne zboku a tak, aby na fotke bolo vidno čo najviac okolia (nie len miesto tesne pri pergole). Viac priestoru na fotke pomôže mierke a perspektíve.",
   },
   {
     id: 2,
     title: "Umiestni pergolu",
-    hint: "Vyber typ pergoly, posuň ju na správne miesto, otoč alebo nakloň. Pomocou sliderov uprav rozmery.",
+    hint:
+      "Vyber typ pergoly, posuň ju do fotky, otoč alebo nakloň a nastav rozmery. Voliteľne otvor Perspektíva a dolaď horizont a hĺbku pohľadu podľa fotky. Tip: nastav pergolu radšej trochu menšiu, AI ju vo výsledku často mierne zväčší.",
   },
   {
     id: 3,
-    title: "Vygeneruj varianty",
-    hint: "Klikni na Vygenerovať a vytvor si až 6 AI variantov. Môžeš si vymeniť fotku pozadia alebo vyskúšať rôzne varianty pergoly alebo zimnej záhrady. Potom si otvor náhľad a vyber najlepší.",
+    title: "Vygeneruj vizualizácie",
+    hint:
+      "Klikni na Vygenerovať a nechaj AI vytvoriť varianty. AI doladí svetlo, tiene a celkový vzhľad, aby pergola pôsobila prirodzene. Je to pomôcka pre predstavu, AI môže občas domýšľať alebo dokresľovať detaily.",
   },
   {
     id: 4,
-    title: "Vyplň formulár",
-    hint: "Pre odomknutie sťahovania vyplň formulár a vyber 1 vizualizáciu, ktorú nám odošleš (môžeš pridať poznámku kde vieš uviesť doplňujúce informácie).",
-  },
-  {
-    id: 5,
-    title: "Stiahni PNG",
-    hint: "Po úspešnom odoslaní formulára sa odomkne sťahovanie PNG jednej alebo všetkých vizualizácií.",
+    title: "Odošli dopyt a stiahni PNG",
+    hint:
+      "Vyber najlepší variant a vyplň krátky formulár, aby sa odomklo sťahovanie. Po odoslaní si môžeš stiahnuť PNG a pridať poznámku k požiadavke, aby sme vedeli pripraviť ďalší postup.",
   },
 ];
 
@@ -442,6 +421,13 @@ export default function Page() {
 
   // ===== Hero (rozbaľovací návod v mobile) =====
   const [heroHintOpen, setHeroHintOpen] = useState(false);
+  // ===== Úvodné info (pop-up) =====
+  const [introOpen, setIntroOpen] = useState(true);
+
+
+  const closeIntro = () => {
+    setIntroOpen(false);
+  };
 
   // jemné guide správanie (bez overlayov)
   const [guideSeen, setGuideSeen] = useState({ move: false, roll: false, resize: false });
@@ -504,7 +490,6 @@ export default function Page() {
   const [perspectiveOpen, setPerspectiveOpen] = useState(false);
   const [perspective, setPerspective] = useState(defaultPerspective(isMobileRef.current));
 
-
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
   const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
@@ -534,7 +519,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const prompt = useMemo(() => buildFinalPrompt(pergolaType), [pergolaType]);
+  const [prompt] = useState(FINAL_PROMPT_DEFAULT);
 
   // ===== Variants =====
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -884,7 +869,6 @@ export default function Page() {
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
-
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -996,6 +980,7 @@ export default function Page() {
         // ignore
       }
     }
+  }
     // Perspective overlay (horizon line) – shown only when the perspective panel is open
     if (perspectiveOpen) {
       const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
@@ -1021,7 +1006,6 @@ export default function Page() {
       ctx.fillText(label, bx + pad, by + 15);
       ctx.restore();
     }
-  }
 
   // ===== 1 finger = always edit canvas =====
   const dragRef = useRef<{
@@ -1333,7 +1317,7 @@ export default function Page() {
     if (!bgImg) return 1;
     if (!hasAnyVariant) return 2;
     if (!leadSubmitted) return leadOpen ? 4 : 3;
-    return 5;
+    return 4;
   }, [bgImg, variants.length, leadSubmitted, leadOpen]);
 
   const heroStep = useMemo(() => {
@@ -1354,7 +1338,33 @@ export default function Page() {
         fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
       }}
     >
+
+      {introOpen ? (
+        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.55)", display: "grid", placeItems: "center", padding: 16 }}>
+          <div style={{ width: "min(760px, 100%)", background: "#fff", borderRadius: 18, border: "1px solid rgba(0,0,0,0.10)", boxShadow: "0 30px 90px rgba(0,0,0,0.35)", padding: 18, display: "grid", gap: 12 }}>
+            <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.01em" }}>Ako to funguje</div>
+            <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 15, lineHeight: 1.45 }}>
+              Tento vizualizér <b>nie je profesionálny architektonický nástroj</b>. Je to rýchla pomôcka, ktorá ti pomôže vytvoriť si lepšiu predstavu, ako môže pergola vyzerať na tvojom dome.
+              <br />
+              <br />
+              Používame umelú inteligenciu, ktorá vie spraviť veľmi presvedčivé vizualizácie, no aj napriek snahe o presnosť si občas <b>domýšľa a dokresľuje detaily</b>.
+            </div>
+            <div style={{ display: "grid", gap: 8, color: "rgba(0,0,0,0.75)", fontSize: 14, lineHeight: 1.45 }}>
+              <div>• Ideálna je fotka z výšky očí alebo mierne zboku a so záberom čo najväčšieho priestoru (nie len tesne okolo pergoly).</div>
+              <div>• V návrhu nastav pergolu radšej <b>o trochu menšiu</b> – AI ju vo výsledku často mierne zväčší.</div>
+              <div>• Výsledky ber ako <b>vizuálnu inšpiráciu</b>, nie ako finálny technický návrh.</div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
+                Rozumiem
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ maxWidth: 1180, margin: "0 auto", display: "grid", gap: 14 }}>
+
         {/* Hero */}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1394,7 +1404,7 @@ export default function Page() {
                   fontWeight: 950,
                 }}
               >
-                {heroStep.id}/5
+                {heroStep.id}/4
               </span>
               <span style={{ fontWeight: 950, fontSize: 13, color: "rgba(0,0,0,0.85)", letterSpacing: "0.01em" }}>
                 {heroStep.title}
@@ -2211,9 +2221,8 @@ function Stepper({ current }: { current: number }) {
   const items = [
     { id: 1, label: "Nahraj fotku" },
     { id: 2, label: "Umiestni pergolu" },
-    { id: 3, label: "Vygeneruj varianty" },
-    { id: 4, label: "Vyplň formulár" },
-    { id: 5, label: "Stiahni PNG" },
+    { id: 3, label: "Vygeneruj vizualizácie" },
+    { id: 4, label: "Odošli dopyt & stiahni PNG" },
   ];
 
   return (
