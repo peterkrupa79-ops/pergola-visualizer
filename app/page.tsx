@@ -88,31 +88,9 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
-// Convert a Blob to a raw base64 string (no data: prefix).
-async function _blobToB64(blob: Blob): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onerror = () => reject(fr.error ?? new Error("FileReader error"));
-    fr.onload = () => {
-      const dataUrl = String(fr.result ?? "");
-      const m = dataUrl.match(/base64,(.*)$/);
-      resolve(m ? m[1] : "");
-    };
-    fr.readAsDataURL(blob);
-  });
-}
-
 
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
-type EdgeTemplate = {
-  w: number;
-  h: number;
-  pts: Array<[number, number]>;
-  ptStride: number;
-  // bounding box of the diff mask in template space
-  bbox: { minX: number; minY: number; maxX: number; maxY: number };
-  maxShift: number;
-};
+type EdgeTemplate = { w: number; h: number; pts: Array<[number, number]>; maxShift: number };
 
 function _clampInt(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n | 0));
@@ -141,19 +119,16 @@ function _canvasToB64Png(c: HTMLCanvasElement): string {
   return comma >= 0 ? d.slice(comma + 1) : d;
 }
 
-function _makeEdgeTemplateFromDiff(bg: HTMLCanvasElement, collage: HTMLCanvasElement, targetW = 420): EdgeTemplate {
-  // Build a binary mask of where the rendered pergola differs from the background.
-  // We downscale to a moderate size to keep it fast but retain enough detail
-  // for precise alignment.
-  const w = bg.width;
-  const h = bg.height;
-  const scale = Math.max(w, h) / targetW;
-  const sw = Math.max(1, Math.floor(w / scale));
-  const sh = Math.max(1, Math.floor(h / scale));
+function _makeEdgeTemplateFromDiff(bg: HTMLCanvasElement, collage: HTMLCanvasElement, targetW = 256): EdgeTemplate {
+  const w = collage.width;
+  const h = collage.height;
+
+  const scale = Math.min(1, targetW / Math.max(w, h));
+  const sw = Math.max(32, Math.round(w * scale));
+  const sh = Math.max(32, Math.round(h * scale));
 
   const a = document.createElement("canvas");
-  a.width = sw;
-  a.height = sh;
+  a.width = sw; a.height = sh;
   const actx = a.getContext("2d")!;
   actx.drawImage(bg, 0, 0, sw, sh);
   const bgData = actx.getImageData(0, 0, sw, sh).data;
@@ -162,68 +137,36 @@ function _makeEdgeTemplateFromDiff(bg: HTMLCanvasElement, collage: HTMLCanvasEle
   actx.drawImage(collage, 0, 0, sw, sh);
   const colData = actx.getImageData(0, 0, sw, sh).data;
 
+  // diff mask
   const mask = new Uint8Array(sw * sh);
-  let minX = sw, minY = sh, maxX = 0, maxY = 0;
-
-  // Threshold: we want to ignore small lighting/AA differences but keep structure.
-  const thr = 22;
-  for (let y = 0; y < sh; y++) {
-    for (let x = 0; x < sw; x++) {
-      const i = (y * sw + x) * 4;
-      const dr = Math.abs(colData[i] - bgData[i]);
-      const dg = Math.abs(colData[i + 1] - bgData[i + 1]);
-      const db = Math.abs(colData[i + 2] - bgData[i + 2]);
-      const d = (dr + dg + db) / 3;
-      if (d > thr) {
-        mask[y * sw + x] = 1;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-    }
+  const thr = 28; // per-channel diff threshold
+  for (let i = 0, p = 0; p < sw * sh; p++, i += 4) {
+    const dr = Math.abs(colData[i] - bgData[i]);
+    const dg = Math.abs(colData[i + 1] - bgData[i + 1]);
+    const db = Math.abs(colData[i + 2] - bgData[i + 2]);
+    // strong change likely belongs to pergola render
+    mask[p] = (dr + dg + db) / 3 > thr ? 1 : 0;
   }
 
-  // If something went wrong (no diff), fall back to full image bbox.
-  if (minX > maxX || minY > maxY) {
-    minX = 0;
-    minY = 0;
-    maxX = sw - 1;
-    maxY = sh - 1;
-  }
-
-  // Build edge points from the mask (1-pixel contour).
+  // edge points from mask
   const pts: Array<[number, number]> = [];
-  const isOn = (x: number, y: number) => mask[y * sw + x] === 1;
   for (let y = 1; y < sh - 1; y++) {
     for (let x = 1; x < sw - 1; x++) {
-      if (!isOn(x, y)) continue;
-      // Contour pixel if any 4-neighbor is off
-      if (!isOn(x - 1, y) || !isOn(x + 1, y) || !isOn(x, y - 1) || !isOn(x, y + 1)) {
+      const idx = y * sw + x;
+      if (!mask[idx]) continue;
+      // edge if any neighbor is 0
+      if (
+        !mask[idx - 1] || !mask[idx + 1] ||
+        !mask[idx - sw] || !mask[idx + sw]
+      ) {
         pts.push([x, y]);
       }
     }
   }
 
-  // Keep more points for higher precision; subsample only if extremely dense.
-  const maxPts = 3500;
-  const ptStride = Math.max(1, Math.floor(pts.length / maxPts));
-
-  // Search window: proportional to pergola footprint, capped.
-  const boxW = Math.max(1, maxX - minX);
-  const boxH = Math.max(1, maxY - minY);
-  const maxShift = Math.max(8, Math.min(90, Math.round(Math.max(boxW, boxH) * 0.35)));
-
-  // Pad bbox a bit so we include roof overhang and shadow edges.
-  const pad = 6;
-  const bbox = {
-    minX: Math.max(0, minX - pad),
-    minY: Math.max(0, minY - pad),
-    maxX: Math.min(sw - 1, maxX + pad),
-    maxY: Math.min(sh - 1, maxY + pad),
-  };
-
-  return { w: sw, h: sh, pts, ptStride, maxShift, bbox };
+  // max shift in downscaled pixels
+  const maxShift = Math.round(Math.min(sw, sh) * 0.14); // ~14% of shorter side
+  return { w: sw, h: sh, pts, maxShift: Math.max(10, Math.min(70, maxShift)) };
 }
 
 function _edgeMapFromImageBitmap(bmp: ImageBitmap, w: number, h: number): Uint8Array {
@@ -252,131 +195,57 @@ function _edgeMapFromImageBitmap(bmp: ImageBitmap, w: number, h: number): Uint8A
   return e;
 }
 
-function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: number; dy: number; score: number } {
-  // Two-stage search:
-  // 1) Coarse grid (step=2) over a generous window.
-  // 2) Local refine (step=1) around the best coarse shift.
+function _estimateShift(template: EdgeTemplate, aiEdges: Uint8Array): { dx: number; dy: number; score: number } {
+  const { w, h, pts, maxShift } = template;
+  let best = { dx: 0, dy: 0, score: -1 };
 
-  const w = template.w;
-  const h = template.h;
-  const { minX, minY, maxX, maxY } = template.bbox;
+  // quick bounds
+  const ptsLen = pts.length;
+  if (ptsLen < 50) return best;
 
-  // Pre-filter points to bbox for speed and stability.
-  const ptsInBox: Array<[number, number]> = [];
-  for (let i = 0; i < template.pts.length; i += template.ptStride) {
-    const [x, y] = template.pts[i];
-    if (x >= minX && x <= maxX && y >= minY && y <= maxY) ptsInBox.push([x, y]);
-  }
-  const pts = ptsInBox.length ? ptsInBox : template.pts;
-
-  const scoreAt = (dx: number, dy: number) => {
-    let s = 0;
-    for (let i = 0; i < pts.length; i++) {
-      const [x, y] = pts[i];
-      const xx = x + dx;
-      const yy = y + dy;
-      if (xx < 1 || yy < 1 || xx >= w - 1 || yy >= h - 1) continue;
-      // allow a tiny tolerance by checking a 3x3 neighborhood
-      const base = yy * w + xx;
-      if (
-        aiEdge[base] ||
-        aiEdge[base - 1] ||
-        aiEdge[base + 1] ||
-        aiEdge[base - w] ||
-        aiEdge[base + w] ||
-        aiEdge[base - w - 1] ||
-        aiEdge[base - w + 1] ||
-        aiEdge[base + w - 1] ||
-        aiEdge[base + w + 1]
-      ) {
-        s++;
+  for (let dy = -maxShift; dy <= maxShift; dy++) {
+    for (let dx = -maxShift; dx <= maxShift; dx++) {
+      let s = 0;
+      for (let i = 0; i < ptsLen; i++) {
+        const x = pts[i][0] + dx;
+        const y = pts[i][1] + dy;
+        if (x < 1 || x >= w - 1 || y < 1 || y >= h - 1) continue;
+        s += aiEdges[y * w + x];
       }
-    }
-    return s;
-  };
-
-  let bestDx = 0;
-  let bestDy = 0;
-  let bestScore = -1;
-
-  const stepCoarse = 2;
-  const ms = template.maxShift;
-  for (let dy = -ms; dy <= ms; dy += stepCoarse) {
-    for (let dx = -ms; dx <= ms; dx += stepCoarse) {
-      const sc = scoreAt(dx, dy);
-      if (sc > bestScore) {
-        bestScore = sc;
-        bestDx = dx;
-        bestDy = dy;
-      }
+      if (s > best.score) best = { dx, dy, score: s };
     }
   }
-
-  // Refine locally
-  const refineR = 7;
-  bestScore = -1;
-  let rDx = bestDx;
-  let rDy = bestDy;
-  for (let dy = bestDy - refineR; dy <= bestDy + refineR; dy += 1) {
-    for (let dx = bestDx - refineR; dx <= bestDx + refineR; dx += 1) {
-      const sc = scoreAt(dx, dy);
-      if (sc > bestScore) {
-        bestScore = sc;
-        rDx = dx;
-        rDy = dy;
-      }
-    }
-  }
-
-  return { dx: rDx, dy: rDy, score: bestScore };
+  return best;
 }
 
 async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Promise<string> {
-  // Post-process alignment (safe mode):
-  // We estimate a small (dx,dy) shift between the reference overlay and the AI output,
-  // then shift ONLY the AI image (no blending with the original photo), to avoid "photo-in-photo" artifacts.
-  try {
-    const bmp = await _b64ToImageBitmap(aiB64);
-    const edges = _edgeMapFromImageBitmap(bmp, template.w, template.h);
-    const est = _estimateShift(template, edges);
+  const bmp = await _b64ToImageBitmap(aiB64);
+  const edges = _edgeMapFromImageBitmap(bmp, template.w, template.h);
+  const { dx, dy, score } = _estimateShift(template, edges);
 
-    const score = typeof (est as any).score === "number" ? (est as any).score : 0;
-    const dx = Math.round((est as any).dx || 0);
-    const dy = Math.round((est as any).dy || 0);
+  // If confidence is low, skip alignment.
+  const minScore = Math.max(120, Math.round(template.pts.length * 0.08));
+  if (score < minScore) return aiB64;
 
-    // If confidence is low or shift is tiny, skip.
-    const minScore = Math.max(120, Math.round(template.pts.length * 0.08));
-    if (score < minScore || (Math.abs(dx) <= 2 && Math.abs(dy) <= 2)) return aiB64;
+  // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
+  // So AI pergola is shifted by (+dx,+dy) relative to template -> translate image by (-dx,-dy).
+  const full = document.createElement("canvas");
+  full.width = bmp.width;
+  full.height = bmp.height;
+  const ctx = full.getContext("2d")!;
+  // fill by original first (prevents empty borders)
+  ctx.drawImage(bmp, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  // overlay shifted copy
+  const sx = Math.round((-dx) * (bmp.width / template.w));
+  const sy = Math.round((-dy) * (bmp.height / template.h));
+  ctx.clearRect(0, 0, full.width, full.height);
+  ctx.drawImage(bmp, sx, sy);
+  // For uncovered areas, draw original under it (already empty due to clearRect). Use destination-over:
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.drawImage(bmp, 0, 0);
 
-    const w = bmp.width;
-    const h = bmp.height;
-
-    // Wrap-shift the AI image (tile draw) so we don't introduce blank/ghost areas.
-    const out = document.createElement("canvas");
-    out.width = w;
-    out.height = h;
-    const octx = out.getContext("2d");
-    if (!octx) return aiB64;
-
-    const ox = ((dx % w) + w) % w;
-    const oy = ((dy % h) + h) % h;
-
-    // Draw 4 tiles to fully cover canvas after shift.
-    octx.drawImage(bmp, ox, oy);
-    octx.drawImage(bmp, ox - w, oy);
-    octx.drawImage(bmp, ox, oy - h);
-    octx.drawImage(bmp, ox - w, oy - h);
-
-    const blob: Blob = await new Promise((res, rej) =>
-      out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.92)
-    );
-    const alignedB64 = await _blobToB64(blob);
-
-    // Preserve original mime prefix style.
-    return alignedB64;
-  } catch {
-    return aiB64;
-  }
+  return _canvasToB64Png(full);
 }
 
 function useMedia(query: string) {
