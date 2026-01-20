@@ -88,6 +88,20 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
+// Convert a Blob to a raw base64 string (no data: prefix).
+async function _blobToB64(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(fr.error ?? new Error("FileReader error"));
+    fr.onload = () => {
+      const dataUrl = String(fr.result ?? "");
+      const m = dataUrl.match(/base64,(.*)$/);
+      resolve(m ? m[1] : "");
+    };
+    fr.readAsDataURL(blob);
+  });
+}
+
 
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
 type EdgeTemplate = {
