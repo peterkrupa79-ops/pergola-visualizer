@@ -983,6 +983,10 @@ export default function Page() {
   }
     // Perspective overlay (horizon line) – shown only when the perspective panel is open
     if (perspectiveOpen) {
+      const canvas = canvasRef.current;
+      const ctx = canvas ? canvas.getContext("2d") : null;
+      if (!ctx) return;
+
       const y = clamp((perspective.horizonPct / 100) * canvasH, 0, canvasH);
       ctx.save();
       ctx.strokeStyle = "rgba(0,0,0,0.55)";
