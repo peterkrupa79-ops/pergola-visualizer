@@ -238,7 +238,7 @@ function _edgeMapFromImageBitmap(bmp: ImageBitmap, w: number, h: number): Uint8A
   return e;
 }
 
-function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: number; dy: number } {
+function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: number; dy: number; score: number } {
   // Two-stage search:
   // 1) Coarse grid (step=2) over a generous window.
   // 2) Local refine (step=1) around the best coarse shift.
@@ -314,7 +314,7 @@ function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: numbe
     }
   }
 
-  return { dx: rDx, dy: rDy };
+  return { dx: rDx, dy: rDy, score: bestScore };
 }
 
 async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Promise<string> {
