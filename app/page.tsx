@@ -238,7 +238,7 @@ function _edgeMapFromImageBitmap(bmp: ImageBitmap, w: number, h: number): Uint8A
   return e;
 }
 
-function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: number; dy: number; score: number } {
+function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: number; dy: number } {
   // Two-stage search:
   // 1) Coarse grid (step=2) over a generous window.
   // 2) Local refine (step=1) around the best coarse shift.
@@ -314,7 +314,7 @@ function _estimateShift(template: EdgeTemplate, aiEdge: Uint8Array): { dx: numbe
     }
   }
 
-  return { dx: rDx, dy: rDy, score: bestScore };
+  return { dx: rDx, dy: rDy };
 }
 
 async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Promise<string> {
@@ -326,25 +326,91 @@ async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Pro
   const minScore = Math.max(120, Math.round(template.pts.length * 0.08));
   if (score < minScore) return aiB64;
 
-  // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
-  // So AI pergola is shifted by (+dx,+dy) relative to template -> translate image by (-dx,-dy).
-  const full = document.createElement("canvas");
-  full.width = bmp.width;
-  full.height = bmp.height;
-  const ctx = full.getContext("2d")!;
-  // fill by original first (prevents empty borders)
-  ctx.drawImage(bmp, 0, 0);
-  ctx.globalCompositeOperation = "source-over";
-  // overlay shifted copy
-  const sx = Math.round((-dx) * (bmp.width / template.w));
-  const sy = Math.round((-dy) * (bmp.height / template.h));
-  ctx.clearRect(0, 0, full.width, full.height);
-  ctx.drawImage(bmp, sx, sy);
-  // For uncovered areas, draw original under it (already empty due to clearRect). Use destination-over:
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.drawImage(bmp, 0, 0);
+  const scaleX = bmp.width / template.w;
+  const scaleY = bmp.height / template.h;
 
-  return _canvasToB64Png(full);
+  // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
+  // So AI pergola is shifted by (+dx,+dy) relative to template -> translate pergola region by (-dx,-dy).
+  const sx = Math.round((-dx) * scaleX);
+  const sy = Math.round((-dy) * scaleY);
+
+  // Build a union ROI that covers both the template pergola area and the shifted one,
+  // so we can replace the "wrong" area without creating double-pergola artifacts.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of template.pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  // Scale to bitmap coordinates
+  let x0 = Math.floor(minX * scaleX);
+  let y0 = Math.floor(minY * scaleY);
+  let x1 = Math.ceil(maxX * scaleX);
+  let y1 = Math.ceil(maxY * scaleY);
+
+  // Shifted bbox
+  const x0s = x0 + sx, y0s = y0 + sy, x1s = x1 + sx, y1s = y1 + sy;
+
+  // Union
+  x0 = Math.min(x0, x0s);
+  y0 = Math.min(y0, y0s);
+  x1 = Math.max(x1, x1s);
+  y1 = Math.max(y1, y1s);
+
+  // Expand a bit so lighting/shadows around the pergola get moved consistently.
+  const roiW = Math.max(1, x1 - x0);
+  const roiH = Math.max(1, y1 - y0);
+  const pad = Math.round(Math.max(roiW, roiH) * 0.18);
+  const feather = 32;
+
+  const clampI = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  x0 = clampI(x0 - pad, 0, bmp.width);
+  y0 = clampI(y0 - pad, 0, bmp.height);
+  x1 = clampI(x1 + pad, 0, bmp.width);
+  y1 = clampI(y1 + pad, 0, bmp.height);
+
+  const out = document.createElement("canvas");
+  out.width = bmp.width;
+  out.height = bmp.height;
+  const octx = out.getContext("2d")!;
+  octx.drawImage(bmp, 0, 0);
+
+  // Shifted layer (full size so we can mask easily)
+  const shifted = document.createElement("canvas");
+  shifted.width = bmp.width;
+  shifted.height = bmp.height;
+  const sctx = shifted.getContext("2d")!;
+  sctx.drawImage(bmp, sx, sy);
+
+  // Feathered ROI mask
+  const mask = document.createElement("canvas");
+  mask.width = bmp.width;
+  mask.height = bmp.height;
+  const mctx = mask.getContext("2d")!;
+  mctx.clearRect(0, 0, mask.width, mask.height);
+
+  // Draw a solid rect then blur it to create feathered edges.
+  // We draw an inset rect so the blur doesn't "bleed" too far beyond the ROI.
+  const insetX0 = clampI(x0 + feather, 0, bmp.width);
+  const insetY0 = clampI(y0 + feather, 0, bmp.height);
+  const insetX1 = clampI(x1 - feather, 0, bmp.width);
+  const insetY1 = clampI(y1 - feather, 0, bmp.height);
+
+  mctx.filter = `blur(${feather}px)`;
+  mctx.fillStyle = "rgba(255,255,255,1)";
+  mctx.fillRect(insetX0, insetY0, Math.max(1, insetX1 - insetX0), Math.max(1, insetY1 - insetY0));
+  mctx.filter = "none";
+
+  // Apply mask to shifted layer
+  sctx.globalCompositeOperation = "destination-in";
+  sctx.drawImage(mask, 0, 0);
+  sctx.globalCompositeOperation = "source-over";
+
+  // Composite shifted ROI over original AI image
+  octx.drawImage(shifted, 0, 0);
+
+  return _canvasToB64Png(out);
 }
 
 function useMedia(query: string) {
