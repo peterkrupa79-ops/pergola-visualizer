@@ -55,9 +55,7 @@ function buildFinalPrompt(t: PergolaType, variantIndex: number) {
     anchorBlock(variantIndex),
     pergolaStyleBlock(t),
     `Keep the pergola modest in size as shown (do not enlarge it). Leave visible terrace space around it if present in the collage.`
-  ].join("
-
-");
+  ].join("\n\n");
 }
 
 
