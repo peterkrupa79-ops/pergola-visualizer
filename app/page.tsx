@@ -18,10 +18,49 @@ const SCALE_MAX = 200;
 // auto-normalizácia veľkosti GLB (štartná veľkosť pri 100%)
 const TARGET_MODEL_MAX_DIM_AT_100 = 1.7;
 
-const FINAL_PROMPT_DEFAULT = `HARMONIZE ONLY. Keep the exact original geometry and perspective.
+// --- Prompting (stabilná poloha bez maskovania) ---
+// Pozn.: model dostáva "collage" (foto + 3D pergola). Prompt má striktne harmonizovať a NESMIE meniť polohu/perpektívu.
+const FINAL_PROMPT_BASE = `HARMONIZE ONLY. Keep the exact original geometry and perspective from the input collage image.
+Do NOT move/shift/translate the pergola forward/backward/sideways. Keep it exactly where it is in the collage.
 Do NOT change the pergola shape, size, thickness, leg width, proportions, spacing, angle, or any structural details.
-Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, or viewpoint.
-Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.`;
+Do NOT add/remove objects. Do NOT crop. Do NOT change camera position, lens, viewpoint, rotation, or zoom.
+Ensure the pergola looks architecturally connected and naturally integrated with the existing building and terrace as shown in the photo.
+Align with terrace edges and the scene perspective lines as they appear in the collage.
+Only adjust lighting, shadows, reflections, color grading, noise, sharpness, and blending so the pergola looks photo-realistic in the scene.
+
+Avoid: floating, detached, standalone, hovering, levitating, sticker look, cut-out look, 3D render look, warped perspective, tilted camera, extra columns/posts, duplicated beams, exaggerated scale.`;
+
+function pergolaStyleBlock(t: PergolaType) {
+  if (t === "bioklim") {
+    return `Style: modern bioclimatic pergola with clean straight lines, realistic materials, crisp but natural details.`;
+  }
+  if (t === "pevna") {
+    return `Style: fixed-roof pergola with clean straight lines, realistic construction and materials.`;
+  }
+  return `Style: winter garden enclosure with sloped roof, realistic glass reflections consistent with the scene, subtle frames, natural integration.`;
+}
+
+// A/B "anchor" variants: 0-2 wall-first, 3-5 edge-first (pre 6 variantov)
+function anchorBlock(variantIndex: number) {
+  const i = (variantIndex ?? 0) % 6;
+  if (i < 3) {
+    return `Anchor: the pergola is attached to the house facade/wall as shown in the collage. The roof starts at the wall line and extends outward over the terrace.`;
+  }
+  return `Anchor: the pergola footprint follows the terrace boundary and aligns with the terrace edges as shown in the collage. Posts sit naturally on the terrace surface where they support the roof.`;
+}
+
+function buildFinalPrompt(t: PergolaType, variantIndex: number) {
+  return [
+    FINAL_PROMPT_BASE,
+    anchorBlock(variantIndex),
+    pergolaStyleBlock(t),
+    `Keep the pergola modest in size as shown (do not enlarge it). Leave visible terrace space around it if present in the collage.`
+  ].join("
+
+");
+}
+
+
 
 const MAX_VARIANTS = 6;
 
@@ -708,7 +747,7 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [prompt] = useState(FINAL_PROMPT_DEFAULT);
+  // prompt sa skladá dynamicky pre každý variant (A/B anchor)
 
   // ===== Variants =====
   const [variants, setVariants] = useState<VariantItem[]>([]);
@@ -1428,6 +1467,7 @@ export default function Page() {
 
       const form = new FormData();
       form.append("image", blob, "collage.jpg");
+      const prompt = buildFinalPrompt(pergolaType, variants.length);
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
