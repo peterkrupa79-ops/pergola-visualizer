@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
-    // (voliteľné) jednoduchý tieň/kontrast cez SVG podklad
+    // (voliteľné) tieň/kontrast cez SVG podklad
     const shadowPad = 8;
     const shadowSvg = Buffer.from(`
       <svg width="${targetLogoW + shadowPad * 2}" height="${targetLogoW + shadowPad * 2}">
@@ -65,13 +65,10 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
-    // ✅ FIX: Buffer -> ArrayBuffer pre Response (TS/Vercel kompatibilita)
-    const outArrayBuffer = outBuf.buffer.slice(
-      outBuf.byteOffset,
-      outBuf.byteOffset + outBuf.byteLength
-    );
+    // ✅ FIX: Response nech má Uint8Array (bez SharedArrayBuffer typového problému)
+    const outU8 = new Uint8Array(outBuf);
 
-    return new Response(outArrayBuffer, {
+    return new Response(outU8, {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "public, max-age=31536000, immutable",
