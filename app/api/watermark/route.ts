@@ -31,7 +31,6 @@ export async function POST(req: NextRequest) {
     // 3) zisti rozmery zdrojového obrázka
     const srcMeta = await sharp(srcBuf).metadata();
     const srcW = srcMeta.width ?? 1024;
-    const srcH = srcMeta.height ?? 768;
 
     // 4) dopočítaj veľkosť loga (napr. 10% šírky)
     const targetLogoW = clamp(Math.round(srcW * 0.10), 140, 320);
@@ -43,7 +42,6 @@ export async function POST(req: NextRequest) {
       .toBuffer();
 
     // (voliteľné) jednoduchý tieň/kontrast cez SVG podklad
-    // Ak logo niekedy zaniká na svetlom pozadí, toto je veľmi účinné.
     const shadowPad = 8;
     const shadowSvg = Buffer.from(`
       <svg width="${targetLogoW + shadowPad * 2}" height="${targetLogoW + shadowPad * 2}">
@@ -55,16 +53,25 @@ export async function POST(req: NextRequest) {
     `);
 
     // 5) overlay
-    // Pozn.: shadowSvg je štvorcový – je to len “tieňový priestor”. Logo položíme naň.
     const outBuf = await sharp(srcBuf)
       .composite([
-        { input: shadowSvg, top: padding - shadowPad, left: padding - shadowPad },
+        {
+          input: shadowSvg,
+          top: padding - shadowPad,
+          left: padding - shadowPad,
+        },
         { input: resizedLogo, top: padding, left: padding },
       ])
       .png()
       .toBuffer();
 
-    return new Response(outBuf, {
+    // ✅ FIX: Buffer -> ArrayBuffer pre Response (TS/Vercel kompatibilita)
+    const outArrayBuffer = outBuf.buffer.slice(
+      outBuf.byteOffset,
+      outBuf.byteOffset + outBuf.byteLength
+    );
+
+    return new Response(outArrayBuffer, {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "public, max-age=31536000, immutable",
