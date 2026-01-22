@@ -88,6 +88,35 @@ async function b64PngToBlob(b64: string): Promise<Blob> {
   return await r.blob();
 }
 
+async function blobToB64Png(blob: Blob): Promise<string> {
+  const ab = await blob.arrayBuffer();
+  const bytes = new Uint8Array(ab);
+  let binary = "";
+  // chunk to avoid call stack issues
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+// Adds a small brand logo into the top-left corner AFTER generation (stable watermark, no prompt tricks).
+async function watermarkB64Png(b64: string): Promise<string> {
+  try {
+    const imageUrl = `data:image/png;base64,${b64}`;
+    const res = await fetch("/api/watermark", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageUrl }),
+    });
+    if (!res.ok) return b64;
+    const blob = await res.blob();
+    return await blobToB64Png(blob);
+  } catch {
+    return b64;
+  }
+}
+
 
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
 type EdgeTemplate = { w: number; h: number; pts: Array<[number, number]>; maxShift: number };
@@ -1419,6 +1448,9 @@ export default function Page() {
         // alignment is best-effort; ignore failures
       }
 
+      // Add brand watermark (stable post-processing, no prompt tricks)
+      finalB64 = await watermarkB64Png(finalB64);
+
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
         const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
@@ -1549,6 +1581,12 @@ export default function Page() {
         {/* Hero */}
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <img
+              src="/brand/logo.png"
+              alt="Teranea"
+              style={{ height: 34, width: "auto", display: "block", filter: "drop-shadow(0 10px 18px rgba(0,0,0,0.10))" }}
+            />
+
             <h2 style={{ margin: 0, fontSize: 34, lineHeight: 1.15, letterSpacing: "-0.02em" }}>Vizualizácia pergoly</h2>
 
             <button
