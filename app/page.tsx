@@ -1650,12 +1650,6 @@ export default function Page() {
             <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
                 Rozumiem
               </button>
-                  {loading ? (
-                    <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.65)", lineHeight: 1.35 }}>
-                      Vizualizujeme tvoj aktuálny návrh pomocou umelej inteligencie. Výsledok sa môže jemne líšiť v detailoch.
-                    </div>
-                  ) : null}
-                </div>
           </div>
         </div>
       ) : null}
