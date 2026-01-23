@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const image = form.get("image");
     const prompt = String(form.get("prompt") ?? "").trim();
+    const psRaw = String(form.get("prompt_strength") ?? "").trim();
+    const prompt_strength = psRaw ? Math.max(0, Math.min(1, Number(psRaw))) : 0.28;
 
     if (!(image instanceof Blob)) {
       return new Response(JSON.stringify({ error: "Missing image" }), {
@@ -50,7 +52,7 @@ export async function POST(req: NextRequest) {
       input: {
         prompt,
         image: dataUri,
-        prompt_strength: 0.2,
+        prompt_strength,
       },
     });
 
@@ -90,4 +92,3 @@ export async function POST(req: NextRequest) {
     });
   }
 }
-
