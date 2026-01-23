@@ -857,6 +857,9 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Prompt text (avoid name "prompt" which collides with window.prompt)
+  const promptText: string = FINAL_PROMPT_DEFAULT;
+
   // prompt sa skladá dynamicky pre každý variant (A/B anchor)
 
   // ===== Variants =====
@@ -1585,7 +1588,7 @@ export default function Page() {
 
         const form = new FormData();
         form.append("image", blob, "collage.jpg");
-        form.append("prompt", prompt);
+        form.append("prompt", promptText);
 
         const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
