@@ -154,32 +154,6 @@ async function watermarkB64Png(b64: string): Promise<string> {
   }
 }
 
-// Global "unify pass" AFTER generation/alignment to reduce visible seams where AI vs original differ.
-// This does NOT move geometry; it only applies subtle global grading + micro-grain to make the whole image feel like one photo.
-async function unifyB64Png(b64: string): Promise<string> {
-  try {
-    const imageUrl = `data:image/png;base64,${b64}`;
-    const res = await fetch("/api/postprocess", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageUrl }),
-    });
-    if (!res.ok) return b64;
-    const blob = await res.blob();
-    const ab = await blob.arrayBuffer();
-    const bytes = new Uint8Array(ab);
-    let binary = "";
-    const CHUNK = 0x8000;
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-    }
-    return btoa(binary);
-  } catch {
-    return b64;
-  }
-}
-
-
 
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
 type EdgeTemplate = { w: number; h: number; pts: Array<[number, number]>; maxShift: number };
@@ -321,23 +295,38 @@ async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Pro
 
   // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
   // So AI pergola is shifted by (+dx,+dy) relative to template -> translate image by (-dx,-dy).
-  const full = document.createElement("canvas");
-  full.width = bmp.width;
-  full.height = bmp.height;
-  const ctx = full.getContext("2d")!;
-  // fill by original first (prevents empty borders)
-  ctx.drawImage(bmp, 0, 0);
-  ctx.globalCompositeOperation = "source-over";
-  // overlay shifted copy
   const sx = Math.round((-dx) * (bmp.width / template.w));
   const sy = Math.round((-dy) * (bmp.height / template.h));
-  ctx.clearRect(0, 0, full.width, full.height);
-  ctx.drawImage(bmp, sx, sy);
-  // For uncovered areas, draw original under it (already empty due to clearRect). Use destination-over:
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.drawImage(bmp, 0, 0);
 
-  return _canvasToB64Png(full);
+  // IMPORTANT: Never "fill uncovered borders" with the unshifted original.
+  // That creates the visible "photo inside photo" seam at the edges.
+  // Instead, we crop to the valid overlapped region after shift and scale it back
+  // to the original size (tiny rescale, but visually seamless).
+  const w = bmp.width;
+  const h = bmp.height;
+
+  const x0 = Math.max(0, sx);
+  const y0 = Math.max(0, sy);
+  const x1 = Math.min(w, sx + w);
+  const y1 = Math.min(h, sy + h);
+
+  // When sx/sy shifts out of bounds, the overlapped region shrinks.
+  // Compute the source rect in the original bmp that maps onto the canvas.
+  const srcX = Math.max(0, -sx);
+  const srcY = Math.max(0, -sy);
+  const srcW = Math.max(1, x1 - x0);
+  const srcH = Math.max(1, y1 - y0);
+
+  // Draw cropped region scaled back to full canvas
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, srcX, srcY, srcW, srcH, 0, 0, w, h);
+
+  return _canvasToB64Png(out);
 }
 
 function useMedia(query: string) {
@@ -1511,9 +1500,6 @@ export default function Page() {
       } catch (e) {
         // alignment is best-effort; ignore failures
       }
-
-      // Global unify pass to reduce "two photos" seams (tone/grain). Keeps geometry.
-      finalB64 = await unifyB64Png(finalB64);
 
       // Add brand watermark (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
