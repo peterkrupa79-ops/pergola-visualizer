@@ -1592,10 +1592,21 @@ export default function Page() {
       });
 
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      if (!j?.b64) throw new Error("Flux API nevrátilo b64.");
 
-      // 4) Post-align back to the exact user placement (best-effort).
-      let finalB64 = j.b64 as string;
+      // Flux endpoint returns { outputUrl } (preferred) or { b64 } (fallback)
+      let finalB64: string | null = null;
+
+      if (typeof j?.b64 === "string" && j.b64.length > 0) {
+        finalB64 = j.b64 as string;
+      } else if (typeof j?.outputUrl === "string" && j.outputUrl.length > 0) {
+        const outRes = await fetch(j.outputUrl as string, { cache: "no-store" });
+        if (!outRes.ok) throw new Error(`Flux output download failed: HTTP ${outRes.status}`);
+        const outBlob = await outRes.blob();
+        finalB64 = await blobToB64Png(outBlob);
+      }
+
+      if (!finalB64) throw new Error("Flux API nevrátilo outputUrl ani b64.");
+
       try {
         finalB64 = await _alignAiB64ToTemplate(finalB64, alignTemplate);
       } catch {}
