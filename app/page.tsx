@@ -155,6 +155,78 @@ async function watermarkB64Png(b64: string): Promise<string> {
 }
 
 
+async function canvasToB64Png(canvas: HTMLCanvasElement): Promise<string> {
+  const blob: Blob = await new Promise((res, rej) =>
+    canvas.toBlob((b) => (b ? res(b) : rej(new Error("canvas.toBlob returned null"))), "image/png")
+  );
+  return await blobToB64Png(blob);
+}
+
+async function fetchUrlToB64Png(url: string): Promise<string> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Failed to fetch Flux output: HTTP ${r.status}`);
+  const buf = await r.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function buildFluxPrompt(t: PergolaType, variantIndex: number) {
+  return [
+    `Harmonize the existing pergola structure naturally into the photograph.`,
+    `Preserve the exact position, size, perspective and orientation of the pergola. Do NOT move, resize, rotate or redesign the structure.`,
+    `Improve realism only: lighting, shadows, natural contact with terrace and house wall, realistic materials and details, photographic color balance.`,
+    `Keep the original camera position, perspective and composition unchanged (no crop, no rotation, no zoom).`,
+    anchorBlock(variantIndex),
+    pergolaStyleBlock(t),
+    `Photorealistic result, looks like a real photo. Avoid floating/detached/hovering. No extra columns or beams.`,
+  ].join("\n");
+}
+
+async function fluxHarmonize({
+  compositeB64,
+  maskB64,
+  prompt,
+  seed,
+  steps = 35,
+}: {
+  compositeB64: string;
+  maskB64: string;
+  prompt: string;
+  seed?: number;
+  steps?: number;
+}): Promise<string> {
+  const r = await fetch("/api/flux-harmonize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image: `data:image/png;base64,${compositeB64}`,
+      mask: `data:image/png;base64,${maskB64}`,
+      prompt,
+      seed,
+      steps,
+    }),
+  });
+
+  const j = await r.json().catch(async () => {
+    const t = await r.text().catch(() => "");
+    return { error: t || `HTTP ${r.status}` };
+  });
+
+  if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+
+  const outputUrl = j?.outputUrl as string | undefined;
+  if (!outputUrl) throw new Error("Flux API nevrátilo outputUrl.");
+
+  return await fetchUrlToB64Png(outputUrl);
+}
+
+
+
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
 type EdgeTemplate = { w: number; h: number; pts: Array<[number, number]>; maxShift: number };
 
@@ -1484,6 +1556,38 @@ export default function Page() {
         finalB64 = await _alignAiB64ToTemplate(finalB64, alignTemplate);
       } catch (e) {
         // alignment is best-effort; ignore failures
+      }
+
+      // Flux harmonization (keeps the pergola in the exact placed position; improves photo realism)
+      try {
+        const originalB64 = await canvasToB64Png(bgOnly);
+
+        const mr = await fetch("/api/mask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ originalB64, proposedB64: finalB64 }),
+        });
+
+        const mj = await mr.json().catch(async () => {
+          const t = await mr.text().catch(() => "");
+          return { error: t || `HTTP ${mr.status}` };
+        });
+
+        if (!mr.ok) throw new Error(mj?.error || `Mask HTTP ${mr.status}`);
+        if (!mj?.maskB64 || !mj?.compositeB64) throw new Error("Mask API nevrátilo maskB64/compositeB64.");
+
+        const fluxPrompt = buildFluxPrompt(pergolaType, variants.length);
+        const seed = Date.now() % 1_000_000_000;
+
+        finalB64 = await fluxHarmonize({
+          compositeB64: mj.compositeB64,
+          maskB64: mj.maskB64,
+          prompt: fluxPrompt,
+          seed,
+          steps: 35,
+        });
+      } catch (e) {
+        console.warn("Flux harmonization failed:", e);
       }
 
       // Add brand watermark (stable post-processing, no prompt tricks)
