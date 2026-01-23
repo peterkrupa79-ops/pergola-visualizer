@@ -68,19 +68,19 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
     id: 1,
     title: "Nahraj fotku",
     hint:
-      "Nahraj fotku terasy alebo domu (JPG/PNG). Ideálne z výšky očí alebo mierne zboku a tak, aby na fotke bolo vidno čo najviac okolia (nie len miesto tesne pri pergole). Viac priestoru na fotke pomôže mierke a perspektíve.",
+      "Nahraj fotku priestoru, kde plánuješ pergolu (JPG/PNG). Ideálne z výšky očí alebo mierne zboku, so záberom čo najväčšieho priestoru. Fotografiu môžeš kedykoľvek počas procesu zmeniť a pozrieť si pergolu z iného uhla.",
   },
   {
     id: 2,
-    title: "Umiestni pergolu",
+    title: "Vyber typ a umiestni pergolu",
     hint:
-      "Vyber typ pergoly, posuň ju do fotky, otoč alebo nakloň a nastav rozmery. Voliteľne otvor Perspektíva a dolaď horizont a hĺbku pohľadu podľa fotky. Tip: nastav pergolu radšej trochu menšiu, AI ju vo výsledku často mierne zväčší.",
+      "Vyber typ pergoly a nastav jej polohu, natočenie, sklon a rozmery. Tip: nastav pergolu radšej o trochu menšiu – AI ju vo výsledku často mierne zväčší. Typ aj pozadie môžeš kedykoľvek zmeniť a porovnať rôzne možnosti.",
   },
   {
     id: 3,
-    title: "Vygeneruj vizualizácie",
+    title: "Vytvor vizualizáciu",
     hint:
-      "Klikni na Vygenerovať a nechaj AI vytvoriť varianty. AI doladí svetlo, tiene a celkový vzhľad, aby pergola pôsobila prirodzene. Je to pomôcka pre predstavu, AI môže občas domýšľať alebo dokresľovať detaily.",
+      "Klikni na Vygenerovať a AI zharmonizuje tvoj aktuálny návrh do fotorealistickej vizualizácie. Výsledok sa môže jemne líšiť v detailoch. Ak chceš iný variant, uprav návrh (poloha, typ alebo fotka) a vygeneruj ďalší.",
   },
   {
     id: 4,
@@ -114,7 +114,7 @@ function isValidEmail(email: string) {
 }
 function typeLabel(t: PergolaType) {
   if (t === "bioklim") return "Bioklimatická pergola";
-  if (t === "pevna") return "Pergola s pevnou strechou";
+  if (t === "pevna") return "Pergola s pevnou strechou (šikmá)";
   return "Zimná záhrada";
 }
 function makeId() {
@@ -1607,23 +1607,30 @@ export default function Page() {
       {introOpen ? (
         <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.55)", display: "grid", placeItems: "center", padding: 16 }}>
           <div style={{ width: "min(760px, 100%)", background: "#fff", borderRadius: 18, border: "1px solid rgba(0,0,0,0.10)", boxShadow: "0 30px 90px rgba(0,0,0,0.35)", padding: 18, display: "grid", gap: 12 }}>
-            <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.01em" }}>Ako to funguje</div>
+            <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.01em" }}>Ako funguje AI vizualizácia pergoly</div>
             <div style={{ color: "rgba(0,0,0,0.72)", fontSize: 15, lineHeight: 1.45 }}>
-              Tento vizualizér <b>nie je profesionálny architektonický nástroj</b>. Je to rýchla pomôcka, ktorá ti pomôže vytvoriť si lepšiu predstavu, ako môže pergola vyzerať na tvojom dome.
+              Tento vizualizér ti pomôže <b>rýchlo a jednoducho vytvoriť predstavu</b>, ako by mohla pergola vyzerať priamo na tvojom dome.
               <br />
               <br />
-              Používame umelú inteligenciu, ktorá vie spraviť veľmi presvedčivé vizualizácie, no aj napriek snahe o presnosť si občas <b>domýšľa a dokresľuje detaily</b>.
+              Nejde o profesionálny architektonický ani technický návrh. Používame <b>umelú inteligenciu</b>, ktorá dokáže vytvoriť veľmi presvedčivé vizualizácie, no v niektorých detailoch si môže <b>mierne pomáhať vlastnou interpretáciou</b>.
             </div>
             <div style={{ display: "grid", gap: 8, color: "rgba(0,0,0,0.75)", fontSize: 14, lineHeight: 1.45 }}>
-              <div>• Ideálna je fotka z výšky očí alebo mierne zboku a so záberom čo najväčšieho priestoru (nie len tesne okolo pergoly).</div>
-              <div>• V návrhu nastav pergolu radšej <b>o trochu menšiu</b> – AI ju vo výsledku často mierne zväčší.</div>
-              <div>• Výsledky ber ako <b>vizuálnu inšpiráciu</b>, nie ako finálny technický návrh.</div>
+              <div>📸 Použi fotku z výšky očí alebo mierne zboku, so záberom čo najväčšieho priestoru (nielen tesne okolo pergoly).</div>
+              <div>📐 V návrhu nastav pergolu radšej o niečo menšiu – AI ju vo výsledku často mierne zväčší.</div>
+              <div>👀 Výsledky ber ako <b>vizuálnu inšpiráciu a pomôcku pri rozhodovaní</b>, nie ako finálny podklad pre výrobu.</div>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
+            <div style={{ color: "rgba(0,0,0,0.60)", fontSize: 13, lineHeight: 1.45 }}>
+              Finálne riešenie sa vždy rieši individuálne.
+            </div>
+            <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
                 Rozumiem
               </button>
-            </div>
+                  {loading ? (
+                    <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.65)", lineHeight: 1.35 }}>
+                      Vizualizujeme tvoj aktuálny návrh pomocou umelej inteligencie. Výsledok sa môže jemne líšiť v detailoch.
+                    </div>
+                  ) : null}
+                </div>
           </div>
         </div>
       ) : null}
@@ -1731,6 +1738,7 @@ export default function Page() {
                 <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
                   <select
                     value={pergolaType}
+                    title={pergolaType === "bioklim" ? "Moderná pergola s nastaviteľnými lamelami." : pergolaType === "pevna" ? "Klasická pergola so šikmou strechou (polykarbonát / bezpečnostné sklo)." : "Zimná záhrada – pergola uzavretá zasklením."}
                     onChange={(e) => setPergolaType(e.target.value as PergolaType)}
                     style={{
                       padding: "10px 12px",
@@ -1747,7 +1755,7 @@ export default function Page() {
                     }}
                   >
                     <option value="bioklim">Bioklimatická pergola</option>
-                    <option value="pevna">Pergola s pevnou strechou</option>
+                    <option value="pevna">Pergola s pevnou strechou (šikmá)</option>
                     <option value="zimna">Zimná záhrada</option>
                   </select>
 
@@ -1769,6 +1777,14 @@ export default function Page() {
                       Reset
                     </span>
                   </button>
+                </div>
+
+                <div style={{ marginTop: -6, fontSize: 12, color: "rgba(0,0,0,0.60)", lineHeight: 1.35 }}>
+                  {pergolaType === "bioklim"
+                    ? "Moderná pergola s nastaviteľnými lamelami, vhodná k súčasnej architektúre."
+                    : pergolaType === "pevna"
+                      ? "Klasická pergola so šikmou strechou a krytinou z polykarbonátu alebo bezpečnostného skla."
+                      : "Pergola uzavretá zasklením, ktorú môžeš využívať aj mimo letnej sezóny."}
                 </div>
 
                 {/* 2. riadok: Nahraj fotku / Resize */}
@@ -1863,6 +1879,7 @@ export default function Page() {
 
                   <select
                     value={pergolaType}
+                    title={pergolaType === "bioklim" ? "Moderná pergola s nastaviteľnými lamelami." : pergolaType === "pevna" ? "Klasická pergola so šikmou strechou (polykarbonát / bezpečnostné sklo)." : "Zimná záhrada – pergola uzavretá zasklením."}
                     onChange={(e) => setPergolaType(e.target.value as PergolaType)}
                     style={{
                       padding: "10px 12px",
@@ -1874,7 +1891,7 @@ export default function Page() {
                     }}
                   >
                     <option value="bioklim">Bioklimatická pergola</option>
-                    <option value="pevna">Pergola s pevnou strechou</option>
+                    <option value="pevna">Pergola s pevnou strechou (šikmá)</option>
                     <option value="zimna">Zimná záhrada</option>
                   </select>
 
@@ -1897,7 +1914,7 @@ export default function Page() {
                       cursor: !canGenerate ? "not-allowed" : "pointer",
                     }}
                   >
-                    {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+                    {loading ? "Vytváram vizualizáciu…" : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
                   </button>
                 </div>
               </div>
@@ -2069,10 +2086,13 @@ export default function Page() {
           <div style={{ padding: "14px 16px", borderBottom: "1px solid rgba(0,0,0,0.06)", display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
             <div style={{ display: "grid", gap: 4 }}>
               <div style={{ fontSize: 12, fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(0,0,0,0.55)" }}>
-                Varianty (max {MAX_VARIANTS})
+                Tvoje vizualizácie
               </div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.60)" }}>
                 Zostáva: <b>{remaining}</b>/{MAX_VARIANTS} • sťahovanie: {leadSubmitted ? "✅ odomknuté" : "🔒 po formulári"}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(0,0,0,0.60)" }}>
+                Varianty vznikajú postupne podľa tvojich úprav – polohy pergoly, typu alebo fotografie.
               </div>
             </div>
             {!isMobile ? (
@@ -2193,7 +2213,7 @@ export default function Page() {
                 cursor: !canGenerate ? "not-allowed" : "pointer",
               }}
             >
-              {loading ? "Generujem..." : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
+              {loading ? "Vytváram vizualizáciu…" : variants.length >= MAX_VARIANTS ? `Limit ${MAX_VARIANTS}` : `Vygenerovať (${variants.length + 1}/${MAX_VARIANTS})`}
             </button>
 
             <button
