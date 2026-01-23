@@ -150,7 +150,6 @@ export async function POST(req: NextRequest) {
     let bin: Uint8Array = new Uint8Array(n);
     for (let i = 0; i < n; i++) bin[i] = diff01[i] > T ? 1 : 0;
 
-    // ✅ TS fix: normalize after every op
     bin = normU8(largestComponent(bin, W, H));
 
     const grow = clamp(Math.round(Math.min(W, H) * 0.02), 10, 35);
@@ -167,6 +166,7 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
+    // Shadow: small offset + blur + reduced opacity
     const shadowDx = Math.round(W0 * 0.002);
     const shadowDy = Math.round(H0 * 0.006);
     const shadowBlur = clamp(Math.round(Math.min(W0, H0) * 0.012), 10, 30);
@@ -198,6 +198,7 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "image/png",
         "Cache-Control": "no-store",
+        "X-Harmonized": "1",
       },
     });
   } catch (e) {
