@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import sharp from "sharp";
+import Replicate from "replicate";
 
 export const runtime = "nodejs";
 
-function stripDataUri(b64OrDataUri: string): string {
-  const idx = b64OrDataUri.indexOf("base64,");
-  return idx >= 0 ? b64OrDataUri.slice(idx + "base64,".length) : b64OrDataUri;
-}
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN!,
+});
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -20,7 +20,6 @@ function percentile95Sampled(values01: Float32Array, sampleStride: number): numb
   return samples[idx] ?? 0.1;
 }
 
-// --- Morphology helpers (always return plain Uint8Array) ---
 function erode(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let y = 0; y < h; y++) {
@@ -157,28 +156,45 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
   return out;
 }
 
-// --- normalize helper to avoid Uint8Array<ArrayBufferLike> typing issues ---
 function normU8(x: Uint8Array): Uint8Array {
-  // creates a fresh Uint8Array with plain typing
   return Uint8Array.from(x);
+}
+
+async function fileToBuffer(file: File): Promise<Buffer> {
+  const ab = await file.arrayBuffer();
+  return Buffer.from(ab);
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { originalB64, proposedB64 } = await req.json();
-
-    if (!originalB64 || !proposedB64) {
-      return new Response("Missing originalB64/proposedB64", { status: 400 });
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return new Response("Missing REPLICATE_API_TOKEN", { status: 500 });
     }
 
-    const origBuf = Buffer.from(stripDataUri(String(originalB64)), "base64");
-    const propBuf = Buffer.from(stripDataUri(String(proposedB64)), "base64");
+    const form = await req.formData();
+    const originalFile = form.get("original");
+    const proposedFile = form.get("proposed");
+    const prompt = String(form.get("prompt") ?? "");
+    const steps = Number(form.get("steps") ?? 35);
+    const seedRaw = form.get("seed");
+    const seed = seedRaw === null ? undefined : Number(seedRaw);
+
+    if (!(originalFile instanceof File) || !(proposedFile instanceof File)) {
+      return new Response("Missing original/proposed files", { status: 400 });
+    }
+    if (!prompt) {
+      return new Response("Missing prompt", { status: 400 });
+    }
+
+    const origBuf = await fileToBuffer(originalFile);
+    const propBuf = await fileToBuffer(proposedFile);
 
     const origMeta = await sharp(origBuf).metadata();
     const W = origMeta.width ?? 0;
     const H = origMeta.height ?? 0;
     if (!W || !H) return new Response("Invalid original image", { status: 400 });
 
+    // Work on a downscaled diff for speed
     const maxDim = 768;
     const scale = Math.min(1, maxDim / Math.max(W, H));
     const mw = Math.max(1, Math.round(W * scale));
@@ -238,6 +254,7 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
+    // Hard mask for compositing
     const hardMaskFull = await sharp(maskSmall255, { raw: { width: mw, height: mh, channels: 1 } })
       .resize(W, H, { kernel: "nearest" })
       .raw()
@@ -259,12 +276,34 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
-    return Response.json({
-      maskB64: maskBuf.toString("base64"),
-      compositeB64: compositeBuf.toString("base64"),
-    });
+    // Run Flux directly here (avoids huge client payloads)
+    const output = await replicate.run(
+      "black-forest-labs/flux-fill-pro:9609ba7331ed872c99f81c92c69a9ee52a50d8aba99f636173e0674d997efd0c",
+      {
+        input: {
+          prompt,
+          image: `data:image/png;base64,${compositeBuf.toString("base64")}`,
+          mask: `data:image/png;base64,${maskBuf.toString("base64")}`,
+          steps: Number.isFinite(steps) ? clamp(steps, 10, 50) : 35,
+          seed: Number.isFinite(seed) ? seed : undefined,
+        },
+      }
+    );
+
+    const url =
+      typeof output === "string"
+        ? output
+        : Array.isArray(output)
+          ? (output[0] as string | undefined)
+          : (output as any)?.output ?? (output as any)?.[0];
+
+    if (!url || typeof url !== "string") {
+      return new Response("Flux did not return an output URL", { status: 500 });
+    }
+
+    return Response.json({ outputUrl: url });
   } catch (e) {
     console.error(e);
-    return new Response("Mask error", { status: 500 });
+    return new Response("Mask/Flux error", { status: 500 });
   }
 }
