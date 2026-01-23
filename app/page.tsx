@@ -137,13 +137,12 @@ async function blobToB64Png(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
-
-async function canvasToJpegBlobAtMaxDim(canvas: HTMLCanvasElement, maxDim = 1024, quality = 0.9): Promise<Blob> {
+async function canvasToJpegBlobAtMaxDim(canvas: HTMLCanvasElement, maxDim: number, quality: number): Promise<Blob> {
   const w = canvas.width;
   const h = canvas.height;
-  const scale = Math.min(1, maxDim / Math.max(w, h));
-  const tw = Math.max(1, Math.round(w * scale));
-  const th = Math.max(1, Math.round(h * scale));
+  const s = Math.min(1, maxDim / Math.max(w, h));
+  const tw = Math.max(1, Math.round(w * s));
+  const th = Math.max(1, Math.round(h * s));
 
   const c = document.createElement("canvas");
   c.width = tw;
@@ -151,22 +150,19 @@ async function canvasToJpegBlobAtMaxDim(canvas: HTMLCanvasElement, maxDim = 1024
   const ctx = c.getContext("2d")!;
   ctx.drawImage(canvas, 0, 0, tw, th);
 
-  const blob: Blob = await new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob null"))), "image/jpeg", quality)
+  const blob: Blob = await new Promise((res, rej) =>
+    c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob returned null"))), "image/jpeg", quality)
   );
   return blob;
 }
 
-async function b64PngToJpegBlobAtMaxDim(b64png: string, maxDim = 1024, quality = 0.9): Promise<Blob> {
-  const pngBlob = await b64PngToBlob(b64png);
-  // @ts-ignore
-  const bmp: ImageBitmap = await createImageBitmap(pngBlob);
-
+async function b64PngToJpegBlobAtMaxDim(b64Png: string, maxDim: number, quality: number): Promise<Blob> {
+  const bmp = await _b64ToImageBitmap(b64Png);
   const w = bmp.width;
   const h = bmp.height;
-  const scale = Math.min(1, maxDim / Math.max(w, h));
-  const tw = Math.max(1, Math.round(w * scale));
-  const th = Math.max(1, Math.round(h * scale));
+  const s = Math.min(1, maxDim / Math.max(w, h));
+  const tw = Math.max(1, Math.round(w * s));
+  const th = Math.max(1, Math.round(h * s));
 
   const c = document.createElement("canvas");
   c.width = tw;
@@ -174,11 +170,12 @@ async function b64PngToJpegBlobAtMaxDim(b64png: string, maxDim = 1024, quality =
   const ctx = c.getContext("2d")!;
   ctx.drawImage(bmp as any, 0, 0, tw, th);
 
-  const blob: Blob = await new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob null"))), "image/jpeg", quality)
+  const blob: Blob = await new Promise((res, rej) =>
+    c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob returned null"))), "image/jpeg", quality)
   );
   return blob;
 }
+
 
 // Adds a small brand logo into the top-left corner AFTER generation (stable watermark, no prompt tricks).
 async function watermarkB64Png(b64: string): Promise<string> {
@@ -1528,113 +1525,149 @@ export default function Page() {
 
   // ===== Generate (real API) =====
   async function generate() {
-    if (!bgImg) return;
-    if (variants.length >= MAX_VARIANTS) return;
+      if (!bgImg) return;
+      if (variants.length >= MAX_VARIANTS) return;
 
-    setLoading(true);
-    setError("");
+      setLoading(true);
+      setError("");
 
-    try {
-      // downscale export
-      const MAX_DIM = 2048;
-      const bgW = bgImg.width;
-      const bgH = bgImg.height;
-
-      const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
-      const outW = Math.max(1, Math.round(bgW * scale));
-      const outH = Math.max(1, Math.round(bgH * scale));
-
-      const out = document.createElement("canvas");
-      out.width = outW;
-      out.height = outH;
-
-      const octx = out.getContext("2d")!;
-      octx.drawImage(bgImg, 0, 0, outW, outH);
-
-      // bg-only canvas for diff-based template (locks pergola position without using masks in AI)
-      const bgOnly = document.createElement("canvas");
-      bgOnly.width = outW;
-      bgOnly.height = outH;
-      const bgctx = bgOnly.getContext("2d")!;
-      bgctx.drawImage(bgImg, 0, 0, outW, outH);
-
-      if (!threeReadyRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current || !rootRef.current) {
-        throw new Error("3D renderer nie je pripravený.");
-      }
-
-      const renderer = rendererRef.current;
-      const scene = sceneRef.current;
-
-      applyTransformsForCurrentState(outW, outH);
-      renderer.setSize(outW, outH, false);
-      renderer.render(scene, cameraRef.current);
-
-      const glTemp = renderer.d
-      // Flux harmonization (REQUIRED)
-      // We send compact JPEGs via multipart to avoid Vercel payload limits.
-      const fluxPrompt = [
-        "HARMONIZE ONLY. The pergola structure is already placed correctly.",
-        "Preserve the exact position, size, perspective and orientation of the pergola. Do NOT move, resize, rotate or redesign it.",
-        "Do NOT change camera angle, crop, zoom, or viewpoint.",
-        "Improve realism only: consistent lighting, realistic shadows, natural contact with terrace and house wall, photographic color balance and noise.",
-        "No floating, no detached edges, no extra columns/beams, no new objects.",
-        "Photorealistic result.",
-      ].join("\n");
-
-      const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1024, 0.9);
-      const proposedJpg = await b64PngToJpegBlobAtMaxDim(finalB64, 1024, 0.9);
-
-      const fd = new FormData();
-      fd.append("original", originalJpg, "original.jpg");
-      fd.append("proposed", proposedJpg, "proposed.jpg");
-      fd.append("prompt", fluxPrompt);
-      fd.append("steps", "35");
-      fd.append("seed", String((Date.now() + variants.length * 997) % 2147483647));
-
-      const mr = await fetch("/api/mask", { method: "POST", body: fd });
-
-      if (!mr.ok) {
-        const t = await mr.text().catch(() => "");
-        throw new Error(`Flux step failed: /api/mask (${mr.status}) ${t || ""}`.trim());
-      }
-
-      const mj = await mr.json();
-      const outUrl = mj?.outputUrl as string | undefined;
-      if (!outUrl) {
-        throw new Error("Flux step failed: /api/mask did not return outputUrl");
-      }
-
-      const outBlob = await fetch(outUrl).then((rr) => rr.blob());
-      let fluxB64 = await blobToB64Png(outBlob);
-
-      // best-effort alignment after Flux
       try {
-        fluxB64 = await _alignAiB64ToTemplate(fluxB64, alignTemplate);
-      } catch {}
+        // downscale export
+        const MAX_DIM = 2048;
+        const bgW = bgImg.width;
+        const bgH = bgImg.height;
 
-      finalB64 = fluxB64;
+        const scale = Math.min(1, MAX_DIM / Math.max(bgW, bgH));
+        const outW = Math.max(1, Math.round(bgW * scale));
+        const outH = Math.max(1, Math.round(bgH * scale));
 
-      B64;
+        const out = document.createElement("canvas");
+        out.width = outW;
+        out.height = outH;
 
-// Add brand watermark (stable post-processing, no prompt tricks)
-      finalB64 = await watermarkB64Png(finalB64);
+        const octx = out.getContext("2d")!;
+        octx.drawImage(bgImg, 0, 0, outW, outH);
 
-      setVariants((prev) => {
-        if (prev.length >= MAX_VARIANTS) return prev;
-        const next = [...prev, { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() }];
-        return next;
-      });
+        // bg-only canvas (for alignment template + Flux original)
+        const bgOnly = document.createElement("canvas");
+        bgOnly.width = outW;
+        bgOnly.height = outH;
+        const bgctx = bgOnly.getContext("2d")!;
+        bgctx.drawImage(bgImg, 0, 0, outW, outH);
 
-      setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
-    } catch (err: any) {
-      console.error(err);
-      setError(String(err?.message || err));
-    } finally {
-      setLoading(false);
+        if (
+          !threeReadyRef.current ||
+          !rendererRef.current ||
+          !sceneRef.current ||
+          !cameraRef.current ||
+          !rootRef.current
+        ) {
+          throw new Error("3D renderer nie je pripravený.");
+        }
+
+        const renderer = rendererRef.current;
+        const scene = sceneRef.current;
+
+        applyTransformsForCurrentState(outW, outH);
+        renderer.setSize(outW, outH, false);
+        renderer.render(scene, cameraRef.current);
+
+        const glTemp = renderer.domElement;
+        octx.drawImage(glTemp, 0, 0);
+
+        // Template for post-align (keeps exact placement)
+        const alignTemplate = _makeEdgeTemplateFromDiff(bgOnly, out);
+
+        // Collage -> JPEG blob for OpenAI
+        const blob: Blob = await new Promise((res, rej) =>
+          out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+        );
+
+        const form = new FormData();
+        form.append("image", blob, "collage.jpg");
+        form.append("prompt", prompt);
+
+        const r = await fetch("/api/render/openai", { method: "POST", body: form });
+
+        const j = await r.json().catch(async () => {
+          const t = await r.text().catch(() => "");
+          return { error: t || `HTTP ${r.status}` };
+        });
+
+        if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+        if (!j?.b64) throw new Error("API nevrátilo b64.");
+
+        // 1) OpenAI result (PNG b64)
+        let finalB64 = j.b64 as string;
+
+        // 2) Best-effort align back to template (reduces drift)
+        try {
+          finalB64 = await _alignAiB64ToTemplate(finalB64, alignTemplate);
+        } catch {}
+
+        // 3) Flux harmonization (REQUIRED) via /api/mask (server-side Flux)
+        const fluxPrompt = [
+          "HARMONIZE ONLY. The pergola structure is already placed correctly.",
+          "Preserve the exact position, size, perspective and orientation of the pergola. Do NOT move, resize, rotate or redesign it.",
+          "Do NOT change camera angle, crop, zoom, or viewpoint.",
+          "Improve realism only: consistent lighting, realistic shadows, natural contact with terrace and house wall, photographic color balance and noise.",
+          "No floating, no detached edges, no extra columns/beams, no new objects.",
+          "Photorealistic result.",
+        ].join("\\n");
+
+        const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1024, 0.9);
+        const proposedJpg = await b64PngToJpegBlobAtMaxDim(finalB64, 1024, 0.9);
+
+        const fd = new FormData();
+        fd.append("original", originalJpg, "original.jpg");
+        fd.append("proposed", proposedJpg, "proposed.jpg");
+        fd.append("prompt", fluxPrompt);
+        fd.append("steps", "35");
+        fd.append("seed", String((Date.now() + variants.length * 997) % 2147483647));
+
+        const mr = await fetch("/api/mask", { method: "POST", body: fd });
+        if (!mr.ok) {
+          const t = await mr.text().catch(() => "");
+          throw new Error(`Flux step failed: /api/mask (${mr.status}) ${t || ""}`.trim());
+        }
+        const fj = await mr.json();
+        const fluxUrl = fj?.outputUrl as string | undefined;
+        if (!fluxUrl) {
+          throw new Error("Flux step failed: /api/mask did not return outputUrl");
+        }
+
+        const fluxBlob = await fetch(fluxUrl).then((rr) => rr.blob());
+        let fluxB64 = await blobToB64Png(fluxBlob);
+
+        // 4) Best-effort align again
+        try {
+          fluxB64 = await _alignAiB64ToTemplate(fluxB64, alignTemplate);
+        } catch {}
+
+        finalB64 = fluxB64;
+
+        // 5) Watermark
+        finalB64 = await watermarkB64Png(finalB64);
+
+        setVariants((prev) => {
+          if (prev.length >= MAX_VARIANTS) return prev;
+          const next = [
+            ...prev,
+            { id: makeId(), type: pergolaType, b64: finalB64, createdAt: Date.now() },
+          ];
+          return next;
+        });
+
+        setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
+      } catch (err: any) {
+        console.error(err);
+        setError(String(err?.message || err));
+      } finally {
+        setLoading(false);
+      }
     }
-  }
 
-  function downloadVariantPNG(idx: number) {
+function downloadVariantPNG(idx: number) {
     const v = variants[idx];
     if (!v?.b64) return;
     const a = document.createElement("a");
