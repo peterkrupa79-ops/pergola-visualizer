@@ -3,22 +3,12 @@ import sharp from "sharp";
 
 export const runtime = "nodejs";
 
-/**
- * NON-AI harmonizácia (bez generovania):
- * - vytvorí masku pergoly z rozdielu (original vs proposed)
- * - vyberie najväčší blob
- * - vytvorí soft alpha (feather)
- * - pridá jemný tieň (blur + offset)
- * - zloží výsledok: original + shadow + proposed (cez alpha)
- *
- * Vstup: multipart/form-data
- *  - original: image/jpeg|png
- *  - proposed: image/jpeg|png
- * Výstup: image/png
- */
-
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function normU8(x: Uint8Array): Uint8Array {
+  return Uint8Array.from(x);
 }
 
 async function blobToBuffer(b: Blob): Promise<Buffer> {
@@ -53,30 +43,6 @@ function dilate(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
         }
       }
       out[y * w + x] = any;
-    }
-  }
-  return out;
-}
-
-function erode(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  const out = new Uint8Array(bin.length);
-  for (let y = 0; y < h; y++) {
-    const y0 = Math.max(0, y - r);
-    const y1 = Math.min(h - 1, y + r);
-    for (let x = 0; x < w; x++) {
-      const x0 = Math.max(0, x - r);
-      const x1 = Math.min(w - 1, x + r);
-      let ok = 1;
-      for (let yy = y0; yy <= y1 && ok; yy++) {
-        const row = yy * w;
-        for (let xx = x0; xx <= x1; xx++) {
-          if (bin[row + xx] === 0) {
-            ok = 0;
-            break;
-          }
-        }
-      }
-      out[y * w + x] = ok;
     }
   }
   return out;
@@ -124,7 +90,6 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
       }
     }
 
-    // preferuj väčšie + trochu nižšie v obraze
     const centerYNorm = (sumY / Math.max(1, area)) / Math.max(1, h - 1);
     const score = area * (0.7 + 0.3 * centerYNorm);
 
@@ -158,10 +123,8 @@ export async function POST(req: NextRequest) {
     const H0 = meta.height ?? 0;
     if (!W0 || !H0) return new Response("Invalid original image", { status: 400 });
 
-    // normalizuj navrh do rozmeru originalu
     const proposedPngFull = await sharp(propBuf).resize(W0, H0, { fit: "fill" }).png().toBuffer();
 
-    // pracovné rozlíšenie na masku (rýchle)
     const MASK_MAX = 900;
     const scale = Math.min(1, MASK_MAX / Math.max(W0, H0));
     const W = Math.max(1, Math.round(W0 * scale));
@@ -171,7 +134,6 @@ export async function POST(req: NextRequest) {
     const origRGB = await sharp(origBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
     const propRGB = await sharp(proposedPngFull).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
 
-    // diff mapa
     const diff01 = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const k = i * 3;
@@ -185,20 +147,18 @@ export async function POST(req: NextRequest) {
     const p95 = percentile95Sampled(diff01, sampleStride);
     const T = clamp(p95 * 0.35, 0.06, 0.16);
 
-    let bin = new Uint8Array(n);
+    let bin: Uint8Array = new Uint8Array(n);
     for (let i = 0; i < n; i++) bin[i] = diff01[i] > T ? 1 : 0;
 
-    bin = largestComponent(bin, W, H);
+    // ✅ TS fix: normalize after every op
+    bin = normU8(largestComponent(bin, W, H));
 
-    // sprav “mäkší” okraj (dilation + blur neskôr)
     const grow = clamp(Math.round(Math.min(W, H) * 0.02), 10, 35);
-    bin = dilate(bin, W, H, grow);
+    bin = normU8(dilate(bin, W, H, grow));
 
-    // alpha mask 0..255
     const alpha255Small = Buffer.alloc(n);
     for (let i = 0; i < n; i++) alpha255Small[i] = bin[i] ? 255 : 0;
 
-    // feather
     const sigma = clamp(Math.round(Math.min(W, H) * 0.008), 6, 18);
 
     const alphaPngFull = await sharp(alpha255Small, { raw: { width: W, height: H, channels: 1 } })
@@ -207,43 +167,33 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
-    // tieň: použijeme tú istú masku, posunieme ju mierne dole/ doprava a rozmažeme
-    const shadowDx = Math.round(W0 * 0.002); // ~2px na 1000px
-    const shadowDy = Math.round(H0 * 0.006); // trochu viac dole
+    const shadowDx = Math.round(W0 * 0.002);
+    const shadowDy = Math.round(H0 * 0.006);
     const shadowBlur = clamp(Math.round(Math.min(W0, H0) * 0.012), 10, 30);
-    const shadowOpacity = 0.22; // jemné
+    const shadowOpacity = 0.22;
 
     const shadowLayer = await sharp(alphaPngFull)
       .blur(shadowBlur)
-      .linear(shadowOpacity, 0) // zníž intenzitu
+      .linear(shadowOpacity, 0)
       .png()
       .toBuffer();
 
     const origPngFull = await sharp(origBuf).resize(W0, H0, { fit: "fill" }).png().toBuffer();
 
-    // zloženie:
-    // 1) background original
-    // 2) shadow (pod pergolou) s offsetom
-    // 3) proposed pergola cez alpha mask (blend)
+    const proposedMasked = await sharp(proposedPngFull)
+      .ensureAlpha()
+      .composite([{ input: alphaPngFull, blend: "dest-in" }])
+      .png()
+      .toBuffer();
+
     const outPng = await sharp(origPngFull)
       .composite([
         { input: shadowLayer, left: shadowDx, top: shadowDy, blend: "over" },
-        // proposed cez alpha: vytvoríme RGBA proposed + alpha
-        {
-          input: await sharp(proposedPngFull)
-            .ensureAlpha()
-            .composite([{ input: alphaPngFull, blend: "dest-in" }])
-            .png()
-            .toBuffer(),
-          left: 0,
-          top: 0,
-          blend: "over",
-        },
+        { input: proposedMasked, left: 0, top: 0, blend: "over" },
       ])
       .png()
       .toBuffer();
 
-    // ✅ FIX: Response body nesmie byť Buffer (TS), použijeme Uint8Array
     return new Response(new Uint8Array(outPng), {
       headers: {
         "Content-Type": "image/png",
