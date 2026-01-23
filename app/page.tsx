@@ -137,45 +137,6 @@ async function blobToB64Png(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
-async function canvasToJpegBlobAtMaxDim(canvas: HTMLCanvasElement, maxDim: number, quality = 0.9): Promise<Blob> {
-  const w = canvas.width;
-  const h = canvas.height;
-  const s = Math.min(1, maxDim / Math.max(w, h));
-  const outW = Math.max(1, Math.round(w * s));
-  const outH = Math.max(1, Math.round(h * s));
-
-  const c = document.createElement("canvas");
-  c.width = outW;
-  c.height = outH;
-  const ctx = c.getContext("2d")!;
-  ctx.drawImage(canvas, 0, 0, outW, outH);
-
-  const blob: Blob = await new Promise((res, rej) =>
-    c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", quality)
-  );
-  return blob;
-}
-
-async function b64PngToJpegBlobAtMaxDim(b64Png: string, maxDim: number, quality = 0.9): Promise<Blob> {
-  const bmp = await _b64ToImageBitmap(b64Png);
-  const w = (bmp as any).width as number;
-  const h = (bmp as any).height as number;
-  const s = Math.min(1, maxDim / Math.max(w, h));
-  const outW = Math.max(1, Math.round(w * s));
-  const outH = Math.max(1, Math.round(h * s));
-
-  const c = document.createElement("canvas");
-  c.width = outW;
-  c.height = outH;
-  const ctx = c.getContext("2d")!;
-  ctx.drawImage(bmp as any, 0, 0, outW, outH);
-
-  const blob: Blob = await new Promise((res, rej) =>
-    c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", quality)
-  );
-  return blob;
-}
-
 // Adds a small brand logo into the top-left corner AFTER generation (stable watermark, no prompt tricks).
 async function watermarkB64Png(b64: string): Promise<string> {
   try {
@@ -192,41 +153,6 @@ async function watermarkB64Png(b64: string): Promise<string> {
     return b64;
   }
 }
-
-
-async function canvasToB64Png(canvas: HTMLCanvasElement): Promise<string> {
-  const blob: Blob = await new Promise((res, rej) =>
-    canvas.toBlob((b) => (b ? res(b) : rej(new Error("canvas.toBlob returned null"))), "image/png")
-  );
-  return await blobToB64Png(blob);
-}
-
-async function fetchUrlToB64Png(url: string): Promise<string> {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Failed to fetch Flux output: HTTP ${r.status}`);
-  const buf = await r.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-
-function buildFluxPrompt(t: PergolaType, variantIndex: number) {
-  return [
-    `Harmonize the existing pergola structure naturally into the photograph.`,
-    `Preserve the exact position, size, perspective and orientation of the pergola. Do NOT move, resize, rotate or redesign the structure.`,
-    `Improve realism only: lighting, shadows, natural contact with terrace and house wall, realistic materials and details, photographic color balance.`,
-    `Keep the original camera position, perspective and composition unchanged (no crop, no rotation, no zoom).`,
-    anchorBlock(variantIndex),
-    pergolaStyleBlock(t),
-    `Photorealistic result, looks like a real photo. Avoid floating/detached/hovering. No extra columns or beams.`,
-  ].join("\n");
-}
-
-
 
 
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
@@ -818,7 +744,6 @@ export default function Page() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [harmonizeStatus, setHarmonizeStatus] = useState<"idle"|"ok"|"fail">("idle");
 
   // prompt sa skladá dynamicky pre každý variant (A/B anchor)
 
@@ -1115,8 +1040,7 @@ export default function Page() {
         draw();
       } catch (err: any) {
         console.error(err);
-        setHarmonizeStatus("fail");
-      setError(String(err?.message || err));
+        setError(String(err?.message || err));
       }
     }
 
@@ -1494,7 +1418,6 @@ export default function Page() {
 
     setLoading(true);
     setError("");
-    setHarmonizeStatus("idle");
 
     try {
       // downscale export
@@ -1536,55 +1459,16 @@ export default function Page() {
 
       const alignTemplate = _makeEdgeTemplateFromDiff(bgOnly, out);
 
-      // 1) Export the collage (background + 3D pergola render)
-      const collageJpg: Blob = await new Promise((res, rej) =>
-        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.92)
+      const blob: Blob = await new Promise((res, rej) =>
+        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
       );
 
-      // 2) Pre-blend (deterministic): soften edges + add subtle contact shadow BEFORE Flux.
-      // This removes the “foto vložená do fotky” look while staying 100% non-generative.
-      let fluxInputBlob: Blob = collageJpg;
-      {
-        const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1400, 0.92);
-        const proposedJpg = collageJpg; // already JPG
-
-        const fd = new FormData();
-        fd.append("original", originalJpg, "original.jpg");
-        fd.append("proposed", proposedJpg, "proposed.jpg");
-
-        const mr = await fetch("/api/mask", { method: "POST", body: fd });
-        if (!mr.ok) {
-          const tt = await mr.text().catch(() => "");
-          throw new Error(tt || `Preblend step failed: /api/mask (${mr.status})`);
-        }
-
-        // if the header exists, we can show status; but we don't hard-require it
-        const hx = mr.headers.get("X-Harmonized");
-        if (hx === "1") setHarmonizeStatus("ok");
-
-        fluxInputBlob = await mr.blob();
-      }
-
-      // 3) Flux Dev img2img: global harmonization (tone / grain / lighting) with low strength.
-      // Important: Flux is NOT allowed to redesign or move the pergola.
       const form = new FormData();
-      form.append("image", fluxInputBlob, "input.png");
+      form.append("image", blob, "collage.jpg");
+      const prompt = buildFinalPrompt(pergolaType, variants.length);
+      form.append("prompt", prompt);
 
-      const fluxPrompt = [
-        "Photorealistic harmonization of the provided photo composite.",
-        "Keep EXACT pergola position, size, perspective, angles, leg spacing, and all geometry. Do NOT move or redesign it.",
-        "Do NOT add/remove objects. Do NOT change architecture. Do NOT change camera viewpoint or crop.",
-        "Only match lighting, shadows, reflections, color grading, contrast, sharpness and film grain so the pergola blends naturally into the scene.",
-        "Avoid any 'pasted' or 'cutout' look. Seamless edges and natural contact with terrace and house wall.",
-      ].join("\n");
-
-      form.append("prompt", fluxPrompt);
-      form.append("prompt_strength", "0.18"); // lower = sticks closer to the composite
-      form.append("guidance", "2.2");
-      form.append("num_inference_steps", "22");
-      form.append("output_format", "png");
-
-      const r = await fetch("/api/render/flux", { method: "POST", body: form });
+      const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
       const j = await r.json().catch(async () => {
         const t = await r.text().catch(() => "");
@@ -1592,26 +1476,17 @@ export default function Page() {
       });
 
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      if (!j?.b64) throw new Error("API nevrátilo b64.");
 
-      // Flux endpoint returns { outputUrl } (preferred) or { b64 } (fallback)
-      let finalB64: string | null = null;
-
-      if (typeof j?.b64 === "string" && j.b64.length > 0) {
-        finalB64 = j.b64 as string;
-      } else if (typeof j?.outputUrl === "string" && j.outputUrl.length > 0) {
-        const outRes = await fetch(j.outputUrl as string, { cache: "no-store" });
-        if (!outRes.ok) throw new Error(`Flux output download failed: HTTP ${outRes.status}`);
-        const outBlob = await outRes.blob();
-        finalB64 = await blobToB64Png(outBlob);
-      }
-
-      if (!finalB64) throw new Error("Flux API nevrátilo outputUrl ani b64.");
-
+      // Post-align the AI output back to the exact user placement (prevents drifting onto grass/away from terrace)
+      let finalB64 = j.b64 as string;
       try {
         finalB64 = await _alignAiB64ToTemplate(finalB64, alignTemplate);
-      } catch {}
+      } catch (e) {
+        // alignment is best-effort; ignore failures
+      }
 
-      // Add brand watermark (stable post-processing, no prompt tricks) (stable post-processing, no prompt tricks)
+      // Add brand watermark (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
 
       setVariants((prev) => {
@@ -1623,7 +1498,6 @@ export default function Page() {
       setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (err: any) {
       console.error(err);
-      setHarmonizeStatus("fail");
       setError(String(err?.message || err));
     } finally {
       setLoading(false);
