@@ -1559,38 +1559,74 @@ export default function Page() {
       }
 
       // Flux harmonization (keeps the pergola in the exact placed position; improves photo realism)
-      try {
-        const originalB64 = await canvasToB64Png(bgOnly);
+      // NOTE: This is REQUIRED. If Flux fails (missing token, endpoint error), we stop and show an error
+      // so you know it's not running.
+      const originalB64 = await canvasToB64Png(bgOnly);
 
-        const mr = await fetch("/api/mask", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ originalB64, proposedB64: finalB64 }),
-        });
+      const mr = await fetch("/api/mask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ originalB64, proposedB64: finalB64 }),
+      });
 
-        const mj = await mr.json().catch(async () => {
-          const t = await mr.text().catch(() => "");
-          return { error: t || `HTTP ${mr.status}` };
-        });
-
-        if (!mr.ok) throw new Error(mj?.error || `Mask HTTP ${mr.status}`);
-        if (!mj?.maskB64 || !mj?.compositeB64) throw new Error("Mask API nevrátilo maskB64/compositeB64.");
-
-        const fluxPrompt = buildFluxPrompt(pergolaType, variants.length);
-        const seed = Date.now() % 1_000_000_000;
-
-        finalB64 = await fluxHarmonize({
-          compositeB64: mj.compositeB64,
-          maskB64: mj.maskB64,
-          prompt: fluxPrompt,
-          seed,
-          steps: 35,
-        });
-      } catch (e) {
-        console.warn("Flux harmonization failed:", e);
+      if (!mr.ok) {
+        const t = await mr.text().catch(() => "");
+        throw new Error(`Flux step failed: /api/mask (${mr.status}) ${t || ""}`.trim());
       }
 
-      // Add brand watermark (stable post-processing, no prompt tricks)
+      const mj = await mr.json();
+      const maskB64 = mj?.maskB64 as string | undefined;
+      const compositeB64 = mj?.compositeB64 as string | undefined;
+
+      if (!maskB64 || !compositeB64) {
+        throw new Error("Flux step failed: /api/mask did not return maskB64/compositeB64");
+      }
+
+      const fluxPrompt = [
+        "HARMONIZE ONLY. The pergola structure is already placed correctly.",
+        "Preserve the exact position, size, perspective and orientation of the pergola. Do NOT move, resize, rotate or redesign it.",
+        "Do NOT change camera angle, crop, zoom, or viewpoint.",
+        "Improve realism only: consistent lighting, realistic shadows, natural contact with terrace and house wall, photographic color balance and noise.",
+        "No floating, no detached edges, no extra columns/beams, no new objects.",
+        "Photorealistic result.",
+      ].join("\n");
+
+      const fh = await fetch("/api/flux-harmonize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image: `data:image/png;base64,${compositeB64}`,
+          mask: `data:image/png;base64,${maskB64}`,
+          prompt: fluxPrompt,
+          steps: 35,
+          // different seeds for the 6 variants (but still stable placement)
+          seed: (Date.now() + variants.length * 997) % 2147483647,
+        }),
+      });
+
+      if (!fh.ok) {
+        const t = await fh.text().catch(() => "");
+        throw new Error(`Flux step failed: /api/flux-harmonize (${fh.status}) ${t || ""}`.trim());
+      }
+
+      const fj = await fh.json();
+      const outUrl = fj?.outputUrl as string | undefined;
+
+      if (!outUrl) {
+        throw new Error("Flux step failed: /api/flux-harmonize did not return outputUrl");
+      }
+
+      const outBlob = await fetch(outUrl).then((rr) => rr.blob());
+      let fluxB64 = await blobToB64Png(outBlob);
+
+      // best-effort re-align (usually near-zero shift)
+      try {
+        fluxB64 = await _alignAiB64ToTemplate(fluxB64, alignTemplate);
+      } catch {}
+
+      finalB64 = fluxB64;
+
+// Add brand watermark (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
 
       setVariants((prev) => {
