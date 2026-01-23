@@ -750,6 +750,7 @@ export default function Page() {
   // ===== Three.js refs =====
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const threeReadyRef = useRef(false);
+  const threeModuleRef = useRef<any>(null);
   const rendererRef = useRef<any>(null);
   const sceneRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
@@ -992,6 +993,7 @@ export default function Page() {
     async function initThree() {
       try {
         const THREE = await import("three");
+        threeModuleRef.current = THREE;
         const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
 
         if (cancelled) return;
@@ -1102,9 +1104,32 @@ export default function Page() {
     const base = baseScaleRef.current;
     root.scale.set(base * (scalePct.x / 100), base * (scalePct.y / 100), base * (scalePct.z / 100));
 
-    const worldX = (pos.x - 0.5) * 1.8;
-    const worldY = (0.9 - pos.y) * 1.2;
-    root.position.set(worldX, worldY, 0);
+    // Map 2D canvas position (pos 0..1) to a 3D point on the scene plane (z=0).
+    // This removes the old hard-limits (worldX/worldY multipliers) and lets the user move the pergola
+    // across the full visible canvas area, regardless of FOV/perspective settings.
+    const THREE = threeModuleRef.current;
+    if (THREE) {
+      const ndcX = clamp(pos.x, 0, 1) * 2 - 1;
+      const ndcY = 1 - clamp(pos.y, 0, 1) * 2; // canvas Y -> NDC
+      const v = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
+      const dir = v.sub(camera.position).normalize();
+
+      // Intersect ray with plane z=0 in world space
+      const denom = dir.z;
+      if (Math.abs(denom) > 1e-6) {
+        const tHit = -camera.position.z / denom;
+        const hit = camera.position.clone().add(dir.multiplyScalar(tHit));
+        root.position.set(hit.x, hit.y, 0);
+      } else {
+        // Fallback (should be rare)
+        root.position.set(0, 0, 0);
+      }
+    } else {
+      // Fallback if THREE is not ready yet
+      const worldX = (pos.x - 0.5) * 1.8;
+      const worldY = (0.9 - pos.y) * 1.2;
+      root.position.set(worldX, worldY, 0);
+    }
 
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
@@ -1619,13 +1644,18 @@ export default function Page() {
               <div>📐 V návrhu nastav pergolu radšej o niečo menšiu – AI ju vo výsledku často mierne zväčší.</div>
               <div>👀 Výsledky ber ako <b>vizuálnu inšpiráciu a pomôcku pri rozhodovaní</b>, nie ako finálny podklad pre výrobu.</div>
             </div>
-            <div style={{ color: "rgba(0,0,0,0.60)", fontSize: 13, lineHeight: 1.45 }}>Finálne riešenie sa vždy rieši individuálne.</div>
-            <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
-              Rozumiem
-            </button>
-            <div style={{ fontSize: 11.5, color: "rgba(0,0,0,0.55)", lineHeight: 1.35 }}>
-              Pokračovaním berieš na vedomie, že výsledok je orientačný.
+            <div style={{ color: "rgba(0,0,0,0.60)", fontSize: 13, lineHeight: 1.45 }}>
+              Finálne riešenie sa vždy rieši individuálne.
             </div>
+            <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
+                Rozumiem
+              </button>
+                  {loading ? (
+                    <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.65)", lineHeight: 1.35 }}>
+                      Vizualizujeme tvoj aktuálny návrh pomocou umelej inteligencie. Výsledok sa môže jemne líšiť v detailoch.
+                    </div>
+                  ) : null}
+                </div>
           </div>
         </div>
       ) : null}
