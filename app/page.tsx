@@ -1579,7 +1579,7 @@ export default function Page() {
       ].join("\n");
 
       form.append("prompt", fluxPrompt);
-      form.append("prompt_strength", "0.28"); // higher = more changes; keep conservative
+      form.append("prompt_strength", "0.30"); // higher = more changes; keep conservative
 
       const r = await fetch("/api/render/flux", { method: "POST", body: form });
 
