@@ -1579,7 +1579,10 @@ export default function Page() {
       ].join("\n");
 
       form.append("prompt", fluxPrompt);
-      form.append("prompt_strength", "0.30"); // higher = more changes; keep conservative
+      form.append("prompt_strength", "0.18"); // lower = sticks closer to the composite
+      form.append("guidance", "2.2");
+      form.append("num_inference_steps", "22");
+      form.append("output_format", "png");
 
       const r = await fetch("/api/render/flux", { method: "POST", body: form });
 
