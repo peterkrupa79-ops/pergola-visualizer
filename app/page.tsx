@@ -1614,40 +1614,7 @@ export default function Page() {
 
       finalB64 = fluxB64;
 
-      const fh = await fetch("/api/flux-harmonize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: `data:image/png;base64,${compositeB64}`,
-          mask: `data:image/png;base64,${maskB64}`,
-          prompt: fluxPrompt,
-          steps: 35,
-          // different seeds for the 6 variants (but still stable placement)
-          seed: (Date.now() + variants.length * 997) % 2147483647,
-        }),
-      });
-
-      if (!fh.ok) {
-        const t = await fh.text().catch(() => "");
-        throw new Error(`Flux step failed: /api/flux-harmonize (${fh.status}) ${t || ""}`.trim());
-      }
-
-      const fj = await fh.json();
-      const outUrl = fj?.outputUrl as string | undefined;
-
-      if (!outUrl) {
-        throw new Error("Flux step failed: /api/flux-harmonize did not return outputUrl");
-      }
-
-      const outBlob = await fetch(outUrl).then((rr) => rr.blob());
-      let fluxB64 = await blobToB64Png(outBlob);
-
-      // best-effort re-align (usually near-zero shift)
-      try {
-        fluxB64 = await _alignAiB64ToTemplate(fluxB64, alignTemplate);
-      } catch {}
-
-      finalB64 = fluxB64;
+      B64;
 
 // Add brand watermark (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
