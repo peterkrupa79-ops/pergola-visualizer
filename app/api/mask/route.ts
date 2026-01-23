@@ -1,12 +1,7 @@
 import { NextRequest } from "next/server";
 import sharp from "sharp";
-import Replicate from "replicate";
 
 export const runtime = "nodejs";
-
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN!,
-});
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -16,28 +11,12 @@ function normU8(x: Uint8Array): Uint8Array {
   return Uint8Array.from(x);
 }
 
-function erode(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  const out = new Uint8Array(bin.length);
-  for (let y = 0; y < h; y++) {
-    const y0 = Math.max(0, y - r);
-    const y1 = Math.min(h - 1, y + r);
-    for (let x = 0; x < w; x++) {
-      const x0 = Math.max(0, x - r);
-      const x1 = Math.min(w - 1, x + r);
-      let ok = 1;
-      for (let yy = y0; yy <= y1 && ok; yy++) {
-        const row = yy * w;
-        for (let xx = x0; xx <= x1; xx++) {
-          if (bin[row + xx] === 0) {
-            ok = 0;
-            break;
-          }
-        }
-      }
-      out[y * w + x] = ok;
-    }
-  }
-  return out;
+function percentile95Sampled(values01: Float32Array, sampleStride: number): number {
+  const samples: number[] = [];
+  for (let i = 0; i < values01.length; i += sampleStride) samples.push(values01[i]);
+  samples.sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(samples.length - 1, Math.floor(samples.length * 0.95)));
+  return samples[idx] ?? 0.1;
 }
 
 function dilate(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
@@ -121,35 +100,23 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
   return out;
 }
 
-function percentile95Sampled(values01: Float32Array, sampleStride: number): number {
-  const samples: number[] = [];
-  for (let i = 0; i < values01.length; i += sampleStride) samples.push(values01[i]);
-  samples.sort((a, b) => a - b);
-  const idx = Math.max(0, Math.min(samples.length - 1, Math.floor(samples.length * 0.95)));
-  return samples[idx] ?? 0.1;
-}
-
 async function blobToBuffer(b: Blob): Promise<Buffer> {
   const ab = await b.arrayBuffer();
   return Buffer.from(ab);
 }
 
+function luminance(r: number, g: number, b: number) {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return new Response("Missing REPLICATE_API_TOKEN", { status: 500 });
-    }
-
     const fd = await req.formData();
     const original = fd.get("original");
     const proposed = fd.get("proposed");
-    const prompt = String(fd.get("prompt") ?? "").trim();
 
     if (!(original instanceof Blob) || !(proposed instanceof Blob)) {
       return new Response("Missing original/proposed files", { status: 400 });
-    }
-    if (!prompt) {
-      return new Response("Missing prompt", { status: 400 });
     }
 
     const origBuf = await blobToBuffer(original);
@@ -160,22 +127,29 @@ export async function POST(req: NextRequest) {
     const H0 = origMeta.height ?? 0;
     if (!W0 || !H0) return new Response("Invalid original image", { status: 400 });
 
-    const MAX_DIM = 1400;
-    const scale = Math.min(1, MAX_DIM / Math.max(W0, H0));
-    const W = Math.max(1, Math.round(W0 * scale));
-    const H = Math.max(1, Math.round(H0 * scale));
+    // Output size (keeps quality but bounded)
+    const MAX_DIM = 2000;
+    const scaleOut = Math.min(1, MAX_DIM / Math.max(W0, H0));
+    const W = Math.max(1, Math.round(W0 * scaleOut));
+    const H = Math.max(1, Math.round(H0 * scaleOut));
 
-    const origRGB = await sharp(origBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
-    const propRGB = await sharp(propBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
+    // Working size for mask
+    const MAX_MASK_DIM = 900;
+    const scaleMask = Math.min(1, MAX_MASK_DIM / Math.max(W, H));
+    const mw = Math.max(1, Math.round(W * scaleMask));
+    const mh = Math.max(1, Math.round(H * scaleMask));
+    const n = mw * mh;
 
-    const n = W * H;
+    const origSmall = await sharp(origBuf).resize(mw, mh, { fit: "fill" }).removeAlpha().raw().toBuffer();
+    const propSmall = await sharp(propBuf).resize(mw, mh, { fit: "fill" }).removeAlpha().raw().toBuffer();
 
+    // Diff map 0..1
     const diff01 = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const k = i * 3;
-      const dr = Math.abs(origRGB[k] - propRGB[k]);
-      const dg = Math.abs(origRGB[k + 1] - propRGB[k + 1]);
-      const db = Math.abs(origRGB[k + 2] - propRGB[k + 2]);
+      const dr = Math.abs(origSmall[k] - propSmall[k]);
+      const dg = Math.abs(origSmall[k + 1] - propSmall[k + 1]);
+      const db = Math.abs(origSmall[k + 2] - propSmall[k + 2]);
       diff01[i] = (dr + dg + db) / (3 * 255);
     }
 
@@ -186,75 +160,133 @@ export async function POST(req: NextRequest) {
     let bin: Uint8Array = new Uint8Array(n);
     for (let i = 0; i < n; i++) bin[i] = diff01[i] > T ? 1 : 0;
 
-    // ✅ TS fix: normalize after ops
-    bin = normU8(largestComponent(bin, W, H));
+    // Keep largest changed blob (pergola)
+    bin = normU8(largestComponent(bin, mw, mh));
 
-    const outerR = clamp(Math.round(Math.min(W, H) * 0.03), 12, 55);
-    const innerR = clamp(Math.round(Math.min(W, H) * 0.012), 6, 28);
+    // Alpha (soft edges)
+    const alpha255Small = Buffer.alloc(n);
+    for (let i = 0; i < n; i++) alpha255Small[i] = bin[i] ? 255 : 0;
 
-    const outer = normU8(dilate(bin, W, H, outerR));
-    const inner = normU8(erode(bin, W, H, innerR));
+    const featherSigma = clamp(Math.round(Math.min(mw, mh) * 0.010), 6, 22);
 
-    const ring = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      ring[i] = outer[i] === 1 && inner[i] === 0 ? 1 : 0;
-    }
+    const alphaFull = await sharp(alpha255Small, { raw: { width: mw, height: mh, channels: 1 } })
+      .blur(featherSigma)
+      .resize(W, H, { kernel: "lanczos3" })
+      .raw()
+      .toBuffer();
 
-    // shadow strip
-    const shadowR = clamp(Math.round(Math.min(W, H) * 0.02), 10, 40);
-    const below = new Uint8Array(n);
-    for (let y = 1; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const idx = y * W + x;
-        const aboveIdx = (y - 1) * W + x;
-        below[idx] = bin[aboveIdx] ? 1 : 0;
+    // Shadow: dilate + blur
+    const shadowR = clamp(Math.round(Math.min(mw, mh) * 0.035), 10, 45);
+    const shadowBin = normU8(dilate(bin, mw, mh, shadowR));
+
+    const shadow255Small = Buffer.alloc(n);
+    for (let i = 0; i < n; i++) shadow255Small[i] = shadowBin[i] ? 255 : 0;
+
+    const shadowSigma = clamp(Math.round(Math.min(mw, mh) * 0.020), 10, 40);
+
+    const shadowAlphaFull = await sharp(shadow255Small, { raw: { width: mw, height: mh, channels: 1 } })
+      .blur(shadowSigma)
+      .resize(W, H, { kernel: "lanczos3" })
+      .raw()
+      .toBuffer();
+
+    // Full-res RGB
+    const origFull = await sharp(origBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
+    const propFull = await sharp(propBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
+
+    // Exposure match: inside pergola vs nearby ring
+    let sumIn = 0;
+    let cntIn = 0;
+    let sumRing = 0;
+    let cntRing = 0;
+
+    for (let i = 0; i < W * H; i++) {
+      const a = alphaFull[i];
+      const k = i * 3;
+      if (a > 180) {
+        sumIn += luminance(propFull[k], propFull[k + 1], propFull[k + 2]);
+        cntIn++;
+      } else if (a > 40 && a < 160) {
+        sumRing += luminance(origFull[k], origFull[k + 1], origFull[k + 2]);
+        cntRing++;
       }
     }
-    const shadow = normU8(dilate(below, W, H, shadowR));
 
-    for (let i = 0; i < n; i++) ring[i] = ring[i] || shadow[i] ? 1 : 0;
+    const meanIn = cntIn > 0 ? sumIn / cntIn : 130;
+    const meanRing = cntRing > 0 ? sumRing / cntRing : meanIn;
+    const gain = clamp(meanRing / Math.max(1e-6, meanIn), 0.75, 1.25);
 
-    const mask255 = Buffer.alloc(n);
-    for (let i = 0; i < n; i++) mask255[i] = ring[i] ? 255 : 0;
+    // Compose RGBA
+    const outRGBA = Buffer.alloc(W * H * 4);
 
-    const sigma = clamp(Math.round(Math.min(W, H) * 0.004), 2, 10);
+    const shadowStrength = 0.38;
+    const dx = Math.round(W * 0.006);
+    const dy = Math.round(H * 0.012);
 
-    const maskPng = await sharp(mask255, { raw: { width: W, height: H, channels: 1 } })
-      .blur(sigma)
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const k3 = i * 3;
+        const k4 = i * 4;
+
+        // base = original
+        let r = origFull[k3];
+        let g = origFull[k3 + 1];
+        let b = origFull[k3 + 2];
+
+        // shadow sample with shift
+        const xs = x - dx;
+        const ys = y - dy;
+        let sa = 0;
+        if (xs >= 0 && xs < W && ys >= 0 && ys < H) {
+          sa = shadowAlphaFull[ys * W + xs] / 255;
+        }
+        sa = sa * shadowStrength;
+
+        r = Math.round(r * (1 - sa));
+        g = Math.round(g * (1 - sa));
+        b = Math.round(b * (1 - sa));
+
+        // overlay = proposed with matched exposure
+        const a = alphaFull[i] / 255;
+        const pr = clamp(Math.round(propFull[k3] * gain), 0, 255);
+        const pg = clamp(Math.round(propFull[k3 + 1] * gain), 0, 255);
+        const pb = clamp(Math.round(propFull[k3 + 2] * gain), 0, 255);
+
+        const outR = Math.round(r * (1 - a) + pr * a);
+        const outG = Math.round(g * (1 - a) + pg * a);
+        const outB = Math.round(b * (1 - a) + pb * a);
+
+        outRGBA[k4] = outR;
+        outRGBA[k4 + 1] = outG;
+        outRGBA[k4 + 2] = outB;
+        outRGBA[k4 + 3] = 255;
+      }
+    }
+
+    // Subtle grain
+    const grain = 5;
+    for (let i = 0; i < W * H; i++) {
+      const k4 = i * 4;
+      const rnd = ((i * 1103515245 + 12345) >>> 0) % 65536;
+      const n = (rnd / 65535 - 0.5) * grain * 2;
+      outRGBA[k4] = clamp(Math.round(outRGBA[k4] + n), 0, 255);
+      outRGBA[k4 + 1] = clamp(Math.round(outRGBA[k4 + 1] + n), 0, 255);
+      outRGBA[k4 + 2] = clamp(Math.round(outRGBA[k4 + 2] + n), 0, 255);
+    }
+
+    const outPng = await sharp(outRGBA, { raw: { width: W, height: H, channels: 4 } })
       .png()
       .toBuffer();
 
-    const proposedPng = await sharp(propBuf).resize(W, H, { fit: "fill" }).png().toBuffer();
-
-    const imageDataUri = `data:image/png;base64,${proposedPng.toString("base64")}`;
-    const maskDataUri = `data:image/png;base64,${maskPng.toString("base64")}`;
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-fill-pro:9609ba7331ed872c99f81c92c69a9ee52a50d8aba99f636173e0674d997efd0c",
-      {
-        input: {
-          image: imageDataUri,
-          mask: maskDataUri,
-          prompt,
-          steps: 28,
-        },
-      }
-    );
-
-    const outUrl =
-      typeof output === "string"
-        ? output
-        : Array.isArray(output)
-          ? (output[0] as string | undefined)
-          : (output as any)?.output ?? (output as any)?.[0];
-
-    if (!outUrl || typeof outUrl !== "string") {
-      return new Response("Flux did not return an output URL", { status: 500 });
-    }
-
-    return Response.json({ outputUrl: outUrl });
+    return new Response(outPng, {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (e) {
     console.error(e);
-    return new Response("Mask/Flux error", { status: 500 });
+    return new Response("Harmonize error", { status: 500 });
   }
 }
