@@ -12,6 +12,10 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function normU8(x: Uint8Array): Uint8Array {
+  return Uint8Array.from(x);
+}
+
 function erode(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let y = 0; y < h; y++) {
@@ -151,13 +155,11 @@ export async function POST(req: NextRequest) {
     const origBuf = await blobToBuffer(original);
     const propBuf = await blobToBuffer(proposed);
 
-    // --- Normalize sizes for stable masking + Flux input ---
     const origMeta = await sharp(origBuf).metadata();
     const W0 = origMeta.width ?? 0;
     const H0 = origMeta.height ?? 0;
     if (!W0 || !H0) return new Response("Invalid original image", { status: 400 });
 
-    // Use a working size for masking & flux (limits payload + keeps detail)
     const MAX_DIM = 1400;
     const scale = Math.min(1, MAX_DIM / Math.max(W0, H0));
     const W = Math.max(1, Math.round(W0 * scale));
@@ -168,7 +170,6 @@ export async function POST(req: NextRequest) {
 
     const n = W * H;
 
-    // --- Diff map 0..1 ---
     const diff01 = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const k = i * 3;
@@ -182,46 +183,40 @@ export async function POST(req: NextRequest) {
     const p95 = percentile95Sampled(diff01, sampleStride);
     const T = clamp(p95 * 0.35, 0.06, 0.16);
 
-    // --- Binary mask of "changed region" (pergola) ---
-    let bin = new Uint8Array(n);
+    let bin: Uint8Array = new Uint8Array(n);
     for (let i = 0; i < n; i++) bin[i] = diff01[i] > T ? 1 : 0;
 
-    // Keep only the largest component (pergola)
-    bin = largestComponent(bin, W, H);
+    // ✅ TS fix: normalize after ops
+    bin = normU8(largestComponent(bin, W, H));
 
-    // --- Build RING MASK (edit only around pergola, not the pergola itself) ---
     const outerR = clamp(Math.round(Math.min(W, H) * 0.03), 12, 55);
     const innerR = clamp(Math.round(Math.min(W, H) * 0.012), 6, 28);
 
-    const outer = dilate(bin, W, H, outerR);
-    const inner = erode(bin, W, H, innerR);
+    const outer = normU8(dilate(bin, W, H, outerR));
+    const inner = normU8(erode(bin, W, H, innerR));
 
     const ring = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       ring[i] = outer[i] === 1 && inner[i] === 0 ? 1 : 0;
     }
 
-    // Add a small "shadow/contact strip" just below pergola footprint
+    // shadow strip
     const shadowR = clamp(Math.round(Math.min(W, H) * 0.02), 10, 40);
     const below = new Uint8Array(n);
     for (let y = 1; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const idx = y * W + x;
-        // if pixel is just below a pergola pixel, include it
         const aboveIdx = (y - 1) * W + x;
         below[idx] = bin[aboveIdx] ? 1 : 0;
       }
     }
-    const shadow = dilate(below, W, H, shadowR);
+    const shadow = normU8(dilate(below, W, H, shadowR));
 
-    // Union ring + shadow
     for (let i = 0; i < n; i++) ring[i] = ring[i] || shadow[i] ? 1 : 0;
 
-    // Convert to 0/255 mask buffer
     const mask255 = Buffer.alloc(n);
     for (let i = 0; i < n; i++) mask255[i] = ring[i] ? 255 : 0;
 
-    // Feather lightly (keep it tight so Flux can't redesign)
     const sigma = clamp(Math.round(Math.min(W, H) * 0.004), 2, 10);
 
     const maskPng = await sharp(mask255, { raw: { width: W, height: H, channels: 1 } })
@@ -229,16 +224,11 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
-    // Flux input image should be the PROPOSED image (already contains pergola)
-    const proposedPng = await sharp(propBuf)
-      .resize(W, H, { fit: "fill" })
-      .png()
-      .toBuffer();
+    const proposedPng = await sharp(propBuf).resize(W, H, { fit: "fill" }).png().toBuffer();
 
     const imageDataUri = `data:image/png;base64,${proposedPng.toString("base64")}`;
     const maskDataUri = `data:image/png;base64,${maskPng.toString("base64")}`;
 
-    // --- Run Flux Fill Pro (edits ONLY ring/shadow areas) ---
     const output = await replicate.run(
       "black-forest-labs/flux-fill-pro:9609ba7331ed872c99f81c92c69a9ee52a50d8aba99f636173e0674d997efd0c",
       {
@@ -246,7 +236,7 @@ export async function POST(req: NextRequest) {
           image: imageDataUri,
           mask: maskDataUri,
           prompt,
-          steps: 28, // keep lower -> less drift
+          steps: 28,
         },
       }
     );
