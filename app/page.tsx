@@ -1621,24 +1621,21 @@ export default function Page() {
         fd.append("steps", "35");
 
         const mr = await fetch("/api/mask", { method: "POST", body: fd });
-        const mj = await mr.json().catch(async () => {
+
+        if (!mr.ok) {
           const tt = await mr.text().catch(() => "");
-          return { error: tt || `HTTP ${mr.status}` };
-        });
+          throw new Error(tt || `Harmonize step failed: /api/mask (${mr.status})`);
+        }
 
-        if (!mr.ok) throw new Error(mj?.error || `Flux step failed: /api/mask (${mr.status})`);
-        const outUrl = mj?.outputUrl as string | undefined;
-        if (!outUrl) throw new Error("Flux step failed: /api/mask did not return outputUrl");
+        const outBlob = await mr.blob();
+        let harmonizedB64 = await blobToB64Png(outBlob);
 
-        const outBlob = await fetch(outUrl).then((rr) => rr.blob());
-        let fluxB64 = await blobToB64Png(outBlob);
-
-        // optional: re-align after Flux (best-effort)
+        // (best-effort) align back to template once more
         try {
-          fluxB64 = await _alignAiB64ToTemplate(fluxB64, alignTemplate);
+          harmonizedB64 = await _alignAiB64ToTemplate(harmonizedB64, alignTemplate);
         } catch {}
 
-        finalB64 = fluxB64;
+        finalB64 = harmonizedB64;
       }
 
       // Add brand watermark (stable post-processing, no prompt tricks) (stable post-processing, no prompt tricks)
