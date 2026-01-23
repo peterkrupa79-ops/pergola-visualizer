@@ -12,14 +12,6 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-function percentile95Sampled(values01: Float32Array, sampleStride: number): number {
-  const samples: number[] = [];
-  for (let i = 0; i < values01.length; i += sampleStride) samples.push(values01[i]);
-  samples.sort((a, b) => a - b);
-  const idx = Math.max(0, Math.min(samples.length - 1, Math.floor(samples.length * 0.95)));
-  return samples[idx] ?? 0.1;
-}
-
 function erode(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let y = 0; y < h; y++) {
@@ -68,38 +60,11 @@ function dilate(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
   return out;
 }
 
-function dilateVertical(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  const out = new Uint8Array(bin.length);
-  for (let y = 0; y < h; y++) {
-    const y0 = Math.max(0, y - r);
-    const y1 = Math.min(h - 1, y + r);
-    for (let x = 0; x < w; x++) {
-      let any = 0;
-      for (let yy = y0; yy <= y1; yy++) {
-        if (bin[yy * w + x] === 1) {
-          any = 1;
-          break;
-        }
-      }
-      out[y * w + x] = any;
-    }
-  }
-  return out;
-}
-
-function opening(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  return dilate(erode(bin, w, h, r), w, h, r);
-}
-
-function closing(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
-  return erode(dilate(bin, w, h, r), w, h, r);
-}
-
-type Component = { area: number; sumX: number; sumY: number; pixels: number[] };
-
 function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
   const visited = new Uint8Array(bin.length);
-  let best: Component | null = null;
+  let bestPixels: number[] | null = null;
+  let bestScore = -1;
+
   const stack: number[] = [];
 
   for (let i = 0; i < bin.length; i++) {
@@ -110,7 +75,6 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
     visited[i] = 1;
 
     let area = 0;
-    let sumX = 0;
     let sumY = 0;
     const pixels: number[] = [];
 
@@ -121,7 +85,6 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
 
       const y = Math.floor(idx / w);
       const x = idx - y * w;
-      sumX += x;
       sumY += y;
 
       for (let dy = -1; dy <= 1; dy++) {
@@ -142,26 +105,28 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
     const centerYNorm = (sumY / Math.max(1, area)) / Math.max(1, h - 1);
     const score = area * (0.7 + 0.3 * centerYNorm);
 
-    if (!best) best = { area, sumX, sumY, pixels };
-    else {
-      const bestCenterYNorm = (best.sumY / Math.max(1, best.area)) / Math.max(1, h - 1);
-      const bestScore = best.area * (0.7 + 0.3 * bestCenterYNorm);
-      if (score > bestScore) best = { area, sumX, sumY, pixels };
+    if (score > bestScore) {
+      bestScore = score;
+      bestPixels = pixels;
     }
   }
 
   const out = new Uint8Array(bin.length);
-  if (!best) return out;
-  for (const idx of best.pixels) out[idx] = 1;
+  if (!bestPixels) return out;
+  for (const idx of bestPixels) out[idx] = 1;
   return out;
 }
 
-function normU8(x: Uint8Array): Uint8Array {
-  return Uint8Array.from(x);
+function percentile95Sampled(values01: Float32Array, sampleStride: number): number {
+  const samples: number[] = [];
+  for (let i = 0; i < values01.length; i += sampleStride) samples.push(values01[i]);
+  samples.sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(samples.length - 1, Math.floor(samples.length * 0.95)));
+  return samples[idx] ?? 0.1;
 }
 
-async function fileToBuffer(file: File): Promise<Buffer> {
-  const ab = await file.arrayBuffer();
+async function blobToBuffer(b: Blob): Promise<Buffer> {
+  const ab = await b.arrayBuffer();
   return Buffer.from(ab);
 }
 
@@ -171,57 +136,45 @@ export async function POST(req: NextRequest) {
       return new Response("Missing REPLICATE_API_TOKEN", { status: 500 });
     }
 
-    const form = await req.formData();
-    const originalFile = form.get("original");
-    const proposedFile = form.get("proposed");
-    const prompt = String(form.get("prompt") ?? "");
-    const steps = Number(form.get("steps") ?? 35);
-    const seedRaw = form.get("seed");
-    const seed = seedRaw === null ? undefined : Number(seedRaw);
+    const fd = await req.formData();
+    const original = fd.get("original");
+    const proposed = fd.get("proposed");
+    const prompt = String(fd.get("prompt") ?? "").trim();
 
-    if (!(originalFile instanceof File) || !(proposedFile instanceof File)) {
+    if (!(original instanceof Blob) || !(proposed instanceof Blob)) {
       return new Response("Missing original/proposed files", { status: 400 });
     }
     if (!prompt) {
       return new Response("Missing prompt", { status: 400 });
     }
 
-    const origBuf = await fileToBuffer(originalFile);
-    const propBuf = await fileToBuffer(proposedFile);
+    const origBuf = await blobToBuffer(original);
+    const propBuf = await blobToBuffer(proposed);
 
+    // --- Normalize sizes for stable masking + Flux input ---
     const origMeta = await sharp(origBuf).metadata();
-    const W = origMeta.width ?? 0;
-    const H = origMeta.height ?? 0;
-    if (!W || !H) return new Response("Invalid original image", { status: 400 });
+    const W0 = origMeta.width ?? 0;
+    const H0 = origMeta.height ?? 0;
+    if (!W0 || !H0) return new Response("Invalid original image", { status: 400 });
 
-    // Work on a downscaled diff for speed
-    const maxDim = 768;
-    const scale = Math.min(1, maxDim / Math.max(W, H));
-    const mw = Math.max(1, Math.round(W * scale));
-    const mh = Math.max(1, Math.round(H * scale));
+    // Use a working size for masking & flux (limits payload + keeps detail)
+    const MAX_DIM = 1400;
+    const scale = Math.min(1, MAX_DIM / Math.max(W0, H0));
+    const W = Math.max(1, Math.round(W0 * scale));
+    const H = Math.max(1, Math.round(H0 * scale));
 
-    const origSmall = await sharp(origBuf)
-      .resize(mw, mh, { fit: "fill" })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    const origRGB = await sharp(origBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
+    const propRGB = await sharp(propBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
 
-    const propSmall = await sharp(propBuf)
-      .resize(mw, mh, { fit: "fill" })
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
+    const n = W * H;
 
-    const o = origSmall.data;
-    const p = propSmall.data;
-    const n = mw * mh;
-
+    // --- Diff map 0..1 ---
     const diff01 = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const k = i * 3;
-      const dr = Math.abs(o[k] - p[k]);
-      const dg = Math.abs(o[k + 1] - p[k + 1]);
-      const db = Math.abs(o[k + 2] - p[k + 2]);
+      const dr = Math.abs(origRGB[k] - propRGB[k]);
+      const dg = Math.abs(origRGB[k + 1] - propRGB[k + 1]);
+      const db = Math.abs(origRGB[k + 2] - propRGB[k + 2]);
       diff01[i] = (dr + dg + db) / (3 * 255);
     }
 
@@ -229,79 +182,87 @@ export async function POST(req: NextRequest) {
     const p95 = percentile95Sampled(diff01, sampleStride);
     const T = clamp(p95 * 0.35, 0.06, 0.16);
 
-    let bin: Uint8Array = new Uint8Array(n);
+    // --- Binary mask of "changed region" (pergola) ---
+    let bin = new Uint8Array(n);
     for (let i = 0; i < n; i++) bin[i] = diff01[i] > T ? 1 : 0;
 
-    const k1 = clamp(Math.round(Math.min(mw, mh) * 0.003), 2, 4);
-    const k2 = clamp(Math.round(Math.min(mw, mh) * 0.01), 4, 10);
+    // Keep only the largest component (pergola)
+    bin = largestComponent(bin, W, H);
 
-    bin = normU8(opening(bin, mw, mh, k1));
-    bin = normU8(closing(bin, mw, mh, k2));
-    bin = normU8(largestComponent(bin, mw, mh));
+    // --- Build RING MASK (edit only around pergola, not the pergola itself) ---
+    const outerR = clamp(Math.round(Math.min(W, H) * 0.03), 12, 55);
+    const innerR = clamp(Math.round(Math.min(W, H) * 0.012), 6, 28);
 
-    const grow = clamp(Math.round(Math.min(mw, mh) * 0.02), 10, 40);
-    bin = normU8(dilate(bin, mw, mh, grow));
-    bin = normU8(dilateVertical(bin, mw, mh, Math.round(grow * 1.2)));
+    const outer = dilate(bin, W, H, outerR);
+    const inner = erode(bin, W, H, innerR);
 
-    const maskSmall255 = Buffer.alloc(n);
-    for (let i = 0; i < n; i++) maskSmall255[i] = bin[i] ? 255 : 0;
-
-    const sigma = clamp(Math.round(Math.min(mw, mh) * 0.008), 6, 20);
-
-    const maskBuf = await sharp(maskSmall255, { raw: { width: mw, height: mh, channels: 1 } })
-      .blur(sigma)
-      .resize(W, H, { kernel: "lanczos3" })
-      .png()
-      .toBuffer();
-
-    // Hard mask for compositing
-    const hardMaskFull = await sharp(maskSmall255, { raw: { width: mw, height: mh, channels: 1 } })
-      .resize(W, H, { kernel: "nearest" })
-      .raw()
-      .toBuffer();
-
-    const origFull = await sharp(origBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
-    const propFull = await sharp(propBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
-
-    const outFull = Buffer.alloc(origFull.length);
-    for (let i = 0; i < W * H; i++) {
-      const m = hardMaskFull[i] > 127;
-      const k = i * 3;
-      outFull[k] = m ? propFull[k] : origFull[k];
-      outFull[k + 1] = m ? propFull[k + 1] : origFull[k + 1];
-      outFull[k + 2] = m ? propFull[k + 2] : origFull[k + 2];
+    const ring = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      ring[i] = outer[i] === 1 && inner[i] === 0 ? 1 : 0;
     }
 
-    const compositeBuf = await sharp(outFull, { raw: { width: W, height: H, channels: 3 } })
+    // Add a small "shadow/contact strip" just below pergola footprint
+    const shadowR = clamp(Math.round(Math.min(W, H) * 0.02), 10, 40);
+    const below = new Uint8Array(n);
+    for (let y = 1; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = y * W + x;
+        // if pixel is just below a pergola pixel, include it
+        const aboveIdx = (y - 1) * W + x;
+        below[idx] = bin[aboveIdx] ? 1 : 0;
+      }
+    }
+    const shadow = dilate(below, W, H, shadowR);
+
+    // Union ring + shadow
+    for (let i = 0; i < n; i++) ring[i] = ring[i] || shadow[i] ? 1 : 0;
+
+    // Convert to 0/255 mask buffer
+    const mask255 = Buffer.alloc(n);
+    for (let i = 0; i < n; i++) mask255[i] = ring[i] ? 255 : 0;
+
+    // Feather lightly (keep it tight so Flux can't redesign)
+    const sigma = clamp(Math.round(Math.min(W, H) * 0.004), 2, 10);
+
+    const maskPng = await sharp(mask255, { raw: { width: W, height: H, channels: 1 } })
+      .blur(sigma)
       .png()
       .toBuffer();
 
-    // Run Flux directly here (avoids huge client payloads)
+    // Flux input image should be the PROPOSED image (already contains pergola)
+    const proposedPng = await sharp(propBuf)
+      .resize(W, H, { fit: "fill" })
+      .png()
+      .toBuffer();
+
+    const imageDataUri = `data:image/png;base64,${proposedPng.toString("base64")}`;
+    const maskDataUri = `data:image/png;base64,${maskPng.toString("base64")}`;
+
+    // --- Run Flux Fill Pro (edits ONLY ring/shadow areas) ---
     const output = await replicate.run(
       "black-forest-labs/flux-fill-pro:9609ba7331ed872c99f81c92c69a9ee52a50d8aba99f636173e0674d997efd0c",
       {
         input: {
+          image: imageDataUri,
+          mask: maskDataUri,
           prompt,
-          image: `data:image/png;base64,${compositeBuf.toString("base64")}`,
-          mask: `data:image/png;base64,${maskBuf.toString("base64")}`,
-          steps: Number.isFinite(steps) ? clamp(steps, 10, 50) : 35,
-          seed: Number.isFinite(seed) ? seed : undefined,
+          steps: 28, // keep lower -> less drift
         },
       }
     );
 
-    const url =
+    const outUrl =
       typeof output === "string"
         ? output
         : Array.isArray(output)
           ? (output[0] as string | undefined)
           : (output as any)?.output ?? (output as any)?.[0];
 
-    if (!url || typeof url !== "string") {
+    if (!outUrl || typeof outUrl !== "string") {
       return new Response("Flux did not return an output URL", { status: 500 });
     }
 
-    return Response.json({ outputUrl: url });
+    return Response.json({ outputUrl: outUrl });
   } catch (e) {
     console.error(e);
     return new Response("Mask/Flux error", { status: 500 });
