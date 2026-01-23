@@ -1536,14 +1536,50 @@ export default function Page() {
 
       const alignTemplate = _makeEdgeTemplateFromDiff(bgOnly, out);
 
-      const blob: Blob = await new Promise((res, rej) =>
-        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.9)
+      // 1) Export the collage (background + 3D pergola render)
+      const collageJpg: Blob = await new Promise((res, rej) =>
+        out.toBlob((b) => (b ? res(b) : rej(new Error("toBlob vrátil null"))), "image/jpeg", 0.92)
       );
 
+      // 2) Pre-blend (deterministic): soften edges + add subtle contact shadow BEFORE Flux.
+      // This removes the “foto vložená do fotky” look while staying 100% non-generative.
+      let fluxInputBlob: Blob = collageJpg;
+      {
+        const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1400, 0.92);
+        const proposedJpg = collageJpg; // already JPG
+
+        const fd = new FormData();
+        fd.append("original", originalJpg, "original.jpg");
+        fd.append("proposed", proposedJpg, "proposed.jpg");
+
+        const mr = await fetch("/api/mask", { method: "POST", body: fd });
+        if (!mr.ok) {
+          const tt = await mr.text().catch(() => "");
+          throw new Error(tt || `Preblend step failed: /api/mask (${mr.status})`);
+        }
+
+        // if the header exists, we can show status; but we don't hard-require it
+        const hx = mr.headers.get("X-Harmonized");
+        if (hx === "1") setHarmonizeStatus("ok");
+
+        fluxInputBlob = await mr.blob();
+      }
+
+      // 3) Flux Dev img2img: global harmonization (tone / grain / lighting) with low strength.
+      // Important: Flux is NOT allowed to redesign or move the pergola.
       const form = new FormData();
-      form.append("image", blob, "collage.jpg");
-      const prompt = buildFinalPrompt(pergolaType, variants.length);
-      form.append("prompt", prompt);
+      form.append("image", fluxInputBlob, "input.png");
+
+      const fluxPrompt = [
+        "Photorealistic harmonization of the provided photo composite.",
+        "Keep EXACT pergola position, size, perspective, angles, leg spacing, and all geometry. Do NOT move or redesign it.",
+        "Do NOT add/remove objects. Do NOT change architecture. Do NOT change camera viewpoint or crop.",
+        "Only match lighting, shadows, reflections, color grading, contrast, sharpness and film grain so the pergola blends naturally into the scene.",
+        "Avoid any 'pasted' or 'cutout' look. Seamless edges and natural contact with terrace and house wall.",
+      ].join("\n");
+
+      form.append("prompt", fluxPrompt);
+      form.append("prompt_strength", "0.28"); // higher = more changes; keep conservative
 
       const r = await fetch("/api/render/flux", { method: "POST", body: form });
 
@@ -1553,49 +1589,13 @@ export default function Page() {
       });
 
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      if (!j?.b64) throw new Error("API nevrátilo b64.");
+      if (!j?.b64) throw new Error("Flux API nevrátilo b64.");
 
-      // Post-align the AI output back to the exact user placement (prevents drifting onto grass/away from terrace)
+      // 4) Post-align back to the exact user placement (best-effort).
       let finalB64 = j.b64 as string;
       try {
         finalB64 = await _alignAiB64ToTemplate(finalB64, alignTemplate);
-      } catch (e) {
-        // alignment is best-effort; ignore failures
-      }
-
-      // Deterministic harmonization (server-side, NON-AI): soft edge blend + subtle shadow. No hallucinations.
-      {
-        const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1024, 0.9);
-        const proposedJpg = await b64PngToJpegBlobAtMaxDim(finalB64, 1024, 0.9);
-
-        const fd = new FormData();
-        fd.append("original", originalJpg, "original.jpg");
-        fd.append("proposed", proposedJpg, "proposed.jpg");
-
-        const mr = await fetch("/api/mask", { method: "POST", body: fd });
-
-        if (!mr.ok) {
-          const tt = await mr.text().catch(() => "");
-          throw new Error(tt || `Harmonize step failed: /api/mask (${mr.status})`);
-        }
-
-        const hx = mr.headers.get("X-Harmonized");
-        if (hx !== "1") {
-          const tt = await mr.text().catch(() => "");
-          throw new Error(tt || "Harmonize step failed: missing X-Harmonized header");
-        }
-        setHarmonizeStatus("ok");
-
-        const outBlob = await mr.blob();
-        let harmonizedB64 = await blobToB64Png(outBlob);
-
-        // optional: align again after blend (best-effort)
-        try {
-          harmonizedB64 = await _alignAiB64ToTemplate(harmonizedB64, alignTemplate);
-        } catch {}
-
-        finalB64 = harmonizedB64;
-      }
+      } catch {}
 
       // Add brand watermark (stable post-processing, no prompt tricks) (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
