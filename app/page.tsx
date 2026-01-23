@@ -1602,11 +1602,20 @@ export default function Page() {
         const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1024, 0.9);
         const proposedJpg = await b64PngToJpegBlobAtMaxDim(finalB64, 1024, 0.9);
 
+        const fluxPrompt = [
+          "HARMONIZE ONLY. The pergola structure already exists in the image and must stay exactly where it is.",
+          "Preserve the exact position, size, perspective, and orientation of the pergola. Do NOT move, resize, rotate, or redesign it.",
+          "Do NOT change camera angle, crop, zoom, or viewpoint.",
+          "Improve realism only: consistent lighting, realistic shadows, natural contact with terrace and house wall, photographic color balance and noise.",
+          "No floating, no detached edges, no extra columns/beams, no new objects.",
+          `Pergola style: ${typeLabel(pergolaType)}.`,
+          "Photorealistic result."
+        ].join("\n");
+
         const fd = new FormData();
         fd.append("original", originalJpg, "original.jpg");
         fd.append("proposed", proposedJpg, "proposed.jpg");
-        fd.append("pergolaType", pergolaType);
-
+        fd.append("prompt", fluxPrompt);
         // seed to get slight variation (but same placement)
         fd.append("seed", String((Date.now() + variants.length * 997) % 2147483647));
         fd.append("steps", "35");
