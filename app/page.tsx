@@ -818,6 +818,7 @@ export default function Page() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [harmonizeStatus, setHarmonizeStatus] = useState<"idle"|"ok"|"fail">("idle");
 
   // prompt sa skladá dynamicky pre každý variant (A/B anchor)
 
@@ -1114,7 +1115,8 @@ export default function Page() {
         draw();
       } catch (err: any) {
         console.error(err);
-        setError(String(err?.message || err));
+        setHarmonizeStatus("fail");
+      setError(String(err?.message || err));
       }
     }
 
@@ -1492,6 +1494,7 @@ export default function Page() {
 
     setLoading(true);
     setError("");
+    setHarmonizeStatus("idle");
 
     try {
       // downscale export
@@ -1576,6 +1579,13 @@ export default function Page() {
           throw new Error(tt || `Harmonize step failed: /api/mask (${mr.status})`);
         }
 
+        const hx = mr.headers.get("X-Harmonized");
+        if (hx !== "1") {
+          const tt = await mr.text().catch(() => "");
+          throw new Error(tt || "Harmonize step failed: missing X-Harmonized header");
+        }
+        setHarmonizeStatus("ok");
+
         const outBlob = await mr.blob();
         let harmonizedB64 = await blobToB64Png(outBlob);
 
@@ -1599,6 +1609,7 @@ export default function Page() {
       setSelectedVariantIndex(() => clamp(variants.length, 0, MAX_VARIANTS - 1));
     } catch (err: any) {
       console.error(err);
+      setHarmonizeStatus("fail");
       setError(String(err?.message || err));
     } finally {
       setLoading(false);
