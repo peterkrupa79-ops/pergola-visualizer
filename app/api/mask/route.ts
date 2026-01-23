@@ -20,6 +20,7 @@ function percentile95Sampled(values01: Float32Array, sampleStride: number): numb
   return samples[idx] ?? 0.1;
 }
 
+// --- Morphology helpers (always return plain Uint8Array) ---
 function erode(bin: Uint8Array, w: number, h: number, r: number): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let y = 0; y < h; y++) {
@@ -100,7 +101,6 @@ type Component = { area: number; sumX: number; sumY: number; pixels: number[] };
 function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
   const visited = new Uint8Array(bin.length);
   let best: Component | null = null;
-
   const stack: number[] = [];
 
   for (let i = 0; i < bin.length; i++) {
@@ -125,7 +125,6 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
       sumX += x;
       sumY += y;
 
-      // ✅ FIX: dx/dy sú number (bez `as const`), aby TS nehlásil chybu
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;
@@ -158,6 +157,12 @@ function largestComponent(bin: Uint8Array, w: number, h: number): Uint8Array {
   return out;
 }
 
+// --- normalize helper to avoid Uint8Array<ArrayBufferLike> typing issues ---
+function normU8(x: Uint8Array): Uint8Array {
+  // creates a fresh Uint8Array with plain typing
+  return Uint8Array.from(x);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { originalB64, proposedB64 } = await req.json();
@@ -174,7 +179,6 @@ export async function POST(req: NextRequest) {
     const H = origMeta.height ?? 0;
     if (!W || !H) return new Response("Invalid original image", { status: 400 });
 
-    // pracujeme na zmenšenej verzii kvôli rýchlosti
     const maxDim = 768;
     const scale = Math.min(1, maxDim / Math.max(W, H));
     const mw = Math.max(1, Math.round(W * scale));
@@ -196,7 +200,6 @@ export async function POST(req: NextRequest) {
     const p = propSmall.data;
     const n = mw * mh;
 
-    // diff mapa 0..1
     const diff01 = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const k = i * 3;
@@ -210,30 +213,23 @@ export async function POST(req: NextRequest) {
     const p95 = percentile95Sampled(diff01, sampleStride);
     const T = clamp(p95 * 0.35, 0.06, 0.16);
 
-    // binárna maska
-    let bin = new Uint8Array(n);
+    let bin: Uint8Array = new Uint8Array(n);
     for (let i = 0; i < n; i++) bin[i] = diff01[i] > T ? 1 : 0;
 
-    // morfológia
     const k1 = clamp(Math.round(Math.min(mw, mh) * 0.003), 2, 4);
     const k2 = clamp(Math.round(Math.min(mw, mh) * 0.01), 4, 10);
 
-    bin = opening(bin, mw, mh, k1);
-    bin = closing(bin, mw, mh, k2);
+    bin = normU8(opening(bin, mw, mh, k1));
+    bin = normU8(closing(bin, mw, mh, k2));
+    bin = normU8(largestComponent(bin, mw, mh));
 
-    // najlepšia komponenta
-    bin = largestComponent(bin, mw, mh);
-
-    // grow + vertikálne rozšírenie (tieň/kontakt)
     const grow = clamp(Math.round(Math.min(mw, mh) * 0.02), 10, 40);
-    bin = dilate(bin, mw, mh, grow);
-    bin = dilateVertical(bin, mw, mh, Math.round(grow * 1.2));
+    bin = normU8(dilate(bin, mw, mh, grow));
+    bin = normU8(dilateVertical(bin, mw, mh, Math.round(grow * 1.2)));
 
-    // mask 0/255
     const maskSmall255 = Buffer.alloc(n);
     for (let i = 0; i < n; i++) maskSmall255[i] = bin[i] ? 255 : 0;
 
-    // feather
     const sigma = clamp(Math.round(Math.min(mw, mh) * 0.008), 6, 20);
 
     const maskBuf = await sharp(maskSmall255, { raw: { width: mw, height: mh, channels: 1 } })
@@ -242,13 +238,11 @@ export async function POST(req: NextRequest) {
       .png()
       .toBuffer();
 
-    // hard mask pre kompozit
     const hardMaskFull = await sharp(maskSmall255, { raw: { width: mw, height: mh, channels: 1 } })
       .resize(W, H, { kernel: "nearest" })
       .raw()
       .toBuffer();
 
-    // kompozit: originál mimo, návrh vnútri
     const origFull = await sharp(origBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
     const propFull = await sharp(propBuf).resize(W, H, { fit: "fill" }).removeAlpha().raw().toBuffer();
 
