@@ -1619,18 +1619,13 @@ export default function Page() {
               <div>📐 V návrhu nastav pergolu radšej o niečo menšiu – AI ju vo výsledku často mierne zväčší.</div>
               <div>👀 Výsledky ber ako <b>vizuálnu inšpiráciu a pomôcku pri rozhodovaní</b>, nie ako finálny podklad pre výrobu.</div>
             </div>
-            <div style={{ color: "rgba(0,0,0,0.60)", fontSize: 13, lineHeight: 1.45 }}>
-              Finálne riešenie sa vždy rieši individuálne.
-            </div>
+            <div style={{ color: "rgba(0,0,0,0.60)", fontSize: 13, lineHeight: 1.45 }}>Finálne riešenie sa vždy rieši individuálne.</div>
             <button type="button" onClick={closeIntro} style={{ padding: "12px 16px", borderRadius: 14, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 950, cursor: "pointer" }}>
-                Rozumiem
-              </button>
-                  {loading ? (
-                    <div style={{ marginTop: 10, fontSize: 12, color: "rgba(0,0,0,0.65)", lineHeight: 1.35 }}>
-                      Vizualizujeme tvoj aktuálny návrh pomocou umelej inteligencie. Výsledok sa môže jemne líšiť v detailoch.
-                    </div>
-                  ) : null}
-                </div>
+              Rozumiem
+            </button>
+            <div style={{ fontSize: 11.5, color: "rgba(0,0,0,0.55)", lineHeight: 1.35 }}>
+              Pokračovaním berieš na vedomie, že výsledok je orientačný.
+            </div>
           </div>
         </div>
       ) : null}
