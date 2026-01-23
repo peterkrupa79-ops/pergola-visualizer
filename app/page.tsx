@@ -1613,10 +1613,6 @@ export default function Page() {
       } catch {}
 
       finalB64 = fluxB64;
-adows, natural contact with terrace and house wall, photographic color balance and noise.",
-        "No floating, no detached edges, no extra columns/beams, no new objects.",
-        "Photorealistic result.",
-      ].join("\n");
 
       const fh = await fetch("/api/flux-harmonize", {
         method: "POST",
