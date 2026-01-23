@@ -295,21 +295,35 @@ async function _alignAiB64ToTemplate(aiB64: string, template: EdgeTemplate): Pro
 
   // dx,dy is where AI edges match template when sampling AI at (x+dx,y+dy).
   // So AI pergola is shifted by (+dx,+dy) relative to template -> translate image by (-dx,-dy).
-  const full = document.createElement("canvas");
-  full.width = bmp.width;
-  full.height = bmp.height;
-  const ctx = full.getContext("2d")!;
-  // fill by original first (prevents empty borders)
-  ctx.drawImage(bmp, 0, 0);
-  ctx.globalCompositeOperation = "source-over";
-  // overlay shifted copy
   const sx = Math.round((-dx) * (bmp.width / template.w));
   const sy = Math.round((-dy) * (bmp.height / template.h));
-  ctx.clearRect(0, 0, full.width, full.height);
-  ctx.drawImage(bmp, sx, sy);
-  // For uncovered areas, draw original under it (already empty due to clearRect). Use destination-over:
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.drawImage(bmp, 0, 0);
+
+  // IMPORTANT:
+  // Do NOT fill uncovered borders with the original (it creates a visible "photo-in-photo" seam).
+  // Instead: crop to the overlapping region after shift and scale back to full canvas.
+  const W = bmp.width;
+  const H = bmp.height;
+
+  const overlapW = W - Math.abs(sx);
+  const overlapH = H - Math.abs(sy);
+
+  // If the shift is too large (would require heavy upscaling), skip alignment.
+  if (overlapW < W * 0.75 || overlapH < H * 0.75) return aiB64;
+
+  const srcX = sx < 0 ? -sx : 0;
+  const srcY = sy < 0 ? -sy : 0;
+  const srcW = overlapW;
+  const srcH = overlapH;
+
+  const full = document.createElement("canvas");
+  full.width = W;
+  full.height = H;
+  const ctx = full.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  // Scale the overlap region to the full output size (no seams).
+  ctx.drawImage(bmp, srcX, srcY, srcW, srcH, 0, 0, W, H);
 
   return _canvasToB64Png(full);
 }
@@ -1421,7 +1435,7 @@ export default function Page() {
 
     try {
       // downscale export
-      const MAX_DIM = 1024; // cost guard: 1024px max to keep OpenAI image cost low (was 2048)
+      const MAX_DIM = 1024;
       const bgW = bgImg.width;
       const bgH = bgImg.height;
 
