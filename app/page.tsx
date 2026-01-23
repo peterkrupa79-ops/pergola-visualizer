@@ -226,43 +226,6 @@ function buildFluxPrompt(t: PergolaType, variantIndex: number) {
   ].join("\n");
 }
 
-async function fluxHarmonize({
-  compositeB64,
-  maskB64,
-  prompt,
-  seed,
-  steps = 35,
-}: {
-  compositeB64: string;
-  maskB64: string;
-  prompt: string;
-  seed?: number;
-  steps?: number;
-}): Promise<string> {
-  const r = await fetch("/api/flux-harmonize", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      image: `data:image/png;base64,${compositeB64}`,
-      mask: `data:image/png;base64,${maskB64}`,
-      prompt,
-      seed,
-      steps,
-    }),
-  });
-
-  const j = await r.json().catch(async () => {
-    const t = await r.text().catch(() => "");
-    return { error: t || `HTTP ${r.status}` };
-  });
-
-  if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-
-  const outputUrl = j?.outputUrl as string | undefined;
-  if (!outputUrl) throw new Error("Flux API nevrátilo outputUrl.");
-
-  return await fetchUrlToB64Png(outputUrl);
-}
 
 
 
@@ -1597,28 +1560,14 @@ export default function Page() {
         // alignment is best-effort; ignore failures
       }
 
-      // Flux harmonization (server-side: creates soft mask + calls Flux; avoids large JSON payloads)
+      // Deterministic harmonization (server-side, NON-AI): soft edge blend + subtle shadow. No hallucinations.
       {
         const originalJpg = await canvasToJpegBlobAtMaxDim(bgOnly, 1024, 0.9);
         const proposedJpg = await b64PngToJpegBlobAtMaxDim(finalB64, 1024, 0.9);
 
-        const fluxPrompt = [
-          "HARMONIZE ONLY. The pergola structure already exists in the image and must stay exactly where it is.",
-          "Preserve the exact position, size, perspective, and orientation of the pergola. Do NOT move, resize, rotate, or redesign it.",
-          "Do NOT change camera angle, crop, zoom, or viewpoint.",
-          "Improve realism only: consistent lighting, realistic shadows, natural contact with terrace and house wall, photographic color balance and noise.",
-          "No floating, no detached edges, no extra columns/beams, no new objects.",
-          `Pergola style: ${typeLabel(pergolaType)}.`,
-          "Photorealistic result."
-        ].join("\n");
-
         const fd = new FormData();
         fd.append("original", originalJpg, "original.jpg");
         fd.append("proposed", proposedJpg, "proposed.jpg");
-        fd.append("prompt", fluxPrompt);
-        // seed to get slight variation (but same placement)
-        fd.append("seed", String((Date.now() + variants.length * 997) % 2147483647));
-        fd.append("steps", "35");
 
         const mr = await fetch("/api/mask", { method: "POST", body: fd });
 
@@ -1630,7 +1579,7 @@ export default function Page() {
         const outBlob = await mr.blob();
         let harmonizedB64 = await blobToB64Png(outBlob);
 
-        // (best-effort) align back to template once more
+        // optional: align again after blend (best-effort)
         try {
           harmonizedB64 = await _alignAiB64ToTemplate(harmonizedB64, alignTemplate);
         } catch {}
