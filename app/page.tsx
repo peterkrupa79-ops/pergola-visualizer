@@ -154,6 +154,32 @@ async function watermarkB64Png(b64: string): Promise<string> {
   }
 }
 
+// Global "unify pass" AFTER generation/alignment to reduce visible seams where AI vs original differ.
+// This does NOT move geometry; it only applies subtle global grading + micro-grain to make the whole image feel like one photo.
+async function unifyB64Png(b64: string): Promise<string> {
+  try {
+    const imageUrl = `data:image/png;base64,${b64}`;
+    const res = await fetch("/api/postprocess", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageUrl }),
+    });
+    if (!res.ok) return b64;
+    const blob = await res.blob();
+    const ab = await blob.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    let binary = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
+  } catch {
+    return b64;
+  }
+}
+
+
 
 // --- AI alignment helpers (keeps photorealistic output but recenters pergola to the exact user placement) ---
 type EdgeTemplate = { w: number; h: number; pts: Array<[number, number]>; maxShift: number };
@@ -1485,6 +1511,9 @@ export default function Page() {
       } catch (e) {
         // alignment is best-effort; ignore failures
       }
+
+      // Global unify pass to reduce "two photos" seams (tone/grain). Keeps geometry.
+      finalB64 = await unifyB64Png(finalB64);
 
       // Add brand watermark (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
