@@ -1545,7 +1545,7 @@ export default function Page() {
       const prompt = buildFinalPrompt(pergolaType, variants.length);
       form.append("prompt", prompt);
 
-      const r = await fetch("/api/render/openai", { method: "POST", body: form });
+      const r = await fetch("/api/render/flux", { method: "POST", body: form });
 
       const j = await r.json().catch(async () => {
         const t = await r.text().catch(() => "");
