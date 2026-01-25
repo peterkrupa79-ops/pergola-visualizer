@@ -1336,29 +1336,30 @@ export default function Page() {
 
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
-    if (mode === "roll" && bboxRect) {
-      // NAKLOŇ – výber osi podľa miesta uchopenia:
-      // - stred (väčšina plochy) => pitch (dopredu/dozadu)
-      // - ľavý / pravý okraj => roll (zdvih tej strany)
-      const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
-      const edgeZone = 0.22; // 22% šírky na každej strane
 
-      if (relX <= edgeZone) {
-        tiltAxis = "z"; // roll
-        tiltSign = -1; // ľavá strana hore
-      } else if (relX >= 1 - edgeZone) {
-        tiltAxis = "z"; // roll
-        tiltSign = 1; // pravá strana hore
-      } else {
+    // Režim NAKLOŇ (podľa uchopenia na šírke):
+    // - STRED: ťah hore/dole = sklon dopredu/dozadu (pitch, os X)
+    // - ĽAVÝ/PRAVÝ OKRAJ: ťah hore/dole = zdvih tej strany (roll, os Z)
+    if (mode === "roll") {
+      // Ak máme bbox pergoly, používame ho. Inak sa orientujeme podľa stredu canvasu.
+      const cx = bboxRect ? (bboxRect.x + bboxRect.w * 0.5) : (canvasW * 0.5);
+      const halfW = Math.max(1, (bboxRect ? bboxRect.w : canvasW) * 0.5);
+
+      // relX v rozsahu približne -1..+1 (ľavá..pravá strana)
+      const relX = (p.x - cx) / halfW;
+
+      // Stredový pás (±0.30) = pitch, mimo = roll
+      const centerBand = 0.30;
+
+      if (Math.abs(relX) <= centerBand) {
         tiltAxis = "x"; // pitch
-        tiltSign = 1;
+        tiltSign = 1;   // pitch nepoužíva tiltSign (len keep value)
+      } else {
+        tiltAxis = "z"; // roll
+        tiltSign = relX > 0 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
-    } else if (mode === "roll") {
-      tiltAxis = "x";
-      tiltSign = 1;
     }
-
-    dragRef.current = {
+dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1400,22 +1401,24 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
-      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
-      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
-      const k = 0.01;
+
+      // NAKLOŇ:
+      // - stred -> pitch (dopredu/dozadu)
+      // - boky -> roll (zdvih ľavej/prav ej strany)
+      const k = 0.012;
 
       if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
+        // pitch NEPOUŽÍVA tiltSign – vždy len hore/dole
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
     }
 
-    if (currentMode === "resize") {
+if (currentMode === "resize") {
       const rect = bboxRect;
       if (!rect || !dragRef.current.handle) return;
 
