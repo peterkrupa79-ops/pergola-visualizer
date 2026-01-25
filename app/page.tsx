@@ -96,6 +96,18 @@ function clamp(v: number, a: number, b: number) {
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
+
+function degToRad(deg: number) {
+  return (deg * Math.PI) / 180;
+}
+function radToDeg(rad: number) {
+  return (rad * 180) / Math.PI;
+}
+// normalize to [0, 2π)
+function normRad(rad: number) {
+  const twopi = Math.PI * 2;
+  return ((rad % twopi) + twopi) % twopi;
+}
 function dist(a: Vec2, b: Vec2) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -1390,7 +1402,7 @@ export default function Page() {
 
     if (currentMode === "rotate3d") {
       // Otoč 3D: otáčaj iba dookola okolo osi Y (yaw)
-      const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
+      const yaw = normRad(dragRef.current.startRot3D.yaw + dx * 0.01);
       setRot3D((prev) => ({ ...prev, yaw }));
       return;
     }
@@ -1982,6 +1994,44 @@ export default function Page() {
                 }}
               >
                 {sliderBox}
+                {mode === "rotate3d" ? (
+                  <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                    <CustomSlider
+                      min={0}
+                      max={360}
+                      step={1}
+                      value={Math.round(radToDeg(normRad(rot3D.yaw)))}
+                      onChange={(v) => setRot3D((p) => ({ ...p, yaw: degToRad(v) }))}
+                      label="Otočenie pergoly"
+                      suffix="°"
+                    />
+
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...btnStyle, padding: "10px 12px", fontSize: 13 }}
+                        onClick={() => setRot3D((p) => ({ ...p, yaw: normRad(p.yaw - degToRad(15)) }))}
+                      >
+                        -15°
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btnStyle, padding: "10px 12px", fontSize: 13 }}
+                        onClick={() => setRot3D((p) => ({ ...p, yaw: normRad(p.yaw + degToRad(15)) }))}
+                      >
+                        +15°
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...btnStyle, padding: "10px 12px", fontSize: 13 }}
+                        onClick={() => setRot3D((p) => ({ ...p, yaw: 0 }))}
+                      >
+                        Reset otočenia
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
               </div>
             ) : null}
 
