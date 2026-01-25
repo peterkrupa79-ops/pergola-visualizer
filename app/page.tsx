@@ -1334,79 +1334,29 @@ export default function Page() {
     let rollMode = false;
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
-    let tiltAxis: "x" | "z" | null = null;
+        let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
+    // Režim NAKLOŇ – presne podľa zadania:
+    // - chyť STRED -> ťah hore/dole = pitch (os X)
+    // - chyť BOK (ľavo/pravý okraj) -> ťah hore/dole = zdvih tej strany (roll okolo Z)
     if (mode === "roll") {
-      // NAKLOŇ – rozhodni iba podľa toho, kde používateľ chytí pergolu:
-      // - stred (cca 1/3 šírky) -> pitch (os X)
-      // - boky -> roll (os Z) a zdvihni chytenú stranu
-      //
-      // Najspoľahlivejšie: raycast do 3D objektu. Ak zlyhá, fallback na bbox / canvas.
-      try {
-        const THREE = threeModuleRef.current;
-        const camera = cameraRef.current;
-        const root = rootRef.current;
+      // relX v rozsahu 0..1 (fallback: celý canvas, ak bbox ešte nie je k dispozícii)
+      const relX = bboxRect
+        ? (p.x - bboxRect.x) / Math.max(1, bboxRect.w)
+        : p.x / Math.max(1, canvasW);
 
-        if (THREE && camera && root) {
-          const ndc = new THREE.Vector2((p.x / canvasW) * 2 - 1, -(p.y / canvasH) * 2 + 1);
-          const ray = new THREE.Raycaster();
-          ray.setFromCamera(ndc, camera);
+      // Stredná zóna (1/3 šírky) = pitch
+      const centerL = 0.33;
+      const centerR = 0.67;
 
-          // Zober najbližší zásah do pergoly (rekurzívne cez deti)
-          const hits = ray.intersectObject(root, true);
-          if (hits && hits.length > 0) {
-            const hit = hits[0];
-            // premeň zásah do lokálnych súradníc rootu
-            const lp = root.worldToLocal(hit.point.clone());
-
-            // odhad "polovičnej šírky" – vezmeme z bbox, ak existuje, inak z defaultu
-            // (nepotrebujeme presnú metriku, len rozlíšiť stred vs bok)
-            let halfW = 0.6;
-            if (bboxRect && bboxRect.w > 0) {
-              // mapuj pixel šírku bboxu na približnú "world" šírku cez pomer (heuristika)
-              halfW = Math.max(0.35, Math.min(1.25, (bboxRect.w / canvasW) * 1.8));
-            }
-
-            const edgeZone = halfW * 0.33; // boky ~ 1/3 na každej strane
-            if (Math.abs(lp.x) > edgeZone) {
-              tiltAxis = "z"; // roll
-              tiltSign = lp.x > 0 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
-            } else {
-              tiltAxis = "x"; // pitch
-              tiltSign = 1;
-            }
-          }
-        }
-      } catch {
-        // ignore and use fallback
-      }
-
-      // Fallback: bboxRect (ak existuje)
-      if (!tiltAxis && bboxRect) {
-        const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
-        const centerL = 0.33;
-        const centerR = 0.67;
-
-        if (relX >= centerL && relX <= centerR) {
-          tiltAxis = "x"; // pitch
-          tiltSign = 1;
-        } else {
-          tiltAxis = "z"; // roll
-          tiltSign = relX > 0.5 ? 1 : -1;
-        }
-      }
-
-      // Fallback: celý canvas (keď bbox ešte nie je spočítaný)
-      if (!tiltAxis) {
-        const relX = p.x / Math.max(1, canvasW);
-        if (relX >= 0.33 && relX <= 0.67) {
-          tiltAxis = "x";
-          tiltSign = 1;
-        } else {
-          tiltAxis = "z";
-          tiltSign = relX > 0.5 ? 1 : -1;
-        }
+      if (relX >= centerL && relX <= centerR) {
+        tiltAxis = "x"; // pitch
+        tiltSign = 1;
+      } else {
+        tiltAxis = "z"; // roll
+        // pravý bok hore = +, ľavý bok hore = -
+        tiltSign = relX > 0.5 ? 1 : -1;
       }
     }
 dragRef.current = {
@@ -1452,21 +1402,22 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ: ťahanie hore/dole podľa osi určenej pri pointerDown
-      // - tiltAxis "z": zdvihni chytenú stranu (roll okolo Z) cez rot2D
-      // - tiltAxis "x": nakláňaj dopredu/dozadu (pitch okolo X) cez rot3D.pitch
-      const k = 0.02;
+      // NAKLOŇ:
+      // - boky: zdvih tej strany (roll okolo Z) podľa tiltSign
+      // - stred: pitch dopredu/dozadu (os X), bez tiltSign (symetricky)
+      const k = 0.02; // citlivosť
 
       if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k; // pitch je symetrický, bez tiltSign
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
     }
-if (currentMode === "resize") {
+
+    if (currentMode === "resize") {
       const rect = bboxRect;
       if (!rect || !dragRef.current.handle) return;
 
