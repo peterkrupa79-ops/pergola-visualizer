@@ -1338,12 +1338,11 @@ export default function Page() {
     let tiltSign = 1;
 
     // Režim NAKLOŇ:
-    // - keď chytíš pergolu v strede, ťahaním hore/dole meníš sklon dopredu/dozadu (pitch)
-    // - keď chytíš vľavo alebo vpravo, ťahaním hore/dole zdvihneš celú stranu (roll okolo osi Z)
+    // - stred: ťah hore/dole = pitch (dopredu/dozadu)
+    // - ľavá/pravá strana: ťah hore/dole = roll (zdvih tej strany)
     if (mode === "roll" && bboxRect) {
       const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      // stredný pás (cca 1/3 šírky) = pitch
       const centerL = 0.33;
       const centerR = 0.67;
 
@@ -1352,16 +1351,14 @@ export default function Page() {
         tiltSign = 1;
       } else {
         tiltAxis = "z"; // roll
-        // pravá strana hore = +, ľavá strana hore = -
-        tiltSign = relX > 0.5 ? 1 : -1;
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
     } else if (mode === "roll") {
-      // ak nemáme bbox, správaj sa ako "stred" (pitch)
       tiltAxis = "x";
       tiltSign = 1;
     }
 
-    dragRef.current = {
+dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1404,11 +1401,10 @@ export default function Page() {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ:
+      // Režim NAKLOŇ:
       // - stred: ťah hore/dole = pitch (dopredu/dozadu)
       // - ľavá/pravá strana: ťah hore/dole = roll (zdvih tej strany)
       const k = 0.02;
-
       const axis = dragRef.current.tiltAxis ?? "x";
 
       if (axis === "z") {
