@@ -1337,24 +1337,25 @@ export default function Page() {
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // Režim NAKLOŇ (podľa UX):
-    // - chytíš STRED -> ťah hore/dole = pitch (os X)
-    // - chytíš ĽAVÝ/PRAVÝ BOK -> ťah hore/dole = zdvih tej strany (roll okolo osi Z)
-    // Rozhoduje iba X poloha uchopenia (ignorujeme hornú/spodnú hranu).
+    // NAKLOŇ: os sa určuje LEN podľa toho, či chytíš pergolu v strede alebo na boku (ľavo/pravá strana).
+    // Horná/spodná hrana sa úmyselne ignoruje (inak to takmer vždy skončí na pitch).
     if (mode === "roll" && bboxRect) {
       const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      const centerL = 0.33;
-      const centerR = 0.67;
-
-      if (relX >= centerL && relX <= centerR) {
+      // Boky = zdvih tej strany (roll okolo osi Z). Stred = pitch (dopredu/dozadu).
+      const edgeZone = 0.25; // 25% zľava / sprava = "bok"
+      if (relX <= edgeZone) {
+        tiltAxis = "z"; // roll
+        tiltSign = -1;  // ľavá strana hore
+      } else if (relX >= 1 - edgeZone) {
+        tiltAxis = "z"; // roll
+        tiltSign = 1;   // pravá strana hore
+      } else {
         tiltAxis = "x"; // pitch
         tiltSign = 1;
-      } else {
-        tiltAxis = "z"; // roll
-        tiltSign = relX > 0.5 ? 1 : -1; // pravý bok +, ľavý bok -
       }
     } else if (mode === "roll") {
+      // fallback bez bboxu: správa sa ako stred (pitch)
       tiltAxis = "x";
       tiltSign = 1;
     }
@@ -1401,9 +1402,9 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
-      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
-      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
+      // NAKLOŇ podľa miesta uchopenia:
+      // - stred: ťah hore/dole = pitch (dopredu/dozadu)
+      // - boky (ľavo/pravá strana): ťah hore/dole = roll (zdvih tej strany)
       const k = 0.01;
 
       if (dragRef.current.tiltAxis === "z") {
