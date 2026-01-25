@@ -1337,29 +1337,31 @@ export default function Page() {
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // Režim NAKLOŇ (podľa uchopenia na šírke):
-    // - STRED: ťah hore/dole = sklon dopredu/dozadu (pitch, os X)
-    // - ĽAVÝ/PRAVÝ OKRAJ: ťah hore/dole = zdvih tej strany (roll, os Z)
-    if (mode === "roll") {
-      // Ak máme bbox pergoly, používame ho. Inak sa orientujeme podľa stredu canvasu.
-      const cx = bboxRect ? (bboxRect.x + bboxRect.w * 0.5) : (canvasW * 0.5);
-      const halfW = Math.max(1, (bboxRect ? bboxRect.w : canvasW) * 0.5);
+    // NAKLOŇ:
+    // - stred (podľa X): ťah hore/dole = pitch (dopredu/dozadu)
+    // - ľavý/pravý okraj (podľa X): ťah hore/dole = zdvih tej strany (roll)
+    // Pozn.: hornú/spodnú hranu úplne ignorujeme (presne podľa požiadavky).
+    if (mode === "roll" && bboxRect) {
+      const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      // relX v rozsahu približne -1..+1 (ľavá..pravá strana)
-      const relX = (p.x - cx) / halfW;
+      const edgeZone = 0.22; // 22% zľava a sprava = "bok"
+      const centerL = edgeZone;
+      const centerR = 1 - edgeZone;
 
-      // Stredový pás (±0.30) = pitch, mimo = roll
-      const centerBand = 0.30;
-
-      if (Math.abs(relX) <= centerBand) {
+      if (relX >= centerL && relX <= centerR) {
         tiltAxis = "x"; // pitch
-        tiltSign = 1;   // pitch nepoužíva tiltSign (len keep value)
+        tiltSign = 1;
       } else {
         tiltAxis = "z"; // roll
-        tiltSign = relX > 0 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
+    } else if (mode === "roll") {
+      tiltAxis = "x";
+      tiltSign = 1;
     }
-dragRef.current = {
+
+    dragRef.current = {
+
       active: true,
       start: p,
       startPos: pos,
@@ -1402,23 +1404,22 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ:
-      // - stred -> pitch (dopredu/dozadu)
-      // - boky -> roll (zdvih ľavej/prav ej strany)
-      const k = 0.012;
+      // NAKLOŇ (podľa toho, kde si chytil na šírke):
+      // - tiltAxis === "z" (boky): ťah hore zdvihne tú stranu (roll)
+      // - tiltAxis === "x" (stred): ťah hore/dole mení pitch (dopredu/dozadu)
+      const k = 0.02;
 
       if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
-        setRot2D(roll);
+        setRot2D(clamp(roll, -1.0, 1.0));
       } else {
-        // pitch NEPOUŽÍVA tiltSign – vždy len hore/dole
         const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
     }
 
-if (currentMode === "resize") {
+    if (currentMode === "resize") {
       const rect = bboxRect;
       if (!rect || !dragRef.current.handle) return;
 
