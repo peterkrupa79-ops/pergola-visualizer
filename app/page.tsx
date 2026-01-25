@@ -1336,28 +1336,27 @@ export default function Page() {
 
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
-
-    // Režim NAKLOŇ:
-    // - keď chytíš pergolu v strede, ťahaním hore/dole meníš sklon dopredu/dozadu (pitch / os X)
-    // - keď chytíš vľavo alebo vpravo, ťahaním hore/dole zdvihneš celú stranu (roll / os Z)
-    // Pozn.: ignorujeme hornú/spodnú hranu – rozhoduje len X pozícia uchopenia.
     if (mode === "roll" && bboxRect) {
+      // NAKLOŇ:
+      // - keď chytíš pergolu v strede (podľa X), ťahaním hore/dole meníš pitch (dopredu/dozadu)
+      // - keď chytíš pergolu vľavo alebo vpravo, ťahaním hore/dole zdvihneš celú tú stranu (roll)
+      // Dôležité: ignorujeme hornú/spodnú hranu — rozhoduje iba X pozícia uchopenia.
       const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      // stredný pás = pitch
       const centerL = 0.33;
       const centerR = 0.67;
 
       if (relX >= centerL && relX <= centerR) {
         tiltAxis = "x"; // pitch
+        tiltSign = 1;
       } else {
-        tiltAxis = "z"; // roll
-        // pravá strana hore = +, ľavá strana hore = -
-        tiltSign = relX > 0.5 ? 1 : -1;
+        tiltAxis = "z"; // roll (zdvih strany)
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
     } else if (mode === "roll") {
-      // keď ešte nemáme bbox, správaj sa ako "stred" (pitch)
+      // fallback: ak nemáme bbox, správaj sa ako stred (pitch)
       tiltAxis = "x";
+      tiltSign = 1;
     }
 
     dragRef.current = {
@@ -1402,9 +1401,9 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
-      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
-      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
+      // NAKLOŇ podľa miesta uchopenia:
+      // - stred: ťah hore/dole = pitch (dopredu/dozadu)
+      // - boky: ťah hore/dole = zdvih tej strany (roll)
       const k = 0.01;
 
       if (dragRef.current.tiltAxis === "z") {
@@ -1413,7 +1412,7 @@ export default function Page() {
       } else {
         const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
-      }
+}
       return;
     }
 
