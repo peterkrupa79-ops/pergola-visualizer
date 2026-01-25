@@ -93,14 +93,6 @@ const HERO_STEPS: { id: number; title: string; hint: string }[] = [
 function clamp(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
 }
-
-function normRad(rad: number) {
-  const TAU = Math.PI * 2;
-  let r = rad % TAU;
-  if (r < 0) r += TAU;
-  return r;
-}
-
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
@@ -1295,7 +1287,7 @@ export default function Page() {
     handle: HandleId | null;
     modeAtDown: Mode;
     rollMode: boolean;
-    tiltAxis: "pitch" | "roll" | null;
+    tiltAxis: "x" | "z" | null;
     tiltSign: number;
   }>({
     active: false,
@@ -1339,24 +1331,33 @@ export default function Page() {
       }
     }
 
-    // Pri OTOČ a NAKLOŇ chceme intuitívne ovládanie.
-// - OTOČ: ťah doľava/doprava = yaw, hore/dole = pitch
-// - NAKLOŇ: podľa miesta uchopenia:
-//    * keď chytíš pergolu "za stred" -> nakláňa sa dopredu/dozadu (pitch)
-//    * keď chytíš pergolu vľavo/vpravo -> zdvíha sa tá strana (roll)
-    let tiltAxis: "pitch" | "roll" | null = null;
+    let rollMode = false;
+    // rotate3d: vždy otáčame len okolo osi Y (yaw)
+
+    let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
+    // Režim NAKLOŇ:
+    // - keď chytíš pergolu v strede, ťahaním hore/dole meníš sklon dopredu/dozadu (pitch)
+    // - keď chytíš vľavo alebo vpravo, ťahaním hore/dole zdvihneš celú stranu (roll okolo osi Z)
     if (mode === "roll" && bboxRect) {
-      const rel = (p.x - bboxRect.x) / Math.max(1, bboxRect.w); // 0..1
-      const CENTER_BAND = 0.30; // 30% okolo stredu je "stred"
-      if (Math.abs(rel - 0.5) <= CENTER_BAND / 2) {
-        tiltAxis = "pitch";
+      const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
+
+      // stredný pás (cca 1/3 šírky) = pitch
+      const centerL = 0.33;
+      const centerR = 0.67;
+
+      if (relX >= centerL && relX <= centerR) {
+        tiltAxis = "x"; // pitch
+        tiltSign = 1;
       } else {
-        tiltAxis = "roll";
-        // ak chytíš vpravo, ťah hore má zdvihnúť pravú stranu (opačný smer než vľavo)
-        tiltSign = rel > 0.5 ? -1 : 1;
+        tiltAxis = "z"; // roll
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
+    } else if (mode === "roll") {
+      // ak nemáme bbox, správaj sa ako "stred" (pitch)
+      tiltAxis = "x";
+      tiltSign = 1;
     }
 
     dragRef.current = {
@@ -1368,7 +1369,7 @@ export default function Page() {
       startScalePct: scalePct,
       handle: null,
       modeAtDown: mode as Mode,
-      rollMode: false,
+      rollMode,
       tiltAxis,
       tiltSign,
     };
@@ -1393,31 +1394,25 @@ export default function Page() {
     }
 
     if (currentMode === "rotate3d") {
-      // Otoč 3D: doladiť orientáciu v priestore v oboch smeroch:
-      // - ťah doľava/doprava = yaw (okolo osi Y)
-      // - ťah hore/dole = pitch (okolo osi X)
-      const k = 0.01;
-      const yaw = normRad(dragRef.current.startRot3D.yaw + dx * k);
-      const pitch = clamp(dragRef.current.startRot3D.pitch + (-dy) * k, -1.25, 1.25);
-      setRot3D((prev) => ({ ...prev, yaw, pitch }));
+      // Otoč 3D: otáčaj iba dookola okolo osi Y (yaw)
+      const yaw = dragRef.current.startRot3D.yaw + dx * 0.01;
+      setRot3D((prev) => ({ ...prev, yaw }));
       return;
     }
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-
-      // NAKLOŇ (podľa miesta uchopenia):
-      // - keď chytíš "za stred" -> ťah hore/dole = pitch (dopredu/dozadu)
-      // - keď chytíš vľavo/vpravo -> ťah hore/dole = roll (zdvihne danú stranu)
+      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
+      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
+      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
       const k = 0.01;
 
-      const axis = dragRef.current.tiltAxis; // nastavené v onPointerDown
-      if (axis === "pitch") {
-        const pitch = clamp(dragRef.current.startRot3D.pitch + (-dy) * k, -1.25, 1.25);
-        setRot3D((prev) => ({ ...prev, pitch }));
-      } else {
-        const roll = dragRef.current.startRot2D + (-dy) * k * (dragRef.current.tiltSign || 1);
+      if (dragRef.current.tiltAxis === "z") {
+        const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
+      } else {
+        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
+        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
     }
@@ -1873,197 +1868,6 @@ export default function Page() {
                     ]}
                   />
                 </div>
-
-                {mode === "rotate3d" ? (
-                  <div
-                    style={{
-                      width: "100%",
-                      display: "grid",
-                      gap: 8,
-                      padding: "10px 12px",
-                      borderRadius: 14,
-                      border: "1px solid rgba(0,0,0,0.10)",
-                      background: "rgba(255,255,255,0.9)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Otočenie</div>
-                      <button type="button" onClick={() => setRot3D((p) => ({ ...p, yaw: 0, pitch: 0 }))} style={btnStyle}>
-                        Reset
-                      </button>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={360}
-                      step={1}
-                      value={Math.round((normRad(rot3D.yaw) * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        setRot3D((p) => ({ ...p, yaw: normRad((deg * Math.PI) / 180) }));
-                      }}
-                      style={{ width: "100%" }}
-                      aria-label="Otočenie (0–360°)"
-                    />
-                    <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, yaw: normRad(p.yaw - (15 * Math.PI) / 180) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        −15°
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, yaw: normRad(p.yaw + (15 * Math.PI) / 180) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        +15°
-                      </button>
-                    </div>
-                    <div style={{ height: 1, background: "rgba(0,0,0,0.08)", marginTop: 4, marginBottom: 4 }} />
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Náklon dopredu/dozadu</div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>
-                        {Math.round((rot3D.pitch * 180) / Math.PI)}°
-                      </div>
-                    </div>
-
-                    <input
-                      type="range"
-                      min={-60}
-                      max={60}
-                      step={1}
-                      value={Math.round((rot3D.pitch * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        const rad = clamp((deg * Math.PI) / 180, -1.25, 1.25);
-                        setRot3D((p) => ({ ...p, pitch: rad }));
-                      }}
-                      style={{ width: "100%" }}
-                      aria-label="Náklon dopredu/dozadu (−60° až +60°)"
-                    />
-
-                    <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, pitch: clamp(p.pitch - (10 * Math.PI) / 180, -1.25, 1.25) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        −10°
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, pitch: clamp(p.pitch + (10 * Math.PI) / 180, -1.25, 1.25) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        +10°
-                      </button>
-                    </div>
-
-                  </div>
-                ) : null}
-
-                {mode === "roll" ? (
-                  <div
-                    style={{
-                      width: "100%",
-                      display: "grid",
-                      gap: 8,
-                      padding: "10px 12px",
-                      borderRadius: 14,
-                      border: "1px solid rgba(0,0,0,0.10)",
-                      background: "rgba(255,255,255,0.9)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Naklonenie</div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRot2D(0);
-                          setRot3D((p) => ({ ...p, pitch: 0 }));
-                        }}
-                        style={btnStyle}
-                      >
-                        Reset
-                      </button>
-                    </div>
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Doprava/doľava</div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>
-                        {Math.round((rot2D * 180) / Math.PI)}°
-                      </div>
-                    </div>
-
-                    <input
-                      type="range"
-                      min={-45}
-                      max={45}
-                      step={1}
-                      value={Math.round((rot2D * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        setRot2D((deg * Math.PI) / 180);
-                      }}
-                      style={{ width: "100%" }}
-                      aria-label="Naklonenie doprava/doľava (−45° až +45°)"
-                    />
-
-                    <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-                      <button type="button" onClick={() => setRot2D((r) => r - (10 * Math.PI) / 180)} style={{ ...btnStyle, flex: 1 }}>
-                        −10°
-                      </button>
-                      <button type="button" onClick={() => setRot2D((r) => r + (10 * Math.PI) / 180)} style={{ ...btnStyle, flex: 1 }}>
-                        +10°
-                      </button>
-                    </div>
-
-                    <div style={{ height: 1, background: "rgba(0,0,0,0.08)", marginTop: 4, marginBottom: 4 }} />
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Dopredu/dozadu</div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>
-                        {Math.round((rot3D.pitch * 180) / Math.PI)}°
-                      </div>
-                    </div>
-
-                    <input
-                      type="range"
-                      min={-45}
-                      max={45}
-                      step={1}
-                      value={Math.round((rot3D.pitch * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        const rad = clamp((deg * Math.PI) / 180, -1.25, 1.25);
-                        setRot3D((p) => ({ ...p, pitch: rad }));
-                      }}
-                      style={{ width: "100%" }}
-                      aria-label="Naklonenie dopredu/dozadu (−45° až +45°)"
-                    />
-
-                    <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, pitch: clamp(p.pitch - (10 * Math.PI) / 180, -1.25, 1.25) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        −10°
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, pitch: clamp(p.pitch + (10 * Math.PI) / 180, -1.25, 1.25) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        +10°
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
               </div>
             ) : (
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -2077,155 +1881,6 @@ export default function Page() {
                     { value: "resize", label: "Resize", icon: <Icon name="resize" size={16} /> },
                   ]}
                 />
-
-                {mode === "rotate3d" ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      flexWrap: "wrap",
-                      padding: "8px 10px",
-                      borderRadius: 12,
-                      border: "1px solid rgba(0,0,0,0.10)",
-                      background: "rgba(255,255,255,0.9)",
-                    }}
-                  >
-                    <div style={{ fontWeight: 850, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Otočenie</div>
-                    <button
-                      type="button"
-                      onClick={() => setRot3D((p) => ({ ...p, yaw: normRad(p.yaw - (15 * Math.PI) / 180) }))}
-                      style={btnStyle}
-                      title="-15°"
-                    >
-                      −15°
-                    </button>
-                    <input
-                      type="range"
-                      min={0}
-                      max={360}
-                      step={1}
-                      value={Math.round((normRad(rot3D.yaw) * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        setRot3D((p) => ({ ...p, yaw: normRad((deg * Math.PI) / 180) }));
-                      }}
-                      style={{ width: 220 }}
-                      aria-label="Otočenie (0–360°)"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setRot3D((p) => ({ ...p, yaw: normRad(p.yaw + (15 * Math.PI) / 180) }))}
-                      style={btnStyle}
-                      title="+15°"
-                    >
-                      +15°
-                    </button>
-                    <button type="button" onClick={() => setRot3D((p) => ({ ...p, yaw: 0, pitch: 0 }))} style={btnStyle} title="Reset">
-                      Reset
-                    </button>
-                  </div>
-                ) : null}
-
-                {mode === "roll" ? (
-                  <div
-                    style={{
-                      width: "100%",
-                      display: "grid",
-                      gap: 8,
-                      padding: "10px 12px",
-                      borderRadius: 14,
-                      border: "1px solid rgba(0,0,0,0.10)",
-                      background: "rgba(255,255,255,0.9)",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Naklonenie</div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRot2D(0);
-                          setRot3D((p) => ({ ...p, pitch: 0 }));
-                        }}
-                        style={btnStyle}
-                      >
-                        Reset
-                      </button>
-                    </div>
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Doprava/doľava</div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>
-                        {Math.round((rot2D * 180) / Math.PI)}°
-                      </div>
-                    </div>
-
-                    <input
-                      type="range"
-                      min={-45}
-                      max={45}
-                      step={1}
-                      value={Math.round((rot2D * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        setRot2D((deg * Math.PI) / 180);
-                      }}
-                      style={{ width: "100%" }}
-                      aria-label="Naklonenie doprava/doľava (−45° až +45°)"
-                    />
-
-                    <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-                      <button type="button" onClick={() => setRot2D((r) => r - (10 * Math.PI) / 180)} style={{ ...btnStyle, flex: 1 }}>
-                        −10°
-                      </button>
-                      <button type="button" onClick={() => setRot2D((r) => r + (10 * Math.PI) / 180)} style={{ ...btnStyle, flex: 1 }}>
-                        +10°
-                      </button>
-                    </div>
-
-                    <div style={{ height: 1, background: "rgba(0,0,0,0.08)", marginTop: 4, marginBottom: 4 }} />
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontWeight: 900, fontSize: 13, color: "rgba(0,0,0,0.65)" }}>Dopredu/dozadu</div>
-                      <div style={{ fontSize: 12, fontWeight: 800, color: "rgba(0,0,0,0.55)" }}>
-                        {Math.round((rot3D.pitch * 180) / Math.PI)}°
-                      </div>
-                    </div>
-
-                    <input
-                      type="range"
-                      min={-45}
-                      max={45}
-                      step={1}
-                      value={Math.round((rot3D.pitch * 180) / Math.PI)}
-                      onChange={(e) => {
-                        const deg = Number(e.target.value);
-                        const rad = clamp((deg * Math.PI) / 180, -1.25, 1.25);
-                        setRot3D((p) => ({ ...p, pitch: rad }));
-                      }}
-                      style={{ width: "100%" }}
-                      aria-label="Naklonenie dopredu/dozadu (−45° až +45°)"
-                    />
-
-                    <div style={{ display: "flex", gap: 10, justifyContent: "space-between" }}>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, pitch: clamp(p.pitch - (10 * Math.PI) / 180, -1.25, 1.25) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        −10°
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRot3D((p) => ({ ...p, pitch: clamp(p.pitch + (10 * Math.PI) / 180, -1.25, 1.25) }))}
-                        style={{ ...btnStyle, flex: 1 }}
-                      >
-                        +10°
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
 
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <label style={{ ...btnStyle, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
