@@ -1334,32 +1334,98 @@ export default function Page() {
     let rollMode = false;
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
-    let tiltAxis: "x" | "z" | null = null;
+        let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
-    if (mode === "roll" && bboxRect) {
-      // NAKLOŇ:
-      // - keď chytíš pergolu v strede (podľa X), ťahaním hore/dole meníš pitch (dopredu/dozadu)
-      // - keď chytíš pergolu vľavo alebo vpravo, ťahaním hore/dole zdvihneš celú tú stranu (roll)
-      // Dôležité: ignorujeme hornú/spodnú hranu — rozhoduje iba X pozícia uchopenia.
-      const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      const centerL = 0.33;
-      const centerR = 0.67;
+    // Režim NAKLOŇ (podľa uchopenia):
+    // - stred (po šírke) -> pitch (os X): ťah hore/dole nakloní dopredu/dozadu
+    // - ľavý/pravý bok -> roll (os Z): ťah hore/dole zdvihne chytenú stranu
+    if (mode === "roll") {
+      const THREE = threeModuleRef.current;
 
-      if (relX >= centerL && relX <= centerR) {
-        tiltAxis = "x"; // pitch
-        tiltSign = 1;
-      } else {
-        tiltAxis = "z"; // roll (zdvih strany)
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+      // 1) Primárne: raycast do 3D modelu (najspoľahlivejšie, nezávisí od bboxRect)
+      if (THREE && cameraRef.current && rootRef.current && rendererRef.current) {
+        try {
+          const camera = cameraRef.current;
+          const root = rootRef.current;
+
+          const raycaster = new THREE.Raycaster();
+          const ndc = new THREE.Vector2(
+            (p.x / Math.max(1, canvasW)) * 2 - 1,
+            -((p.y / Math.max(1, canvasH)) * 2 - 1)
+          );
+          raycaster.setFromCamera(ndc, camera);
+
+          const hits = raycaster.intersectObject(root, true);
+          const hit = hits && hits.length ? hits[0] : null;
+
+          if (hit && hit.point) {
+            // preveď hit point do lokálnych súradníc rootu
+            const localP = root.worldToLocal(hit.point.clone());
+
+            // vypočítaj lokálne hranice z world AABB (transformujeme rohy do local)
+            const worldBox = new THREE.Box3().setFromObject(root);
+            const minW = worldBox.min;
+            const maxW = worldBox.max;
+
+            const corners = [
+              new THREE.Vector3(minW.x, minW.y, minW.z),
+              new THREE.Vector3(minW.x, minW.y, maxW.z),
+              new THREE.Vector3(minW.x, maxW.y, minW.z),
+              new THREE.Vector3(minW.x, maxW.y, maxW.z),
+              new THREE.Vector3(maxW.x, minW.y, minW.z),
+              new THREE.Vector3(maxW.x, minW.y, maxW.z),
+              new THREE.Vector3(maxW.x, maxW.y, minW.z),
+              new THREE.Vector3(maxW.x, maxW.y, maxW.z),
+            ];
+
+            let lminX = Infinity, lmaxX = -Infinity;
+            for (const c of corners) {
+              const lc = root.worldToLocal(c.clone());
+              lminX = Math.min(lminX, lc.x);
+              lmaxX = Math.max(lmaxX, lc.x);
+            }
+            const centerX = (lminX + lmaxX) * 0.5;
+            const halfW = Math.max(1e-6, (lmaxX - lminX) * 0.5);
+
+            const relFromCenter = (localP.x - centerX) / halfW; // -1..+1
+            const EDGE = 0.33; // boky = mimo strednej 1/3
+
+            if (Math.abs(relFromCenter) > EDGE) {
+              tiltAxis = "z";
+              tiltSign = relFromCenter > 0 ? 1 : -1; // pravá strana hore = +, ľavá = -
+            } else {
+              tiltAxis = "x"; // stred = pitch
+              tiltSign = 1;
+            }
+          }
+        } catch {
+          // fallback nižšie
+        }
       }
-    } else if (mode === "roll") {
-      // fallback: ak nemáme bbox, správaj sa ako stred (pitch)
-      tiltAxis = "x";
-      tiltSign = 1;
-    }
 
-    dragRef.current = {
+      // 2) Fallback: podľa 2D bbox (ak raycast zlyhá)
+      if (!tiltAxis && bboxRect) {
+        const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
+        const centerL = 0.33;
+        const centerR = 0.67;
+
+        if (relX >= centerL && relX <= centerR) {
+          tiltAxis = "x";
+          tiltSign = 1;
+        } else {
+          tiltAxis = "z";
+          tiltSign = relX > 0.5 ? 1 : -1;
+        }
+      }
+
+      // 3) Posledný fallback: sprav sa ako stred (pitch)
+      if (!tiltAxis) {
+        tiltAxis = "x";
+        tiltSign = 1;
+      }
+    }
+dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1401,10 +1467,11 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // NAKLOŇ podľa miesta uchopenia:
-      // - stred: ťah hore/dole = pitch (dopredu/dozadu)
-      // - boky: ťah hore/dole = zdvih tej strany (roll)
-      const k = 0.01;
+
+      // NAKLOŇ:
+      // - tiltAxis "x" => pitch (stred): ťah hore/dole nakloní dopredu/dozadu
+      // - tiltAxis "z" => roll (bok): ťah hore/dole zdvihne chytenú stranu
+      const k = 0.02;
 
       if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
@@ -1412,11 +1479,10 @@ export default function Page() {
       } else {
         const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
-}
+      }
       return;
     }
-
-    if (currentMode === "resize") {
+if (currentMode === "resize") {
       const rect = bboxRect;
       if (!rect || !dragRef.current.handle) return;
 
