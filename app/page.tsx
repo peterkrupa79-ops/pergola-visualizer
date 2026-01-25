@@ -1337,16 +1337,13 @@ export default function Page() {
         let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // Režim NAKLOŇ – presne podľa zadania:
-    // - chyť STRED -> ťah hore/dole = pitch (os X)
-    // - chyť BOK (ľavo/pravý okraj) -> ťah hore/dole = zdvih tej strany (roll okolo Z)
+    // Režim NAKLOŇ (roll):
+    // - rozhoduje iba miesto uchopenia na ŠÍRKE pergoly (X), nie horná/spodná hrana
+    // - stred: pitch (os X)
+    // - boky: zdvih tej strany (roll okolo osi Z cez rot2D)
     if (mode === "roll") {
-      // relX v rozsahu 0..1 (fallback: celý canvas, ak bbox ešte nie je k dispozícii)
-      const relX = bboxRect
-        ? (p.x - bboxRect.x) / Math.max(1, bboxRect.w)
-        : p.x / Math.max(1, canvasW);
+      const relX = bboxRect ? (p.x - bboxRect.x) / Math.max(1, bboxRect.w) : p.x / Math.max(1, canvasW);
 
-      // Stredná zóna (1/3 šírky) = pitch
       const centerL = 0.33;
       const centerR = 0.67;
 
@@ -1354,9 +1351,8 @@ export default function Page() {
         tiltAxis = "x"; // pitch
         tiltSign = 1;
       } else {
-        tiltAxis = "z"; // roll
-        // pravý bok hore = +, ľavý bok hore = -
-        tiltSign = relX > 0.5 ? 1 : -1;
+        tiltAxis = "z"; // roll (zdvih strany)
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
     }
 dragRef.current = {
@@ -1401,11 +1397,10 @@ dragRef.current = {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-
-      // NAKLOŇ:
-      // - boky: zdvih tej strany (roll okolo Z) podľa tiltSign
-      // - stred: pitch dopredu/dozadu (os X), bez tiltSign (symetricky)
-      const k = 0.02; // citlivosť
+      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
+      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
+      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
+      const k = 0.01;
 
       if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
