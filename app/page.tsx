@@ -1336,29 +1336,29 @@ export default function Page() {
 
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
-
-    // Režim NAKLOŇ:
-    // - stred: ťah hore/dole = pitch (dopredu/dozadu)
-    // - ľavá/pravá strana: ťah hore/dole = roll (zdvih tej strany)
     if (mode === "roll" && bboxRect) {
+      // NAKLOŇ – výber osi podľa miesta uchopenia:
+      // - stred (väčšina plochy) => pitch (dopredu/dozadu)
+      // - ľavý / pravý okraj => roll (zdvih tej strany)
       const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
+      const edgeZone = 0.22; // 22% šírky na každej strane
 
-      const centerL = 0.33;
-      const centerR = 0.67;
-
-      if (relX >= centerL && relX <= centerR) {
+      if (relX <= edgeZone) {
+        tiltAxis = "z"; // roll
+        tiltSign = -1; // ľavá strana hore
+      } else if (relX >= 1 - edgeZone) {
+        tiltAxis = "z"; // roll
+        tiltSign = 1; // pravá strana hore
+      } else {
         tiltAxis = "x"; // pitch
         tiltSign = 1;
-      } else {
-        tiltAxis = "z"; // roll
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
     } else if (mode === "roll") {
       tiltAxis = "x";
       tiltSign = 1;
     }
 
-dragRef.current = {
+    dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1400,18 +1400,16 @@ dragRef.current = {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
+      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
+      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
+      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
+      const k = 0.01;
 
-      // Režim NAKLOŇ:
-      // - stred: ťah hore/dole = pitch (dopredu/dozadu)
-      // - ľavá/pravá strana: ťah hore/dole = roll (zdvih tej strany)
-      const k = 0.02;
-      const axis = dragRef.current.tiltAxis ?? "x";
-
-      if (axis === "z") {
+      if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
+        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
