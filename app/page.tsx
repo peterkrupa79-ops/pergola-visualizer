@@ -1334,28 +1334,28 @@ export default function Page() {
     let rollMode = false;
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
-        let tiltAxis: "x" | "z" | null = null;
+    let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
+    if (mode === "roll" && bboxRect) {
+      const l = Math.abs(p.x - bboxRect.x);
+      const r = Math.abs(p.x - (bboxRect.x + bboxRect.w));
+      const t = Math.abs(p.y - bboxRect.y);
+      const b = Math.abs(p.y - (bboxRect.y + bboxRect.h));
+      const min = Math.min(l, r, t, b);
 
-    // Režim NAKLOŇ (roll):
-    // - rozhoduje iba miesto uchopenia na ŠÍRKE pergoly (X), nie horná/spodná hrana
-    // - stred: pitch (os X)
-    // - boky: zdvih tej strany (roll okolo osi Z cez rot2D)
-    if (mode === "roll") {
-      const relX = bboxRect ? (p.x - bboxRect.x) / Math.max(1, bboxRect.w) : p.x / Math.max(1, canvasW);
-
-      const centerL = 0.33;
-      const centerR = 0.67;
-
-      if (relX >= centerL && relX <= centerR) {
-        tiltAxis = "x"; // pitch
-        tiltSign = 1;
+      if (min === l || min === r) {
+        tiltAxis = "z";
+        tiltSign = min === r ? 1 : -1; // pravý okraj hore = rot2D +, ľavý okraj hore = rot2D -
       } else {
-        tiltAxis = "z"; // roll (zdvih strany)
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+        tiltAxis = "x";
+        tiltSign = min === b ? 1 : -1; // spodná hrana hore = pitch +, horná hrana hore = pitch -
       }
+    } else if (mode === "roll") {
+      tiltAxis = "x";
+      tiltSign = 1;
     }
-dragRef.current = {
+
+    dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1406,7 +1406,7 @@ dragRef.current = {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
+        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
