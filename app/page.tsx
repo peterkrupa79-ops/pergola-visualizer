@@ -1334,33 +1334,35 @@ export default function Page() {
     let rollMode = false;
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
-    let tiltAxis: "x" | "z" | null = null;
+        let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // NAKLOŇ: os sa určuje LEN podľa toho, či chytíš pergolu v strede alebo na boku (ľavo/pravá strana).
-    // Horná/spodná hrana sa úmyselne ignoruje (inak to takmer vždy skončí na pitch).
+    // Režim NAKLOŇ:
+    // - chytím STRED: ťahaním hore/dole nakláňam dopredu/dozadu (pitch = os X)
+    // - chytím BOK (vľavo/vpravo): ťahaním hore/dole zdvihnem tú stranu (roll = os Z)
+    // POZN.: ignorujeme hornú/spodnú hranu – rozhoduje iba X pozícia uchopenia.
     if (mode === "roll" && bboxRect) {
       const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      // Boky = zdvih tej strany (roll okolo osi Z). Stred = pitch (dopredu/dozadu).
-      const edgeZone = 0.25; // 25% zľava / sprava = "bok"
-      if (relX <= edgeZone) {
-        tiltAxis = "z"; // roll
-        tiltSign = -1;  // ľavá strana hore
-      } else if (relX >= 1 - edgeZone) {
-        tiltAxis = "z"; // roll
-        tiltSign = 1;   // pravá strana hore
-      } else {
-        tiltAxis = "x"; // pitch
+      const edgeZone = 0.22; // 22% zľava + 22% sprava = "boky"
+      const centerL = 0.5 - (0.5 - edgeZone); // = 0.22
+      const centerR = 0.5 + (0.5 - edgeZone); // = 0.78
+
+      if (relX > edgeZone && relX < 1 - edgeZone) {
+        // STRED
+        tiltAxis = "x";
         tiltSign = 1;
+      } else {
+        // BOKY
+        tiltAxis = "z";
+        tiltSign = relX >= 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
       }
     } else if (mode === "roll") {
-      // fallback bez bboxu: správa sa ako stred (pitch)
+      // fallback: správa sa ako stred (pitch)
       tiltAxis = "x";
       tiltSign = 1;
     }
-
-    dragRef.current = {
+dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1402,19 +1404,21 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // NAKLOŇ podľa miesta uchopenia:
-      // - stred: ťah hore/dole = pitch (dopredu/dozadu)
-      // - boky (ľavo/pravá strana): ťah hore/dole = roll (zdvih tej strany)
+      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
+      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
+      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
       const k = 0.01;
 
-      if (dragRef.current.tiltAxis === "z") {
+            if (dragRef.current.tiltAxis === "z") {
+        // BOKY: zdvihni ľavú/pravú stranu (roll okolo osi Z)
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
+        // STRED: pitch dopredu/dozadu (bez tiltSign)
         const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
-      return;
+return;
     }
 
     if (currentMode === "resize") {
