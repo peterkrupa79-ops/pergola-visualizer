@@ -1352,7 +1352,8 @@ export default function Page() {
         tiltSign = 1;
       } else {
         tiltAxis = "z"; // roll
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+        // pravá strana hore = +, ľavá strana hore = -
+        tiltSign = relX > 0.5 ? 1 : -1;
       }
     } else if (mode === "roll") {
       // ak nemáme bbox, správaj sa ako "stred" (pitch)
@@ -1402,16 +1403,19 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
-      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
-      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
-      const k = 0.01;
 
-      if (dragRef.current.tiltAxis === "z") {
+      // NAKLOŇ:
+      // - stred: ťah hore/dole = pitch (dopredu/dozadu)
+      // - ľavá/pravá strana: ťah hore/dole = roll (zdvih tej strany)
+      const k = 0.02;
+
+      const axis = dragRef.current.tiltAxis ?? "x";
+
+      if (axis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
