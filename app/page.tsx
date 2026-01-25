@@ -1337,31 +1337,28 @@ export default function Page() {
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // NAKLOŇ:
-    // - stred (podľa X): ťah hore/dole = pitch (dopredu/dozadu)
-    // - ľavý/pravý okraj (podľa X): ťah hore/dole = zdvih tej strany (roll)
-    // Pozn.: hornú/spodnú hranu úplne ignorujeme (presne podľa požiadavky).
+    // NAKLOŇ – pravidlo podľa uchopenia (iba X pozícia):
+    // - stred pergoly: hore/dole = pitch (os X)
+    // - ľavý/pravý okraj: hore/dole = zdvihni tú stranu (roll okolo osi Z)
     if (mode === "roll" && bboxRect) {
       const relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
 
-      const edgeZone = 0.22; // 22% zľava a sprava = "bok"
-      const centerL = edgeZone;
-      const centerR = 1 - edgeZone;
+      const centerL = 0.33;
+      const centerR = 0.67;
 
       if (relX >= centerL && relX <= centerR) {
         tiltAxis = "x"; // pitch
         tiltSign = 1;
       } else {
         tiltAxis = "z"; // roll
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+        // pravý okraj hore = rot2D +, ľavý okraj hore = rot2D -
+        tiltSign = relX > 0.5 ? 1 : -1;
       }
     } else if (mode === "roll") {
       tiltAxis = "x";
       tiltSign = 1;
     }
-
     dragRef.current = {
-
       active: true,
       start: p,
       startPos: pos,
@@ -1403,17 +1400,18 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-
-      // NAKLOŇ (podľa toho, kde si chytil na šírke):
-      // - tiltAxis === "z" (boky): ťah hore zdvihne tú stranu (roll)
-      // - tiltAxis === "x" (stred): ťah hore/dole mení pitch (dopredu/dozadu)
-      const k = 0.02;
+      // NAKLOŇ:
+      // - stred: hore/dole = pitch
+      // - ľavý/pravý okraj: hore/dole = zdvih tej strany (roll)
+      const kPitch = 0.012;
+      const kRoll = 0.012;
 
       if (dragRef.current.tiltAxis === "z") {
-        const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
-        setRot2D(clamp(roll, -1.0, 1.0));
+        const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * kRoll;
+        setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
+        // pitch je symetrický (bez tiltSign)
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
