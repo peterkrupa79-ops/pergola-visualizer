@@ -1295,7 +1295,7 @@ export default function Page() {
     handle: HandleId | null;
     modeAtDown: Mode;
     rollMode: boolean;
-    tiltAxis: "x" | "z" | null;
+    tiltAxis: "pitch" | "roll" | null;
     tiltSign: number;
   }>({
     active: false,
@@ -1339,8 +1339,26 @@ export default function Page() {
       }
     }
 
-    // Pri OTOČ a NAKLOŇ chceme plynulé ovládanie v oboch smeroch (X aj Y),
-    // nie "smart" výber hrany. Užívateľ tým vie doladiť orientáciu presnejšie.
+    // Pri OTOČ a NAKLOŇ chceme intuitívne ovládanie.
+// - OTOČ: ťah doľava/doprava = yaw, hore/dole = pitch
+// - NAKLOŇ: podľa miesta uchopenia:
+//    * keď chytíš pergolu "za stred" -> nakláňa sa dopredu/dozadu (pitch)
+//    * keď chytíš pergolu vľavo/vpravo -> zdvíha sa tá strana (roll)
+    let tiltAxis: "pitch" | "roll" | null = null;
+    let tiltSign = 1;
+
+    if (mode === "roll" && bboxRect) {
+      const rel = (p.x - bboxRect.x) / Math.max(1, bboxRect.w); // 0..1
+      const CENTER_BAND = 0.30; // 30% okolo stredu je "stred"
+      if (Math.abs(rel - 0.5) <= CENTER_BAND / 2) {
+        tiltAxis = "pitch";
+      } else {
+        tiltAxis = "roll";
+        // ak chytíš vpravo, ťah hore má zdvihnúť pravú stranu (opačný smer než vľavo)
+        tiltSign = rel > 0.5 ? -1 : 1;
+      }
+    }
+
     dragRef.current = {
       active: true,
       start: p,
@@ -1351,8 +1369,8 @@ export default function Page() {
       handle: null,
       modeAtDown: mode as Mode,
       rollMode: false,
-      tiltAxis: null,
-      tiltSign: 1,
+      tiltAxis,
+      tiltSign,
     };
   }
 
@@ -1387,16 +1405,20 @@ export default function Page() {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // Nakloň: plynule v oboch smeroch:
-      // - ťah doľava/doprava = roll (okolo osi Z)  [naklonenie doprava/doľava]
-      // - ťah hore/dole = pitch (okolo osi X)      [naklonenie dopredu/dozadu]
+
+      // NAKLOŇ (podľa miesta uchopenia):
+      // - keď chytíš "za stred" -> ťah hore/dole = pitch (dopredu/dozadu)
+      // - keď chytíš vľavo/vpravo -> ťah hore/dole = roll (zdvihne danú stranu)
       const k = 0.01;
 
-      const roll = dragRef.current.startRot2D + dx * k;
-      const pitch = clamp(dragRef.current.startRot3D.pitch + (-dy) * k, -1.25, 1.25);
-
-      setRot2D(roll);
-      setRot3D((prev) => ({ ...prev, pitch }));
+      const axis = dragRef.current.tiltAxis; // nastavené v onPointerDown
+      if (axis === "pitch") {
+        const pitch = clamp(dragRef.current.startRot3D.pitch + (-dy) * k, -1.25, 1.25);
+        setRot3D((prev) => ({ ...prev, pitch }));
+      } else {
+        const roll = dragRef.current.startRot2D + (-dy) * k * (dragRef.current.tiltSign || 1);
+        setRot2D(roll);
+      }
       return;
     }
 
