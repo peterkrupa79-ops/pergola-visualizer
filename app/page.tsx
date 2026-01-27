@@ -732,7 +732,7 @@ export default function Page() {
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
-  const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 });
+  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12 })
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
   // mobile defaults
@@ -1418,22 +1418,25 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ: ovládanie len hore/dole (dy) – bez inverzie pocitu:
-      // kurzor hore => pergola "hore" (väčší náklon/zdvih).
+      // NAKLOŇ (GLB 3D): vždy lokálne osi pergoly, funguje pri akomkoľvek otočení (yaw).
+      // - dy (hore/dole) -> pitch (X)
+      // - dx (doľava/doprava) -> roll (Z)
+      // Ovládanie nie je invertované: ťah hore => pergola ide hore (väčší pitch).
+      const dx = p.x - prev.x;
       const dy = p.y - prev.y;
-      const k = 0.01;
 
-      const axis = dragRef.current.tiltAxis ?? "x";
+      const kPitch = 0.008;
+      const kRoll = 0.008;
 
-      if (axis === "z") {
-        // Roll: zdvih strany podľa toho, či držíš ľavú alebo pravú hranu.
-        const roll = dragRef.current.startRot2D + (-dy) * k * (dragRef.current.tiltSign ?? 1);
-        setRot2D(clamp(roll, -1.25, 1.25));
-      } else {
-        // Pitch: dopredu/dozadu (bez tiltSign)
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
-        setRot3D((prevR) => ({ ...prevR, pitch: clamp(pitch, -1.25, 1.25) }));
-      }
+      const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
+      const roll = (dragRef.current.startRot3D.roll ?? 0) + (dx) * kRoll;
+
+      setRot3D((r) => ({
+        ...r,
+        pitch: clamp(pitch, -1.25, 1.25),
+        roll: clamp(roll, -1.25, 1.25),
+      }));
+
       return;
     }
 
