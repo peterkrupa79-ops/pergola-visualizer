@@ -732,7 +732,7 @@ export default function Page() {
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
-  const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12 })
+  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12 })
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
   // mobile defaults
@@ -1422,21 +1422,22 @@ dragRef.current = {
       // - dy (hore/dole) -> pitch (X)
       // - dx (doľava/doprava) -> roll (Z)
       // Ovládanie nie je invertované: ťah hore => pergola ide hore (väčší pitch).
-      // použijeme dx/dy už spočítané od začiatku ťahu (start)
+      const dx = p.x - prev.x;
+      const dy = p.y - prev.y;
 
       const kPitch = 0.008;
       const kRoll = 0.008;
 
-const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
-const roll = dragRef.current.startRot2D + (dx) * kRoll;
+      const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
+      const roll = (dragRef.current.startRot3D.roll ?? 0) + (dx) * kRoll;
 
-setRot3D((r) => ({
-  ...r,
-  pitch: clamp(pitch, -1.25, 1.25),
-}));
-setRot2D(clamp(roll, -1.25, 1.25));
+      setRot3D((r) => ({
+        ...r,
+        pitch: clamp(pitch, -1.25, 1.25),
+        roll: clamp(roll, -1.25, 1.25),
+      }));
 
-return;
+      return;
     }
 
 if (currentMode === "resize") {
