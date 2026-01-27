@@ -1344,27 +1344,35 @@ export default function Page() {
     // Režim NAKLOŇ: os vyberieme pri chytení (boky = roll, stred = pitch).
     // Následne v NAKLOŇ používame iba ťah hore/dole (dy) – prirodzené a presné.
     if (mode === "roll") {
-      // Preferujeme bboxRect pergoly; ak nie je, použijeme celý canvas ako fallback.
-      // V tvojom zobrazení je "dlhšia strana" viazaná na os Y (hore/dole),
-      // preto sa rozhodujeme podľa RELY (nie RELX).
-      // - stred dlhšej strany => pitch (naklon dopredu/dozadu)
-      // - okraje (hore/dole) => roll (zdvih strany)
-      const edgeZone = 0.24; // 24% hore + 24% dole = zd roll
+      // NAKLOŇ: vyberieme os podľa toho, ku ktorej hrane pergoly je miesto uchopenia bližšie.
+      // - bližšie k ľavej/prav ej hrane => zdvih strany (roll)
+      // - bližšie k hornej/spodnej hrane => naklon dopredu/dozadu (pitch)
+      //
+      // Toto funguje stabilne aj keď je pergola otočená (yaw) a bbox má iný pomer strán.
+      let relX = 0.5;
       let relY = 0.5;
 
       if (bboxRect) {
+        relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
         relY = (p.y - bboxRect.y) / Math.max(1, bboxRect.h);
       } else if (canvasRef.current) {
         const r = canvasRef.current.getBoundingClientRect();
+        relX = (p.x - r.left) / Math.max(1, r.width);
         relY = (p.y - r.top) / Math.max(1, r.height);
       }
 
-      if (relY < edgeZone || relY > 1 - edgeZone) {
-        tiltAxis = "z";                 // roll (zdvih strany)
-        tiltSign = relY > 0.5 ? 1 : -1; // spodok vs vrch
+      // vzdialenosť k najbližšej hrane (0..0.5)
+      const dLR = Math.min(relX, 1 - relX);
+      const dTB = Math.min(relY, 1 - relY);
+
+      if (dLR < dTB) {
+        // bližšie k ľavej/prav ej hrane => roll (zdvih strany)
+        tiltAxis = "z";
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá vs ľavá strana
       } else {
-        tiltAxis = "x"; // pitch (dopredu/dozadu)
-        tiltSign = 1;
+        // bližšie k hornej/spodnej hrane => pitch
+        tiltAxis = "x";
+        tiltSign = relY > 0.5 ? 1 : -1; // spodok vs vrch (pre prípadný smer)
       }
     }
 dragRef.current = {
@@ -1410,20 +1418,21 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ:
-      // - stred (tiltAxis="x") => pitch hore/dole
-      // - boky  (tiltAxis="z") => zdvih strany (roll) hore/dole
-      // Ovládanie nie je invertované: pergola sa hýbe v smere kurzora.
+      // NAKLOŇ: ovládanie len hore/dole (dy) – bez inverzie pocitu:
+      // kurzor hore => pergola "hore" (väčší náklon/zdvih).
+      const dy = p.y - prev.y;
       const k = 0.01;
 
       const axis = dragRef.current.tiltAxis ?? "x";
 
       if (axis === "z") {
-        const roll = dragRef.current.startRot2D + dy * k * (dragRef.current.tiltSign ?? 1);
+        // Roll: zdvih strany podľa toho, či držíš ľavú alebo pravú hranu.
+        const roll = dragRef.current.startRot2D + (-dy) * k * (dragRef.current.tiltSign ?? 1);
         setRot2D(clamp(roll, -1.25, 1.25));
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + dy * k;
-        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
+        // Pitch: dopredu/dozadu (bez tiltSign)
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
+        setRot3D((prevR) => ({ ...prevR, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
     }
