@@ -1341,11 +1341,27 @@ export default function Page() {
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // Režim NAKLOŇ: ovládaj pitch+roll naraz (dx/dy).
-    // Už nepoužívame pravidlá bok/stred ani výber osi podľa hrán.
+    // Režim NAKLOŇ: os vyberieme pri chytení (boky = roll, stred = pitch).
+    // Následne v NAKLOŇ používame iba ťah hore/dole (dy) – prirodzené a presné.
     if (mode === "roll") {
-      tiltAxis = null;
-      tiltSign = 1;
+      // Preferujeme bboxRect pergoly; ak nie je, použijeme celý canvas ako fallback.
+      const edgeZone = 0.24; // 24% na bokoch = zdvih strany (roll)
+      let relX = 0.5;
+
+      if (bboxRect) {
+        relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
+      } else if (canvasRef.current) {
+        const r = canvasRef.current.getBoundingClientRect();
+        relX = (p.x - r.left) / Math.max(1, r.width);
+      }
+
+      if (relX < edgeZone || relX > 1 - edgeZone) {
+        tiltAxis = "z";                 // roll (zdvih strany)
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana vs ľavá strana
+      } else {
+        tiltAxis = "x"; // pitch (dopredu/dozadu)
+        tiltSign = 1;
+      }
     }
 dragRef.current = {
       active: true,
@@ -1390,18 +1406,21 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ: 4 smery v akomkoľvek otočení (yaw):
-      // - dy (hore/dole) -> pitch (X)
-      // - dx (vľavo/vpravo) -> roll (Z)
-      // Rotácie sa skladajú v applyTransformsForCurrentState cez order "YXZ".
-      const kPitch = 0.01;
-      const kRoll = 0.01;
+      // NAKLOŇ:
+      // - stred (tiltAxis="x") => pitch hore/dole
+      // - boky  (tiltAxis="z") => zdvih strany (roll) hore/dole
+      // Ovládanie nie je invertované: pergola sa hýbe v smere kurzora.
+      const k = 0.01;
 
-      const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
-      const roll = dragRef.current.startRot2D + dx * kRoll;
+      const axis = dragRef.current.tiltAxis ?? "x";
 
-      setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
-      setRot2D(clamp(roll, -1.25, 1.25));
+      if (axis === "z") {
+        const roll = dragRef.current.startRot2D + dy * k * (dragRef.current.tiltSign ?? 1);
+        setRot2D(clamp(roll, -1.25, 1.25));
+      } else {
+        const pitch = dragRef.current.startRot3D.pitch + dy * k;
+        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
+      }
       return;
     }
 
