@@ -732,7 +732,7 @@ export default function Page() {
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
-  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12 })
+  const [rot3D, setRot3D] = useState({ yaw: 0.35, pitch: -0.12, roll: 0 });
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
   // mobile defaults
@@ -943,7 +943,7 @@ export default function Page() {
 
   function resetAll() {
     setScalePct(isMobileRef.current ? { x: 75, y: 75, z: 75 } : { x: 100, y: 100, z: 100 });
-    setRot3D({ yaw: 0.35, pitch: -0.12 });
+    setRot3D({ yaw: 0.35, pitch: -0.12, roll: 0 });
     setRot2D(0);
     setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
     setPerspective(defaultPerspective(isMobileRef.current));
@@ -1131,11 +1131,20 @@ export default function Page() {
       root.position.set(worldX, worldY, 0);
     }
 
-    root.rotation.order = "YXZ";
-
-    // Apply yaw (Y) first, then pitch (X), then roll (Z) in pergola-local space.
-    // This ensures tilt works correctly in any yaw orientation.
-    root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
+    // ===== Správna 3D rotácia (yaw + tilt v lokálnych osiach) =====
+    // Chceme, aby NAKLON (pitch + roll) fungoval rovnako pri akomkoľvek yaw.
+    // Preto skladáme rotáciu ako: Q = Q_yaw * Q_tilt
+    // kde Q_tilt je (pitch okolo lokálnej X) + (roll okolo lokálnej Z) a neobsahuje yaw.
+    const THREE2 = threeModuleRef.current;
+    if (THREE2) {
+      const yawQuat = new THREE2.Quaternion().setFromAxisAngle(new THREE2.Vector3(0, 1, 0), rot3D.yaw);
+      const tiltQuat = new THREE2.Quaternion().setFromEuler(new THREE2.Euler(rot3D.pitch, 0, rot3D.roll, "YXZ"));
+      root.quaternion.copy(yawQuat).multiply(tiltQuat);
+    } else {
+      // Fallback (ak by THREE nebolo dostupné)
+      root.rotation.order = "YXZ";
+      root.rotation.set(rot3D.pitch, rot3D.yaw, rot3D.roll);
+    }
   }
 
   function draw() {
@@ -1285,7 +1294,7 @@ export default function Page() {
     active: boolean;
     start: Vec2;
     startPos: Vec2;
-    startRot3D: { yaw: number; pitch: number };
+    startRot3D: { yaw: number; pitch: number; roll: number };
     startRot2D: number;
     startScalePct: { x: number; y: number; z: number };
     handle: HandleId | null;
@@ -1297,7 +1306,7 @@ export default function Page() {
     active: false,
     start: { x: 0, y: 0 },
     startPos: { x: 0.5, y: 0.72 },
-    startRot3D: { yaw: 0.35, pitch: -0.12 },
+    startRot3D: { yaw: 0.35, pitch: -0.12, roll: 0 },
     startRot2D: 0,
     startScalePct: { x: 100, y: 100, z: 100 },
     handle: null,
@@ -1341,40 +1350,11 @@ export default function Page() {
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // Režim NAKLOŇ: os vyberieme pri chytení (boky = roll, stred = pitch).
-    // Následne v NAKLOŇ používame iba ťah hore/dole (dy) – prirodzené a presné.
-    if (mode === "roll") {
-      // NAKLOŇ: vyberieme os podľa toho, ku ktorej hrane pergoly je miesto uchopenia bližšie.
-      // - bližšie k ľavej/prav ej hrane => zdvih strany (roll)
-      // - bližšie k hornej/spodnej hrane => naklon dopredu/dozadu (pitch)
-      //
-      // Toto funguje stabilne aj keď je pergola otočená (yaw) a bbox má iný pomer strán.
-      let relX = 0.5;
-      let relY = 0.5;
-
-      if (bboxRect) {
-        relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
-        relY = (p.y - bboxRect.y) / Math.max(1, bboxRect.h);
-      } else if (canvasRef.current) {
-        const r = canvasRef.current.getBoundingClientRect();
-        relX = (p.x - r.left) / Math.max(1, r.width);
-        relY = (p.y - r.top) / Math.max(1, r.height);
-      }
-
-      // vzdialenosť k najbližšej hrane (0..0.5)
-      const dLR = Math.min(relX, 1 - relX);
-      const dTB = Math.min(relY, 1 - relY);
-
-      if (dLR < dTB) {
-        // bližšie k ľavej/prav ej hrane => roll (zdvih strany)
-        tiltAxis = "z";
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá vs ľavá strana
-      } else {
-        // bližšie k hornej/spodnej hrane => pitch
-        tiltAxis = "x";
-        tiltSign = relY > 0.5 ? 1 : -1; // spodok vs vrch (pre prípadný smer)
-      }
-    }
+    // Režim NAKLOŇ: žiadne heuristiky typu "stred vs bok".
+    // V režime "roll" mapujeme jeden drag vždy na pitch + roll naraz:
+    //   dy (hore/dole) -> pitch
+    //   dx (doľava/doprava) -> roll
+    // Správne lokálne osi (nezávislé od yaw) riešime v applyTransformsForCurrentState cez quaterniony.
 dragRef.current = {
       active: true,
       start: p,
@@ -1428,7 +1408,7 @@ dragRef.current = {
       const kRoll = 0.008;
 
       const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
-      const roll = (dragRef.current.startRot3D.roll ?? 0) + (dx) * kRoll;
+      const roll = dragRef.current.startRot3D.roll + dx * kRoll;
 
       setRot3D((r) => ({
         ...r,
