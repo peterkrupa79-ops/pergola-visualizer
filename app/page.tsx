@@ -1334,77 +1334,29 @@ export default function Page() {
     let rollMode = false;
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
-        let tiltAxis: "x" | "z" | null = null;
+    let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
-    // Režim NAKLOŇ (tilt):
-    // - stred (cca 1/3 šírky) = pitch (os X)
-    // - boky = zdvih tej strany (roll okolo osi Z -> rot2D)
-    //
-    // Dôležité: bboxRect z 2D môže byť oneskorený / nepresný pri perspektíve,
-    // preto primárne používame projekčný bbox z 3D objektu (rootRef + kamera).
     if (mode === "roll") {
-      type Rect = { x: number; y: number; w: number; h: number };
-      let rect: Rect | null = null;
+      // NAKLOŇ: rozhoduj IBA podľa toho, či user chytil stred alebo boky (podľa X).
+      // Horná/spodná hrana sa IGNORUJE.
+      const ref = bboxRect ?? { x: 0, y: 0, w: canvasW, h: canvasH };
+      const relX = (p.x - ref.x) / Math.max(1, ref.w);
 
-      const THREE = threeModuleRef.current;
-      const camera = cameraRef.current;
-      const root = rootRef.current;
-
-      if (THREE && camera && root) {
-        try {
-          const box = new THREE.Box3().setFromObject(root);
-          if (isFinite(box.min.x) && isFinite(box.max.x)) {
-            const corners = [
-              new THREE.Vector3(box.min.x, box.min.y, box.min.z),
-              new THREE.Vector3(box.min.x, box.min.y, box.max.z),
-              new THREE.Vector3(box.min.x, box.max.y, box.min.z),
-              new THREE.Vector3(box.min.x, box.max.y, box.max.z),
-              new THREE.Vector3(box.max.x, box.min.y, box.min.z),
-              new THREE.Vector3(box.max.x, box.min.y, box.max.z),
-              new THREE.Vector3(box.max.x, box.max.y, box.min.z),
-              new THREE.Vector3(box.max.x, box.max.y, box.max.z),
-            ];
-
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            for (const v of corners) {
-              const pv = v.clone().project(camera);
-              const sx = (pv.x * 0.5 + 0.5) * canvasW;
-              const sy = (1 - (pv.y * 0.5 + 0.5)) * canvasH;
-              minX = Math.min(minX, sx);
-              minY = Math.min(minY, sy);
-              maxX = Math.max(maxX, sx);
-              maxY = Math.max(maxY, sy);
-            }
-
-            const w = Math.max(1, maxX - minX);
-            const h = Math.max(1, maxY - minY);
-            rect = { x: minX, y: minY, w, h };
-          }
-        } catch {
-          rect = null;
-        }
-      }
-
-      // fallback na 2D bbox (ak je k dispozícii)
-      if (!rect && bboxRect) rect = { x: bboxRect.x, y: bboxRect.y, w: bboxRect.w, h: bboxRect.h };
-
-      // posledný fallback: celý canvas (neideálne, ale aspoň funguje)
-      if (!rect) rect = { x: 0, y: 0, w: canvasW, h: canvasH };
-
-      const relX = (p.x - rect.x) / Math.max(1, rect.w);
-
-      const centerL = 0.33;
-      const centerR = 0.67;
-
-      if (relX >= centerL && relX <= centerR) {
-        tiltAxis = "x"; // pitch
-        tiltSign = 1;
+      // boky = zdvih strany (roll / rot2D), stred = pitch
+      const edgeZone = 0.22; // 22% zľava a 22% sprava = boky
+      if (relX <= edgeZone) {
+        tiltAxis = "z";      // roll
+        tiltSign = -1;       // ľavá strana hore = rot2D -
+      } else if (relX >= 1 - edgeZone) {
+        tiltAxis = "z";      // roll
+        tiltSign = 1;        // pravá strana hore = rot2D +
       } else {
-        tiltAxis = "z"; // roll
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+        tiltAxis = "x";      // pitch
+        tiltSign = 1;
       }
     }
+
 dragRef.current = {
       active: true,
       start: p,
@@ -1447,16 +1399,16 @@ dragRef.current = {
 
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
-      // Teeter-totter nakláňanie podľa toho, ktorú hranu chytíš:
-      // - ľavý/pravý okraj: ťah hore zdvihne tú stranu (rot2D / roll)
-      // - horná/spodná hrana: ťah hore zdvihne tú stranu (pitch)
-      const k = 0.01;
+
+      // NAKLOŇ:
+      // - boky (tiltAxis="z"): ťah hore/dole zdvihuje chytenú stranu (roll = rot2D)
+      // - stred (tiltAxis="x"): ťah hore/dole nakláňa dopredu/dozadu (pitch)
+      const k = 0.02;
 
       if (dragRef.current.tiltAxis === "z") {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        // stred: pitch hore/dole (symetricky, bez tiltSign)
         const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
