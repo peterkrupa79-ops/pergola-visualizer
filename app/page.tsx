@@ -1345,19 +1345,23 @@ export default function Page() {
     // Následne v NAKLOŇ používame iba ťah hore/dole (dy) – prirodzené a presné.
     if (mode === "roll") {
       // Preferujeme bboxRect pergoly; ak nie je, použijeme celý canvas ako fallback.
-      const edgeZone = 0.24; // 24% na bokoch = zdvih strany (roll)
-      let relX = 0.5;
+      // V tvojom zobrazení je "dlhšia strana" viazaná na os Y (hore/dole),
+      // preto sa rozhodujeme podľa RELY (nie RELX).
+      // - stred dlhšej strany => pitch (naklon dopredu/dozadu)
+      // - okraje (hore/dole) => roll (zdvih strany)
+      const edgeZone = 0.24; // 24% hore + 24% dole = zd roll
+      let relY = 0.5;
 
       if (bboxRect) {
-        relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
+        relY = (p.y - bboxRect.y) / Math.max(1, bboxRect.h);
       } else if (canvasRef.current) {
         const r = canvasRef.current.getBoundingClientRect();
-        relX = (p.x - r.left) / Math.max(1, r.width);
+        relY = (p.y - r.top) / Math.max(1, r.height);
       }
 
-      if (relX < edgeZone || relX > 1 - edgeZone) {
+      if (relY < edgeZone || relY > 1 - edgeZone) {
         tiltAxis = "z";                 // roll (zdvih strany)
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana vs ľavá strana
+        tiltSign = relY > 0.5 ? 1 : -1; // spodok vs vrch
       } else {
         tiltAxis = "x"; // pitch (dopredu/dozadu)
         tiltSign = 1;
