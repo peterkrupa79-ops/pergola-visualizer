@@ -1422,8 +1422,7 @@ dragRef.current = {
       // - dy (hore/dole) -> pitch (X)
       // - dx (doľava/doprava) -> roll (Z)
       // Ovládanie nie je invertované: ťah hore => pergola ide hore (väčší pitch).
-      const dx = p.x - prev.x;
-      const dy = p.y - prev.y;
+      // použijeme dx/dy už spočítané od začiatku ťahu (start)
 
       const kPitch = 0.008;
       const kRoll = 0.008;
