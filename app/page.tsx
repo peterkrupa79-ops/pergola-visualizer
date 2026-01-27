@@ -1334,28 +1334,78 @@ export default function Page() {
     let rollMode = false;
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
-    let tiltAxis: "x" | "z" | null = null;
+        let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
-    if (mode === "roll" && bboxRect) {
-      const l = Math.abs(p.x - bboxRect.x);
-      const r = Math.abs(p.x - (bboxRect.x + bboxRect.w));
-      const t = Math.abs(p.y - bboxRect.y);
-      const b = Math.abs(p.y - (bboxRect.y + bboxRect.h));
-      const min = Math.min(l, r, t, b);
 
-      if (min === l || min === r) {
-        tiltAxis = "z";
-        tiltSign = min === r ? 1 : -1; // pravý okraj hore = rot2D +, ľavý okraj hore = rot2D -
-      } else {
-        tiltAxis = "x";
-        tiltSign = min === b ? 1 : -1; // spodná hrana hore = pitch +, horná hrana hore = pitch -
+    // Režim NAKLOŇ (tilt):
+    // - stred (cca 1/3 šírky) = pitch (os X)
+    // - boky = zdvih tej strany (roll okolo osi Z -> rot2D)
+    //
+    // Dôležité: bboxRect z 2D môže byť oneskorený / nepresný pri perspektíve,
+    // preto primárne používame projekčný bbox z 3D objektu (rootRef + kamera).
+    if (mode === "roll") {
+      type Rect = { x: number; y: number; w: number; h: number };
+      let rect: Rect | null = null;
+
+      const THREE = threeModuleRef.current;
+      const camera = cameraRef.current;
+      const root = rootRef.current;
+
+      if (THREE && camera && root) {
+        try {
+          const box = new THREE.Box3().setFromObject(root);
+          if (isFinite(box.min.x) && isFinite(box.max.x)) {
+            const corners = [
+              new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+              new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+              new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+              new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+              new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+              new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+              new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+              new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+            ];
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const v of corners) {
+              const pv = v.clone().project(camera);
+              const sx = (pv.x * 0.5 + 0.5) * canvasW;
+              const sy = (1 - (pv.y * 0.5 + 0.5)) * canvasH;
+              minX = Math.min(minX, sx);
+              minY = Math.min(minY, sy);
+              maxX = Math.max(maxX, sx);
+              maxY = Math.max(maxY, sy);
+            }
+
+            const w = Math.max(1, maxX - minX);
+            const h = Math.max(1, maxY - minY);
+            rect = { x: minX, y: minY, w, h };
+          }
+        } catch {
+          rect = null;
+        }
       }
-    } else if (mode === "roll") {
-      tiltAxis = "x";
-      tiltSign = 1;
-    }
 
-    dragRef.current = {
+      // fallback na 2D bbox (ak je k dispozícii)
+      if (!rect && bboxRect) rect = { x: bboxRect.x, y: bboxRect.y, w: bboxRect.w, h: bboxRect.h };
+
+      // posledný fallback: celý canvas (neideálne, ale aspoň funguje)
+      if (!rect) rect = { x: 0, y: 0, w: canvasW, h: canvasH };
+
+      const relX = (p.x - rect.x) / Math.max(1, rect.w);
+
+      const centerL = 0.33;
+      const centerR = 0.67;
+
+      if (relX >= centerL && relX <= centerR) {
+        tiltAxis = "x"; // pitch
+        tiltSign = 1;
+      } else {
+        tiltAxis = "z"; // roll
+        tiltSign = relX > 0.5 ? 1 : -1; // pravá strana hore = +, ľavá strana hore = -
+      }
+    }
+dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
@@ -1406,7 +1456,8 @@ export default function Page() {
         const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
         setRot2D(roll);
       } else {
-        const pitch = dragRef.current.startRot3D.pitch + dragRef.current.tiltSign * (-dy) * k;
+        // stred: pitch hore/dole (symetricky, bez tiltSign)
+        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
         setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
       }
       return;
