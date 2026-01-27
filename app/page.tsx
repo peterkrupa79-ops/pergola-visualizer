@@ -1285,7 +1285,7 @@ export default function Page() {
     active: boolean;
     start: Vec2;
     startPos: Vec2;
-    startRot3D: { yaw: number; pitch: number };
+    startRot3D: { yaw: number; pitch: number ; roll: number};
     startRot2D: number;
     startScalePct: { x: number; y: number; z: number };
     handle: HandleId | null;
