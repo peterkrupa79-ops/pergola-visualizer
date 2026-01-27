@@ -1131,6 +1131,10 @@ export default function Page() {
       root.position.set(worldX, worldY, 0);
     }
 
+    root.rotation.order = "YXZ";
+
+    // Apply yaw (Y) first, then pitch (X), then roll (Z) in pergola-local space.
+    // This ensures tilt works correctly in any yaw orientation.
     root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
   }
 
@@ -1337,26 +1341,12 @@ export default function Page() {
     let tiltAxis: "x" | "z" | null = null;
     let tiltSign = 1;
 
+    // Režim NAKLOŇ: ovládaj pitch+roll naraz (dx/dy).
+    // Už nepoužívame pravidlá bok/stred ani výber osi podľa hrán.
     if (mode === "roll") {
-      // NAKLOŇ: rozhoduj IBA podľa toho, či user chytil stred alebo boky (podľa X).
-      // Horná/spodná hrana sa IGNORUJE.
-      const ref = bboxRect ?? { x: 0, y: 0, w: canvasW, h: canvasH };
-      const relX = (p.x - ref.x) / Math.max(1, ref.w);
-
-      // boky = zdvih strany (roll / rot2D), stred = pitch
-      const edgeZone = 0.22; // 22% zľava a 22% sprava = boky
-      if (relX <= edgeZone) {
-        tiltAxis = "z";      // roll
-        tiltSign = -1;       // ľavá strana hore = rot2D -
-      } else if (relX >= 1 - edgeZone) {
-        tiltAxis = "z";      // roll
-        tiltSign = 1;        // pravá strana hore = rot2D +
-      } else {
-        tiltAxis = "x";      // pitch
-        tiltSign = 1;
-      }
+      tiltAxis = null;
+      tiltSign = 1;
     }
-
 dragRef.current = {
       active: true,
       start: p,
@@ -1400,22 +1390,22 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ:
-      // - boky (tiltAxis="z"): ťah hore/dole zdvihuje chytenú stranu (roll = rot2D)
-      // - stred (tiltAxis="x"): ťah hore/dole nakláňa dopredu/dozadu (pitch)
-      const k = 0.02;
+      // NAKLOŇ: 4 smery v akomkoľvek otočení (yaw):
+      // - dy (hore/dole) -> pitch (X)
+      // - dx (vľavo/vpravo) -> roll (Z)
+      // Rotácie sa skladajú v applyTransformsForCurrentState cez order "YXZ".
+      const kPitch = 0.01;
+      const kRoll = 0.01;
 
-      if (dragRef.current.tiltAxis === "z") {
-        const roll = dragRef.current.startRot2D + dragRef.current.tiltSign * (-dy) * k;
-        setRot2D(roll);
-      } else {
-        const pitch = dragRef.current.startRot3D.pitch + (-dy) * k;
-        setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
-      }
+      const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
+      const roll = dragRef.current.startRot2D + dx * kRoll;
+
+      setRot3D((prev) => ({ ...prev, pitch: clamp(pitch, -1.25, 1.25) }));
+      setRot2D(clamp(roll, -1.25, 1.25));
       return;
     }
 
-    if (currentMode === "resize") {
+if (currentMode === "resize") {
       const rect = bboxRect;
       if (!rect || !dragRef.current.handle) return;
 
