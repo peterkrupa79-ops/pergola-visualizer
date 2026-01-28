@@ -75,12 +75,38 @@ function moodStyleBlock(m: Mood) {
   return `ATMOSPHERE: Sunset. Warm sunset tone, longer shadows, gentle warmth in highlights. Keep the sky unchanged unless the original photo already shows sunset tones. ${safety}`;
 }
 
-function buildFinalPrompt(t: PergolaType, variantIndex: number, mood: Mood) {
+
+function terrainStyleBlock(m: Mood) {
+  // Experimentálne: povoliť jemné sezónne úpravy terénu (iba ground/vegetation), bez zásahov do architektúry.
+  // Cieľ: viac emócie, ale stále realisticky a bez halucinácií.
+  const safety =
+    "You MAY subtly adjust only ground/vegetation (grass/soil/small plants) to match the selected season. Keep it subtle and realistic. Do NOT change any buildings, windows, roof, pavement layout, fences. Do NOT add/remove objects (no furniture, cars, people, decorations). Preserve camera perspective and scale. Avoid dramatic weather changes; keep sky consistent with the original photo.";
+
+  if (m === "spring_afternoon") {
+    return `SEASONAL GROUND (subtle): Slightly fresher grass tones and spring greenery. No new flowers or objects. ${safety}`;
+  }
+  if (m === "summer_evening") {
+    return `SEASONAL GROUND (subtle): Slight hints of summer dryness in grass where plausible; warmer ground tones. No new plants/objects. ${safety}`;
+  }
+  if (m === "autumn_morning") {
+    return `SEASONAL GROUND (subtle): A few scattered fallen leaves near edges and corners only (very subtle), slightly muted grass. No heavy leaf coverage. ${safety}`;
+  }
+  if (m === "winter_noon") {
+    return `SEASONAL GROUND (subtle): Optional very light frost/snow traces only on ground surfaces if plausible; avoid heavy snow. No snow on roofs/facade unless already present. ${safety}`;
+  }
+  if (m === "overcast") {
+    return `SEASONAL GROUND (subtle): Slightly damp ground tone; avoid obvious puddles unless already present. ${safety}`;
+  }
+  return `SEASONAL GROUND (subtle): Keep ground mostly unchanged; allow only minimal seasonal hint through grading. ${safety}`;
+}
+
+function buildFinalPrompt(t: PergolaType, variantIndex: number, mood: Mood, seasonTerrain: boolean) {
   return [
     FINAL_PROMPT_BASE,
     anchorBlock(variantIndex),
     pergolaStyleBlock(t),
     moodStyleBlock(mood),
+    ...(seasonTerrain ? [terrainStyleBlock(mood)] : []),
     `Keep the pergola modest in size as shown (do not enlarge it). Leave visible terrace space around it if present in the collage.`
   ].join("\n\n");
 }
@@ -727,6 +753,7 @@ export default function Page() {
   // ===== Pergola type / model =====
   const [pergolaType, setPergolaType] = useState<PergolaType>("bioklim");
   const [mood, setMood] = useState<Mood>("spring_afternoon");
+  const [seasonTerrain, setSeasonTerrain] = useState<boolean>(false);
   const glbPath = useMemo(() => {
     if (pergolaType === "bioklim") return "/models/bioklim.glb";
     if (pergolaType === "pevna") return "/models/pevna.glb";
@@ -1645,7 +1672,7 @@ if (currentMode === "resize") {
 
       const form = new FormData();
       form.append("image", blob, "collage.jpg");
-      const prompt = buildFinalPrompt(pergolaType, variants.length, mood);
+      const prompt = buildFinalPrompt(pergolaType, variants.length, mood, seasonTerrain);
       form.append("prompt", prompt);
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
@@ -1945,6 +1972,35 @@ if (currentMode === "resize") {
                     <option value="sunset">Atmosféra: Západ slnka</option>
                   </select>
 
+                  <label
+                    title="Experimentálne: jemné sezónne prispôsobenie trávnika/terénu. Môže mierne zvýšiť riziko halucinácií."
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 12px",
+                      height: 42,
+                      borderRadius: 12,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      background: "#fff",
+                      color: "#111",
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                      width: "100%",
+                      maxWidth: "100%",
+                      flex: 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={seasonTerrain}
+                      onChange={(e) => setSeasonTerrain(e.target.checked)}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <span style={{ fontSize: 13, fontWeight: 800 }}>Sezónny terén</span>
+                  </label>
+
+
                   <button
                     type="button"
                     onClick={resetAll}
@@ -2106,6 +2162,35 @@ if (currentMode === "resize") {
                     <option value="overcast">Atmosféra: Zamračený deň</option>
                     <option value="sunset">Atmosféra: Západ slnka</option>
                   </select>
+
+                  <label
+                    title="Experimentálne: jemné sezónne prispôsobenie trávnika/terénu. Môže mierne zvýšiť riziko halucinácií."
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 12px",
+                      height: 42,
+                      borderRadius: 12,
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      background: "#fff",
+                      color: "#111",
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                      width: "100%",
+                      maxWidth: "100%",
+                      flex: 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={seasonTerrain}
+                      onChange={(e) => setSeasonTerrain(e.target.checked)}
+                      style={{ width: 18, height: 18 }}
+                    />
+                    <span style={{ fontSize: 13, fontWeight: 800 }}>Sezónny terén</span>
+                  </label>
+
 
                   <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
