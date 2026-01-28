@@ -732,7 +732,7 @@ export default function Page() {
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
-  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12 })
+  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12, roll: 0 })
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
   // mobile defaults
@@ -943,7 +943,7 @@ export default function Page() {
 
   function resetAll() {
     setScalePct(isMobileRef.current ? { x: 75, y: 75, z: 75 } : { x: 100, y: 100, z: 100 });
-    setRot3D({ yaw: 0.35, pitch: -0.12 });
+    setRot3D({ yaw: 0.35, pitch: -0.12, roll: 0 });
     setRot2D(0);
     setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
     setPerspective(defaultPerspective(isMobileRef.current));
@@ -1425,8 +1425,23 @@ dragRef.current = {
             const kPitch = 0.008;
       const kRoll = 0.008;
 
-      const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
-      const roll = (dragRef.current.startRot3D.roll ?? 0) + (dx) * kRoll;
+      let axis = dragRef.current.tiltAxis;
+      if (!axis) {
+        const dead = 8;
+        const d = Math.hypot(dx, dy);
+        if (d < dead) return;
+        axis = Math.abs(dy) >= Math.abs(dx) ? "x" : "z";
+        dragRef.current.tiltAxis = axis;
+      }
+
+      let pitch = dragRef.current.startRot3D.pitch;
+      let roll = (dragRef.current.startRot3D.roll ?? 0);
+
+      if (axis === "x") {
+        pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
+      } else {
+        roll = (dragRef.current.startRot3D.roll ?? 0) + (dx) * kRoll;
+      }
 
       setRot3D((r) => ({
         ...r,
