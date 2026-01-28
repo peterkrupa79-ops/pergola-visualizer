@@ -1379,7 +1379,7 @@ dragRef.current = {
       active: true,
       start: p,
       startPos: pos,
-      startRot3D: rot3D,
+      startRot3D: { yaw: rot3D.yaw, pitch: rot3D.pitch, roll: (rot3D as any).roll ?? 0 },
       startRot2D: rot2D,
       startScalePct: scalePct,
       handle: null,
