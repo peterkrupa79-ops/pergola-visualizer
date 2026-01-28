@@ -732,7 +732,7 @@ export default function Page() {
 
   const [pos, setPos] = useState<Vec2>({ x: 0.5, y: 0.72 });
   const [rot2D, setRot2D] = useState(0);
-  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12 })
+  const [rot3D, setRot3D] = useState({  yaw: 0.35, pitch: -0.12, roll: 0 })
   const [scalePct, setScalePct] = useState({ x: 100, y: 100, z: 100 });
 
   // mobile defaults
@@ -755,10 +755,6 @@ export default function Page() {
   const sceneRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
   const rootRef = useRef<any>(null);
-  // Tilt gizmo (axes/handles) for režim NAKLOŇ
-  const tiltGizmoRef = useRef<any>(null);
-  const tiltGizmoMeshesRef = useRef<any[]>([]);
-  const raycasterRef = useRef<any>(null);
   const baseScaleRef = useRef<number>(1);
 
   const [loading, setLoading] = useState(false);
@@ -947,7 +943,7 @@ export default function Page() {
 
   function resetAll() {
     setScalePct(isMobileRef.current ? { x: 75, y: 75, z: 75 } : { x: 100, y: 100, z: 100 });
-    setRot3D({ yaw: 0.35, pitch: -0.12 });
+    setRot3D({ yaw: 0.35, pitch: -0.12, roll: 0 });
     setRot2D(0);
     setPos(isMobileRef.current ? { x: 0.5, y: 0.78 } : { x: 0.5, y: 0.72 });
     setPerspective(defaultPerspective(isMobileRef.current));
@@ -987,29 +983,6 @@ export default function Page() {
     for (const id of Object.keys(corners) as HandleId[]) {
       if (dist(p, corners[id]) <= HANDLE_HIT) return id;
     }
-    return null;
-  }
-
-
-  function pickTiltAxisFromGizmo(p: Vec2): "x" | "z" | null {
-    const THREE = threeModuleRef.current;
-    const camera = cameraRef.current;
-    const root = rootRef.current;
-    const raycaster = raycasterRef.current;
-
-    if (!THREE || !camera || !root || !raycaster) return null;
-    if (!tiltGizmoMeshesRef.current || tiltGizmoMeshesRef.current.length === 0) return null;
-
-    // Normalized device coordinates from canvas-space point
-    const ndc = new THREE.Vector2((p.x / canvasW) * 2 - 1, -((p.y / canvasH) * 2 - 1));
-    raycaster.setFromCamera(ndc, camera);
-
-    const hits = raycaster.intersectObjects(tiltGizmoMeshesRef.current, false);
-    if (!hits || hits.length === 0) return null;
-
-    const name = (hits[0].object && (hits[0].object as any).name) || "";
-    if (name === "TILT_HANDLE_PITCH") return "x";
-    if (name === "TILT_HANDLE_ROLL_LEFT" || name === "TILT_HANDLE_ROLL_RIGHT") return "z";
     return null;
   }
 
@@ -1073,83 +1046,6 @@ export default function Page() {
 
         model.scale.set(1, 1, 1);
         root.add(model);
-
-        // --- Tilt gizmo (axes/handles) for režim NAKLOŇ (roll)
-        // Vizuálne úchyty: predok = PITCH (osa "x"), boky = ROLL (osa "z")
-        try {
-          // Clear previous gizmo if any
-          if (tiltGizmoRef.current) {
-            try { root.remove(tiltGizmoRef.current); } catch {}
-          }
-
-          const gizmo = new THREE.Group();
-          gizmo.name = "TILT_GIZMO";
-          gizmo.visible = false;
-
-          const mat = new THREE.MeshBasicMaterial({
-            transparent: true,
-            opacity: 0.75,
-            depthTest: false,
-          });
-
-          const dotMat = new THREE.MeshBasicMaterial({
-            transparent: true,
-            opacity: 0.85,
-            depthTest: false,
-          });
-
-          const dotGeo = new THREE.SphereGeometry(0.035, 16, 16);
-          const barGeo = new THREE.CylinderGeometry(0.012, 0.012, 0.28, 14);
-
-          // Model bbox after centering (size is stable)
-          const halfX = size.x * 0.5;
-          const halfZ = size.z * 0.5;
-
-          const yMid = 0; // model is centered around origin after position.sub(center)
-
-          // Predok (bližšie ku kamere): kamera je na +Z, preto predok = +Z
-          const pitchBar = new THREE.Mesh(barGeo, mat.clone());
-          pitchBar.name = "TILT_HANDLE_PITCH";
-          pitchBar.position.set(0, yMid, halfZ + 0.08);
-          gizmo.add(pitchBar);
-
-          const pitchDot = new THREE.Mesh(dotGeo, dotMat.clone());
-          pitchDot.name = "TILT_HANDLE_PITCH";
-          pitchDot.position.copy(pitchBar.position);
-          gizmo.add(pitchDot);
-
-          // Boky: ľavý / pravý
-          const rollBarL = new THREE.Mesh(barGeo, mat.clone());
-          rollBarL.name = "TILT_HANDLE_ROLL_LEFT";
-          rollBarL.position.set(-halfX - 0.08, yMid, 0);
-          gizmo.add(rollBarL);
-
-          const rollDotL = new THREE.Mesh(dotGeo, dotMat.clone());
-          rollDotL.name = "TILT_HANDLE_ROLL_LEFT";
-          rollDotL.position.copy(rollBarL.position);
-          gizmo.add(rollDotL);
-
-          const rollBarR = new THREE.Mesh(barGeo, mat.clone());
-          rollBarR.name = "TILT_HANDLE_ROLL_RIGHT";
-          rollBarR.position.set(halfX + 0.08, yMid, 0);
-          gizmo.add(rollBarR);
-
-          const rollDotR = new THREE.Mesh(dotGeo, dotMat.clone());
-          rollDotR.name = "TILT_HANDLE_ROLL_RIGHT";
-          rollDotR.position.copy(rollBarR.position);
-          gizmo.add(rollDotR);
-
-          // Keep a list for raycasting
-          tiltGizmoMeshesRef.current = [pitchBar, pitchDot, rollBarL, rollDotL, rollBarR, rollDotR];
-          tiltGizmoRef.current = gizmo;
-
-          root.add(gizmo);
-
-          if (!raycasterRef.current) {
-            raycasterRef.current = new THREE.Raycaster();
-          }
-        } catch {}
-
 
         sceneRef.current = scene;
         cameraRef.current = camera;
@@ -1278,9 +1174,6 @@ export default function Page() {
       const scene = sceneRef.current;
 
       applyTransformsForCurrentState(canvasW, canvasH);
-      if (tiltGizmoRef.current) {
-        tiltGizmoRef.current.visible = mode === "roll";
-      }
       renderer.setSize(canvasW, canvasH, false);
       renderer.render(scene, cameraRef.current);
 
@@ -1326,6 +1219,43 @@ export default function Page() {
           ctx.setLineDash([8, 6]);
           ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
           ctx.setLineDash([]);
+
+          // side axes (only in roll mode) – center of each side: back/front/left/right
+          if (mode === "roll") {
+            const cx = rect.x + rect.w / 2;
+            const cy = rect.y + rect.h / 2;
+
+            const pts = {
+              back: { x: cx, y: rect.y },
+              front: { x: cx, y: rect.y + rect.h },
+              left: { x: rect.x, y: cy },
+              right: { x: rect.x + rect.w, y: cy },
+            } as const;
+
+            const drawAxis = (pt: Vec2) => {
+              ctx.beginPath();
+              ctx.strokeStyle = "rgba(255,255,255,0.95)";
+              ctx.lineWidth = 3;
+              ctx.moveTo(pt.x, pt.y - 18);
+              ctx.lineTo(pt.x, pt.y + 18);
+              ctx.stroke();
+
+              ctx.beginPath();
+              ctx.fillStyle = "rgba(0,0,0,0.65)";
+              ctx.arc(pt.x, pt.y, 10, 0, Math.PI * 2);
+              ctx.fill();
+
+              ctx.beginPath();
+              ctx.fillStyle = "rgba(255,255,255,0.9)";
+              ctx.arc(pt.x, pt.y, 5.5, 0, Math.PI * 2);
+              ctx.fill();
+            };
+
+            drawAxis(pts.back);
+            drawAxis(pts.front);
+            drawAxis(pts.left);
+            drawAxis(pts.right);
+          }
 
           // handles only in resize mode
           if (mode === "resize") {
@@ -1399,6 +1329,7 @@ export default function Page() {
     modeAtDown: Mode;
     rollMode: boolean;
     tiltAxis: "x" | "z" | null;
+    tiltSide: "front" | "back" | "left" | "right" | null;
     tiltSign: number;
   }>({
     active: false,
@@ -1411,6 +1342,7 @@ export default function Page() {
     modeAtDown: "move",
     rollMode: false,
     tiltAxis: null,
+    tiltSide: null,
     tiltSign: 1,
   });
 
@@ -1436,6 +1368,7 @@ export default function Page() {
           modeAtDown: "resize" as Mode,
           rollMode: false,
           tiltAxis: null,
+          tiltSide: null,
           tiltSign: 1,
         };
         return;
@@ -1446,47 +1379,57 @@ export default function Page() {
     // rotate3d: vždy otáčame len okolo osi Y (yaw)
 
     let tiltAxis: "x" | "z" | null = null;
+    let tiltSide: "front" | "back" | "left" | "right" | null = null;
     let tiltSign = 1;
 
     // Režim NAKLOŇ: os vyberieme pri chytení (boky = roll, stred = pitch).
     // Následne v NAKLOŇ používame iba ťah hore/dole (dy) – prirodzené a presné.
     if (mode === "roll") {
-      const gizmoAxis = pickTiltAxisFromGizmo(p);
-      if (gizmoAxis) {
-        tiltAxis = gizmoAxis;
-      }
-
-      // NAKLOŇ: vyberieme os podľa toho, ku ktorej hrane pergoly je miesto uchopenia bližšie.
-      // - bližšie k ľavej/prav ej hrane => zdvih strany (roll)
-      // - bližšie k hornej/spodnej hrane => naklon dopredu/dozadu (pitch)
-      //
-      // Toto funguje stabilne aj keď je pergola otočená (yaw) a bbox má iný pomer strán.
-      if (!tiltAxis) {
-        let relX = 0.5;
-      let relY = 0.5;
-
+      // NAKLOŇ: explicitné "osi" v strede každej strany bbox (front/back/left/right).
+      // Používateľ ťahá VŽDY len hore/dole (dy) a tým zdvíha konkrétnu stranu.
+      // Tým pádom sa pergola v NAKLOŇ režime nikdy "nekrúti" do iných smerov.
       if (bboxRect) {
-        relX = (p.x - bboxRect.x) / Math.max(1, bboxRect.w);
-        relY = (p.y - bboxRect.y) / Math.max(1, bboxRect.h);
-      } else if (canvasRef.current) {
-        const r = canvasRef.current.getBoundingClientRect();
-        relX = (p.x - r.left) / Math.max(1, r.width);
-        relY = (p.y - r.top) / Math.max(1, r.height);
-      }
+        const cx = bboxRect.x + bboxRect.w / 2;
+        const cy = bboxRect.y + bboxRect.h / 2;
 
-      // vzdialenosť k najbližšej hrane (0..0.5)
-      const dLR = Math.min(relX, 1 - relX);
-      const dTB = Math.min(relY, 1 - relY);
+        const pts = {
+          back: { x: cx, y: bboxRect.y },
+          front: { x: cx, y: bboxRect.y + bboxRect.h },
+          left: { x: bboxRect.x, y: cy },
+          right: { x: bboxRect.x + bboxRect.w, y: cy },
+        } as const;
 
-      if (dLR < dTB) {
-        // bližšie k ľavej/prav ej hrane => roll (zdvih strany)
-        tiltAxis = "z";
-        tiltSign = relX > 0.5 ? 1 : -1; // pravá vs ľavá strana
-      } else {
-        // bližšie k hornej/spodnej hrane => pitch
-        tiltAxis = "x";
-        tiltSign = relY > 0.5 ? 1 : -1; // spodok vs vrch (pre prípadný smer)
-      }
+        const HIT = 22; // px
+        const dist2 = (a: Vec2, b: Vec2) => {
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          return dx * dx + dy * dy;
+        };
+
+        let bestSide: keyof typeof pts | null = null;
+        let bestD2 = Infinity;
+
+        for (const side of Object.keys(pts) as Array<keyof typeof pts>) {
+          const d2 = dist2(p, pts[side]);
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            bestSide = side;
+          }
+        }
+
+        if (bestSide && bestD2 <= HIT * HIT) {
+          tiltSide = bestSide;
+
+          // front/back => pitch, left/right => roll
+          tiltAxis = bestSide === "front" || bestSide === "back" ? "x" : "z";
+
+          // Sign tak, aby ťah HORE (dy<0) zdvihol zvolenú stranu:
+          // - front (spodná hrana bbox) : +1
+          // - back  (horná hrana bbox)  : -1
+          // - right (pravá hrana bbox)  : +1
+          // - left  (ľavá hrana bbox)   : -1
+          tiltSign = bestSide === "back" || bestSide === "left" ? -1 : 1;
+        }
       }
     }
 dragRef.current = {
@@ -1500,6 +1443,7 @@ dragRef.current = {
       modeAtDown: mode as Mode,
       rollMode,
       tiltAxis,
+      tiltSide,
       tiltSign,
     };
   }
@@ -1532,15 +1476,35 @@ dragRef.current = {
     if (currentMode === "roll") {
       setGuideSeen((g) => (g.roll ? g : { ...g, roll: true }));
 
-      // NAKLOŇ (GLB 3D): vždy lokálne osi pergoly, funguje pri akomkoľvek otočení (yaw).
-      // - dy (hore/dole) -> pitch (X)
-      // - dx (doľava/doprava) -> roll (Z)
-      // Ovládanie nie je invertované: ťah hore => pergola ide hore (väčší pitch).
-            const kPitch = 0.008;
+      // NAKLOŇ: používame VŽDY len ťah hore/dole (dy).
+      // - keď je zvolená strana (front/back/left/right), zdvíhame iba tú stranu (tiltSign).
+      // - keď nie je zvolená strana, po deadzone sa os uzamkne (pitch vs roll) podľa dominantného smeru,
+      //   ale stále sa aplikuje len dy (dx je ignorované), aby sa pergola nepretáčala "do boku".
+      const kPitch = 0.008;
       const kRoll = 0.008;
 
-      const pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch;
-      const roll = (dragRef.current.startRot3D.roll ?? 0) + (dx) * kRoll;
+      let axis = dragRef.current.tiltAxis;
+      if (!axis) {
+        const dead = 8;
+        const d = Math.hypot(dx, dy);
+        if (d < dead) return;
+
+        axis = Math.abs(dy) >= Math.abs(dx) ? "x" : "z";
+        dragRef.current.tiltAxis = axis;
+        dragRef.current.tiltSide = null;
+        dragRef.current.tiltSign = 1;
+      }
+
+      const sign = dragRef.current.tiltSign ?? 1;
+
+      let pitch = dragRef.current.startRot3D.pitch;
+      let roll = (dragRef.current.startRot3D.roll ?? 0);
+
+      if (axis === "x") {
+        pitch = dragRef.current.startRot3D.pitch + (-dy) * kPitch * sign;
+      } else {
+        roll = (dragRef.current.startRot3D.roll ?? 0) + (-dy) * kRoll * sign;
+      }
 
       setRot3D((r) => ({
         ...r,
