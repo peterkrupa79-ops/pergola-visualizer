@@ -235,15 +235,14 @@ __dedupeCache.set(dedupeKey, { ts: now, promise });
 
 const b64 = await promise;
 
-    const b64 = res.data?.[0]?.b64_json;
-    if (!b64) {
-      return NextResponse.json(
-        { error: "No image returned from OpenAI" },
-        { status: 500 }
-      );
-    }
+if (!b64) {
+  return NextResponse.json(
+    { error: "No image returned from OpenAI" },
+    { status: 500 }
+  );
+}
 
-    return NextResponse.json({
+return NextResponse.json({
   b64,
   meta: {
     input: sizeInfo || null,
