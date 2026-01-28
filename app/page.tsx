@@ -1925,7 +1925,13 @@ if (currentMode === "resize") {
                 <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
                   <select
                     value={pergolaType}
-                    title={pergolaType === "bioklim" ? "Moderná pergola s nastaviteľnými lamelami." : pergolaType === "pevna" ? "Klasická pergola so šikmou strechou (polykarbonát / bezpečnostné sklo)." : "Zimná záhrada – pergola uzavretá zasklením."}
+                    title={
+                      pergolaType === "bioklim"
+                        ? "Moderná pergola s nastaviteľnými lamelami."
+                        : pergolaType === "pevna"
+                          ? "Klasická pergola so šikmou strechou (polykarbonát / bezpečnostné sklo)."
+                          : "Zimná záhrada – pergola uzavretá zasklením."
+                    }
                     onChange={(e) => setPergolaType(e.target.value as PergolaType)}
                     style={{
                       padding: "10px 12px",
@@ -1946,9 +1952,31 @@ if (currentMode === "resize") {
                     <option value="zimna">Zimná záhrada</option>
                   </select>
 
+                  <button
+                    type="button"
+                    onClick={resetAll}
+                    disabled={loading}
+                    style={{
+                      ...btnStyle,
+                      cursor: loading ? "not-allowed" : "pointer",
+                      opacity: loading ? 0.6 : 1,
+                      flex: "0 0 auto",
+                      minWidth: 0,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <Icon name="reset" size={16} />
+                      Reset
+                    </span>
+                  </button>
+                </div>
+
+                {/* 2. riadok: Atmosféra / Sezónny terén */}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
                   <select
                     value={mood}
-                    title="Vyber atmosféru (ročné obdobie & čas dňa). Mení najmä svetlo/koloristiku a kontrast, bez zmeny scény."
+                    title="Vyber atmosféru (ročné obdobie & čas dňa). Mení najmä svetlo/koloristiku a kontrast."
                     onChange={(e) => setMood(e.target.value as Mood)}
                     style={{
                       padding: "10px 12px",
@@ -1986,9 +2014,7 @@ if (currentMode === "resize") {
                       color: "#111",
                       fontWeight: 800,
                       whiteSpace: "nowrap",
-                      width: "100%",
-                      maxWidth: "100%",
-                      flex: 1,
+                      flex: "0 0 auto",
                     }}
                   >
                     <input
@@ -1999,26 +2025,6 @@ if (currentMode === "resize") {
                     />
                     <span style={{ fontSize: 13, fontWeight: 800 }}>Sezónny terén</span>
                   </label>
-
-
-                  <button
-                    type="button"
-                    onClick={resetAll}
-                    disabled={loading}
-                    style={{
-                      ...btnStyle,
-                      cursor: loading ? "not-allowed" : "pointer",
-                      opacity: loading ? 0.6 : 1,
-                      flex: "0 0 auto",
-                      minWidth: 0,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <Icon name="reset" size={16} />
-                      Reset
-                    </span>
-                  </button>
                 </div>
 
                 <div style={{ marginTop: -6, fontSize: 12, color: "rgba(0,0,0,0.60)", lineHeight: 1.35 }}>
@@ -2029,7 +2035,7 @@ if (currentMode === "resize") {
                       : "Pergola uzavretá zasklením, ktorú môžeš využívať aj mimo letnej sezóny."}
                 </div>
 
-                {/* 2. riadok: Nahraj fotku / Resize */}
+                {/* 3. riadok: Nahraj fotku / Resize */}
                 <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%" }}>
                   <label
                     style={{
@@ -2074,7 +2080,7 @@ if (currentMode === "resize") {
                   </button>
                 </div>
 
-                {/* 3. riadok: Posuň / Otoč / Nakloň */}
+                {/* 4. riadok: Posuň / Otoč / Nakloň */}
                 <div style={{ width: "100%" }}>
                   <Segmented
                     value={mode}
