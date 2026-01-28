@@ -1297,7 +1297,7 @@ export default function Page() {
     active: false,
     start: { x: 0, y: 0 },
     startPos: { x: 0.5, y: 0.72 },
-    startRot3D: { yaw: 0.35, pitch: -0.12 },
+    startRot3D: { yaw: 0.35, pitch: -0.12, roll: 0 },
     startRot2D: 0,
     startScalePct: { x: 100, y: 100, z: 100 },
     handle: null,
