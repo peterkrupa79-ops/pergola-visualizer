@@ -1135,7 +1135,7 @@ export default function Page() {
 
     // Apply yaw (Y) first, then pitch (X), then roll (Z) in pergola-local space.
     // This ensures tilt works correctly in any yaw orientation.
-    root.rotation.set(rot3D.pitch, rot3D.yaw, rot2D);
+    root.rotation.set(rot3D.roll ?? 0, rot3D.yaw, (rot2D ?? 0) + (rot3D.pitch ?? 0));
   }
 
   function draw() {
