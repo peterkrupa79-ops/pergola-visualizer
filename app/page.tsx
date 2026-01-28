@@ -49,12 +49,23 @@ function anchorBlock(variantIndex: number) {
   return `Anchor: the pergola footprint follows the terrace boundary and aligns with the terrace edges as shown in the collage. Posts sit naturally on the terrace surface where they support the roof.`;
 }
 
+
+const PROMPT_HARDEN_UI_SUFFIX = [
+  "Photorealistic.",
+  "Do NOT change the house/terrace geometry, camera viewpoint, or overall composition.",
+  "Do NOT add or remove objects (no furniture/plants/people/cars/lamps).",
+  "Integrate ONLY the pergola realistically (lighting/shadows/reflections).",
+  "Do NOT move/resize/rotate the pergola; keep its placement exactly as in the collage.",
+  "Avoid frames, borders, picture-in-picture, seams, duplicated images, or collage artifacts."
+].join(" ");
+
 function buildFinalPrompt(t: PergolaType, variantIndex: number) {
   return [
     FINAL_PROMPT_BASE,
     anchorBlock(variantIndex),
     pergolaStyleBlock(t),
-    `Keep the pergola modest in size as shown (do not enlarge it). Leave visible terrace space around it if present in the collage.`
+    `Keep the pergola modest in size as shown (do not enlarge it). Leave visible terrace space around it if present in the collage.`,
+    PROMPT_HARDEN_UI_SUFFIX
   ].join("\n\n");
 }
 
@@ -177,6 +188,42 @@ function _b64ToImageBitmap(b64: string): Promise<ImageBitmap> {
     img.onerror = () => reject(new Error("Nepodarilo sa dekódovať PNG."));
     img.src = `data:image/png;base64,${b64}`;
   });
+}
+
+
+async function _basicImageQc(b64: string): Promise<{ ok: boolean; meanLuma: number; }> {
+  // Very lightweight QC: flag extreme under/over-exposure which often correlates with "bad" generations.
+  // (Does not add any extra OpenAI calls.)
+  const bmp = await _b64ToImageBitmap(b64);
+  const w = bmp.width;
+  const h = bmp.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { ok: true, meanLuma: 0.5 };
+
+  ctx.drawImage(bmp, 0, 0);
+  const img = ctx.getImageData(0, 0, w, h).data;
+
+  // Sample pixels (stride) for speed
+  const stride = Math.max(1, Math.floor((w * h) / 250000)); // ~<=250k samples
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < img.length; i += 4 * stride) {
+    const r = img[i] / 255;
+    const g = img[i + 1] / 255;
+    const b = img[i + 2] / 255;
+    // Rec.709 luma
+    const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    sum += y;
+    count += 1;
+  }
+  const mean = count ? sum / count : 0.5;
+
+  // Allow broad range; only reject extreme cases.
+  const ok = mean > 0.06 && mean < 0.94;
+  return { ok, meanLuma: mean };
 }
 
 function _canvasToB64Png(c: HTMLCanvasElement): string {
@@ -1556,6 +1603,7 @@ if (currentMode === "resize") {
   // ===== Generate (real API) =====
   async function generate() {
     if (!bgImg) return;
+    if (loading) return; // dedupe guard (double-click / repeat)
     if (variants.length >= MAX_VARIANTS) return;
 
     setLoading(true);
@@ -1609,6 +1657,7 @@ if (currentMode === "resize") {
       form.append("image", blob, "collage.jpg");
       const prompt = buildFinalPrompt(pergolaType, variants.length);
       form.append("prompt", prompt);
+      form.append("quality", "medium");
 
       const r = await fetch("/api/render/openai", { method: "POST", body: form });
 
@@ -1630,6 +1679,18 @@ if (currentMode === "resize") {
 
       // Add brand watermark (stable post-processing, no prompt tricks)
       finalB64 = await watermarkB64Png(finalB64);
+
+
+// Lightweight QC (no extra AI calls): reject extreme under/over-exposed outputs
+try {
+  const qc = await _basicImageQc(finalB64);
+  if (!qc.ok) {
+    console.warn("QC failed (meanLuma):", qc.meanLuma);
+    throw new Error("Variant vyzerá nekvalitne (expozícia). Skús znova.");
+  }
+} catch (e) {
+  // If QC itself fails (rare), do not block the user.
+}
 
       setVariants((prev) => {
         if (prev.length >= MAX_VARIANTS) return prev;
