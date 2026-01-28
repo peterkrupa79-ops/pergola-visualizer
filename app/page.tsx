@@ -4,7 +4,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type PergolaType = "bioklim" | "pevna" | "zimna";
-type Mood = "neutral" | "golden" | "contrast" | "clean" | "premium" | "conservative";
+type Mood = "spring_afternoon" | "summer_evening" | "autumn_morning" | "winter_noon" | "overcast" | "sunset";
 type Mode = "move" | "rotate3d" | "roll" | "resize";
 type Vec2 = { x: number; y: number };
 
@@ -52,22 +52,27 @@ function anchorBlock(variantIndex: number) {
 
 
 function moodStyleBlock(m: Mood) {
-  if (m === "golden") {
-    return `MOOD: Warm golden-hour tone. Slightly warmer highlights and soft, long shadows. Keep the scene realistic and consistent with the original photo. Do NOT change the sky or background content; apply only subtle color grading.`;
+  // Atmosféra = ročné obdobie + čas dňa. Vyjadriť iba cez svetlo/koloristiku.
+  // NEPREPISUJ scénu: bez pridávania/odoberania objektov, bez zmeny vegetácie, bez snehu/listov navyše.
+  const safety =
+    "Season/time should be expressed only through lighting and subtle color grading. Do NOT change vegetation state (no new leaves, no fallen leaves, no snow). Do NOT add/remove objects (no furniture, plants, lamps, people). Preserve the background architecture and landscaping. Preserve camera perspective and scale. Do NOT invent dramatic sky changes; keep the sky/background consistent with the original photo.";
+
+  if (m === "spring_afternoon") {
+    return `ATMOSPHERE: Fresh spring afternoon daylight. Neutral-to-slightly warm white balance, lively but realistic greens, soft natural shadows. ${safety}`;
   }
-  if (m === "contrast") {
-    return `MOOD: Slightly stronger contrast and slightly deeper (but realistic) shadows under the pergola. Avoid crushed blacks and blown highlights. Keep background unchanged.`;
+  if (m === "summer_evening") {
+    return `ATMOSPHERE: Warm summer late afternoon / early evening. Gentle golden warmth, slightly longer soft shadows, warm highlights. Apply only subtle warm grading consistent with the photo. ${safety}`;
   }
-  if (m === "clean") {
-    return `MOOD: Clean integration with crisp edges. Reduce unnecessary micro-textures and noise. Avoid painterly/stylized textures. Keep background unchanged.`;
+  if (m === "autumn_morning") {
+    return `ATMOSPHERE: Cool autumn morning. Soft low-angle light, slightly muted saturation, gentle softness. Do not add fog; only keep subtle haze if it already exists in the photo. ${safety}`;
   }
-  if (m === "premium") {
-    return `MOOD: Premium finish. Subtle specular highlights on metal and clean reflections. High-end architectural photo feel, but still realistic. Do NOT add staging objects. Keep background unchanged.`;
+  if (m === "winter_noon") {
+    return `ATMOSPHERE: Cold winter midday. Clean, crisp contrast, slightly cooler color temperature, bright but realistic reflections, short defined shadows. ${safety}`;
   }
-  if (m === "conservative") {
-    return `MOOD: Conservative. Minimal changes to the original photo. Only integrate the pergola; preserve background details and lighting as-is.`;
+  if (m === "overcast") {
+    return `ATMOSPHERE: Overcast soft light. Low contrast, very natural, minimal stylization. Soft shadows. ${safety}`;
   }
-  return `MOOD: Neutral daylight. Natural color balance and realistic exposure. Match lighting and white balance to the original photo. Minimal stylization.`;
+  return `ATMOSPHERE: Sunset. Warm sunset tone, longer shadows, gentle warmth in highlights. Keep the sky unchanged unless the original photo already shows sunset tones. ${safety}`;
 }
 
 function buildFinalPrompt(t: PergolaType, variantIndex: number, mood: Mood) {
@@ -141,12 +146,12 @@ function typeLabel(t: PergolaType) {
 }
 
 function moodLabel(m: Mood) {
-  if (m === "neutral") return "Neutrál";
-  if (m === "golden") return "Golden hour";
-  if (m === "contrast") return "Kontrast";
-  if (m === "clean") return "Čisté línie";
-  if (m === "premium") return "Premium";
-  return "Konzervatívny";
+  if (m === "spring_afternoon") return "Jarné popoludnie";
+  if (m === "summer_evening") return "Letný podvečer";
+  if (m === "autumn_morning") return "Jesenné ráno";
+  if (m === "winter_noon") return "Zimné poludnie";
+  if (m === "overcast") return "Zamračený deň";
+  return "Západ slnka";
 }
 function makeId() {
   return Math.random().toString(16).slice(2) + "-" + Date.now().toString(16);
@@ -721,7 +726,7 @@ export default function Page() {
 
   // ===== Pergola type / model =====
   const [pergolaType, setPergolaType] = useState<PergolaType>("bioklim");
-  const [mood, setMood] = useState<Mood>("neutral");
+  const [mood, setMood] = useState<Mood>("spring_afternoon");
   const glbPath = useMemo(() => {
     if (pergolaType === "bioklim") return "/models/bioklim.glb";
     if (pergolaType === "pevna") return "/models/pevna.glb";
@@ -1916,7 +1921,7 @@ if (currentMode === "resize") {
 
                   <select
                     value={mood}
-                    title="Vyber náladu (mood) výslednej vizualizácie. Mení najmä svetlo/kontrast a štýl spracovania bez zmeny scény."
+                    title="Vyber atmosféru (ročné obdobie & čas dňa). Mení najmä svetlo/koloristiku a kontrast, bez zmeny scény."
                     onChange={(e) => setMood(e.target.value as Mood)}
                     style={{
                       padding: "10px 12px",
@@ -1932,12 +1937,12 @@ if (currentMode === "resize") {
                       minWidth: 0,
                     }}
                   >
-                    <option value="neutral">Mood: Neutrál</option>
-                    <option value="golden">Mood: Golden hour</option>
-                    <option value="contrast">Mood: Kontrast</option>
-                    <option value="clean">Mood: Čisté línie</option>
-                    <option value="premium">Mood: Premium</option>
-                    <option value="conservative">Mood: Konzervatívny</option>
+                    <option value="spring_afternoon">Atmosféra: Jarné popoludnie</option>
+                    <option value="summer_evening">Atmosféra: Letný podvečer</option>
+                    <option value="autumn_morning">Atmosféra: Jesenné ráno</option>
+                    <option value="winter_noon">Atmosféra: Zimné poludnie</option>
+                    <option value="overcast">Atmosféra: Zamračený deň</option>
+                    <option value="sunset">Atmosféra: Západ slnka</option>
                   </select>
 
                   <button
@@ -2078,7 +2083,7 @@ if (currentMode === "resize") {
 
                   <select
                     value={mood}
-                    title="Vyber náladu (mood) výslednej vizualizácie. Mení najmä svetlo/kontrast a štýl spracovania bez zmeny scény."
+                    title="Vyber atmosféru (ročné obdobie & čas dňa). Mení najmä svetlo/koloristiku a kontrast, bez zmeny scény."
                     onChange={(e) => setMood(e.target.value as Mood)}
                     style={{
                       padding: "10px 12px",
@@ -2094,12 +2099,12 @@ if (currentMode === "resize") {
                       minWidth: 0,
                     }}
                   >
-                    <option value="neutral">Mood: Neutrál</option>
-                    <option value="golden">Mood: Golden hour</option>
-                    <option value="contrast">Mood: Kontrast</option>
-                    <option value="clean">Mood: Čisté línie</option>
-                    <option value="premium">Mood: Premium</option>
-                    <option value="conservative">Mood: Konzervatívny</option>
+                    <option value="spring_afternoon">Atmosféra: Jarné popoludnie</option>
+                    <option value="summer_evening">Atmosféra: Letný podvečer</option>
+                    <option value="autumn_morning">Atmosféra: Jesenné ráno</option>
+                    <option value="winter_noon">Atmosféra: Zimné poludnie</option>
+                    <option value="overcast">Atmosféra: Zamračený deň</option>
+                    <option value="sunset">Atmosféra: Západ slnka</option>
                   </select>
 
                   <button type="button" onClick={resetAll} disabled={loading} style={{ ...btnStyle, cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.6 : 1 }}>
