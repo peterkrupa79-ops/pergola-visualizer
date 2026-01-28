@@ -119,11 +119,23 @@ export async function POST(req: Request) {
       apiKey: process.env.OPENAI_API_KEY,
     });
 
+    /**
+     * COST GUARD:
+     * - Default pricing can jump to ~high-tier if quality is not set.
+     * - We explicitly set quality to keep wide formats affordable.
+     *
+     * Recommended:
+     * - "medium" for best cost/quality balance (often matches ~€0.06 tier),
+     * - "low" if you want even cheaper (but may reduce fine detail).
+     *
+     * Pricing varies by size + quality. See OpenAI pricing/docs.
+     */
     const res = await openai.images.edit({
       model: "gpt-image-1",
       image: imgFile,
       prompt,
       size: chosenSize,
+      quality: "medium",
     });
 
     const b64 = res.data?.[0]?.b64_json;
@@ -139,6 +151,7 @@ export async function POST(req: Request) {
       meta: {
         input: sizeInfo || null,
         chosenSize,
+        quality: "medium",
       },
     });
   } catch (err: any) {
